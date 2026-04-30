@@ -164,7 +164,7 @@ mudan_heritage_explorer/
 - `.env`：不会上传 GitHub，需要从 `.env.example` 复制后填写本地 API Key。
 - `.venv/`：不会上传 GitHub，需要按快速开始重新创建虚拟环境。
 - `logs/`、`__pycache__/`、`.pytest_cache/`、`.ruff_cache/`：运行和测试产物，不需要手动下载。
-- `D:\Projects\panda_mudan`：只在重新构建数据集时需要；直接运行本项目不需要旧项目目录。
+- `D:\Projects\panda_mudan`：只在重新构建数据集时需要；直接运行本项目不需要旧项目目录，可从“资源下载”中的旧项目整体或 data 包补齐。
 
 ## 常用命令
 
@@ -227,6 +227,18 @@ python .\scripts\build_dataset.py --source-root D:\Projects\panda_mudan
 ```
 
 构建脚本会把旧项目中的牡丹非遗资料整理为 `data/processed/heritage_items.json`。
+
+## 资源下载
+
+本仓库已经包含直接运行所需的 `data/processed/heritage_items.json` 和 `static/media/` 数字人视频。正常克隆仓库后，一般不需要额外下载网盘资源。
+
+如果需要重新构建数据集、恢复旧项目来源文件，或替换数字人素材，可使用以下资源：
+
+- 旧项目整体 -> `D:\Projects\panda_mudan`：<https://pan.baidu.com/s/1wKuYYoeXhD80HnuSkbSl6w>（提取码：`h54t`）
+- 旧项目 data -> `D:\Projects\panda_mudan\data/`：<https://pan.baidu.com/s/1ccoQmU1BSTbK_wJVYe5hCw>（提取码：`y3ke`）
+- 旧项目动画素材 -> 可按需提取到 `static/media/`：<https://pan.baidu.com/s/1zQyRXYG6JfvfzVDprm96cQ>（提取码：`wsv6`）
+
+旧项目中的 `models/`、`assets/audio/`、`assets/icons/` 等资源不再是本项目运行必需项；只有继续维护旧桌面端时才需要。
 
 ## 常见问题
 

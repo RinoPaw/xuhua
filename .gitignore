@@ -13,6 +13,7 @@ env/
 !.env.example
 logs/
 tmp/
+data/embeddings/
 *.log
 Thumbs.db
 .DS_Store

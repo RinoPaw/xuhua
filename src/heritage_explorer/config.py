@@ -44,3 +44,16 @@ AI_BASE_URL = os.getenv("AI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
 AI_MODEL = os.getenv("AI_MODEL", "glm-4-flash")
 AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "60"))
 AI_MAX_CONTEXT_CHARS = int(os.getenv("AI_MAX_CONTEXT_CHARS", "5200"))
+
+EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "")
+EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "https://api.vectorengine.ai/v1")
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+EMBEDDING_TIMEOUT = int(os.getenv("EMBEDDING_TIMEOUT", "60"))
+EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "64"))
+EMBEDDING_INDEX_PATH = env_path(
+    "EMBEDDING_INDEX_PATH",
+    "data/embeddings/heritage_embeddings.json",
+)
+EMBEDDING_TEXT_MAX_CHARS = int(os.getenv("EMBEDDING_TEXT_MAX_CHARS", "1400"))
+EMBEDDING_MIN_SCORE = float(os.getenv("EMBEDDING_MIN_SCORE", "0.15"))
+SEARCH_USE_EMBEDDING = os.getenv("SEARCH_USE_EMBEDDING", "0") == "1"

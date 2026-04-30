@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from . import config
 from .dataset import HeritageItem, KnowledgeBase, normalize_text
 
 
@@ -32,14 +33,32 @@ def search_items(
 
     if category:
         candidates = (item for item in candidates if item.category == category)
+    candidates = list(candidates)
 
     if not query:
         result = sorted(candidates, key=lambda item: (item.category, item.title))
         return result[offset : offset + limit], len(result)
 
     tokens = tokenize(query)
-    ranked: list[tuple[float, HeritageItem]] = []
     lowered_query = query.lower()
+    ranked = rank_lexical(candidates, lowered_query, tokens)
+
+    if config.SEARCH_USE_EMBEDDING:
+        try:
+            ranked = rank_hybrid(kb, candidates, lowered_query, tokens)
+        except Exception:  # noqa: BLE001 - semantic retrieval should degrade to lexical search.
+            pass
+
+    result = [item for _, item in ranked]
+    return result[offset : offset + limit], len(result)
+
+
+def rank_lexical(
+    candidates: Iterable[HeritageItem],
+    lowered_query: str,
+    tokens: list[str],
+) -> list[tuple[float, HeritageItem]]:
+    ranked: list[tuple[float, HeritageItem]] = []
 
     for item in candidates:
         score = score_item(item, lowered_query, tokens)
@@ -47,8 +66,37 @@ def search_items(
             ranked.append((score, item))
 
     ranked.sort(key=lambda pair: (-pair[0], pair[1].title))
-    result = [item for _, item in ranked]
-    return result[offset : offset + limit], len(result)
+    return ranked
+
+
+def rank_hybrid(
+    kb: KnowledgeBase,
+    candidates: list[HeritageItem],
+    lowered_query: str,
+    tokens: list[str],
+) -> list[tuple[float, HeritageItem]]:
+    from .embeddings import embedding_scores
+
+    semantic_scores = embedding_scores(kb, lowered_query, candidates)
+    lexical_scores = {
+        item.id: score_item(item, lowered_query, tokens)
+        for item in candidates
+    }
+    max_lexical = max(lexical_scores.values(), default=0.0) or 1.0
+    ranked: list[tuple[float, HeritageItem]] = []
+
+    for item in candidates:
+        semantic = semantic_scores.get(item.id, 0.0)
+        lexical = lexical_scores[item.id]
+        if semantic <= 0 and lexical <= 0:
+            continue
+        score = semantic * 80 + (lexical / max_lexical) * 20
+        if lowered_query and lowered_query in item.title.lower():
+            score += 8
+        ranked.append((score, item))
+
+    ranked.sort(key=lambda pair: (-pair[0], pair[1].title))
+    return ranked
 
 
 def score_item(item: HeritageItem, query: str, tokens: list[str]) -> float:

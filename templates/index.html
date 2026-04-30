@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>牡丹非遗知识库</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20260430-redesign4') }}" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">牡</div>
+          <div>
+            <h1>牡丹非遗知识库</h1>
+            <p id="metaText">资料库已就绪</p>
+          </div>
+        </div>
+
+        <section class="digital-human-panel" aria-label="数字人牡丹">
+          <video
+            id="digitalHumanVideo"
+            class="digital-human-video"
+            src="{{ url_for('static', filename='media/mudan-idle.mp4') }}"
+            autoplay
+            muted
+            loop
+            playsinline
+          ></video>
+          <div class="digital-human-overlay">
+            <div>
+              <div class="digital-human-name">牡丹</div>
+              <div id="digitalHumanStatus" class="digital-human-status">待机</div>
+            </div>
+            <div id="digitalHumanSpeech" class="digital-human-speech">你好，我在这里。</div>
+          </div>
+        </section>
+      </aside>
+
+      <section class="workbench">
+        <section class="ask-panel">
+          <div class="panel-heading">
+            <strong>向牡丹提问</strong>
+            <span id="answerMode"></span>
+          </div>
+          <div class="ask-body">
+            <textarea id="questionInput" rows="3" placeholder="例如：罗山皮影戏有什么特色？"></textarea>
+            <div class="ask-actions">
+              <label>
+                <input id="voiceEnabled" type="checkbox" checked />
+                语音播报
+              </label>
+              <span id="voiceStatus" class="voice-status" aria-live="polite"></span>
+              <button id="askButton" type="button">提问</button>
+            </div>
+            <div id="answerBox" class="answer-box">等待提问。</div>
+          </div>
+        </section>
+
+        <article class="detail-panel reference-panel">
+          <div class="panel-heading">
+            <strong>相关资料</strong>
+            <span id="relatedCount"></span>
+          </div>
+          <div class="reference-body">
+            <div id="relatedList" class="item-list related-list">
+              <div class="detail-empty compact">暂无相关条目</div>
+            </div>
+            <div class="detail-view">
+              <div id="detailEmpty" class="detail-empty">选择相关条目查看详情</div>
+              <div id="detailContent" class="detail-content" hidden>
+                <div class="detail-kicker" id="detailCategory"></div>
+                <h2 id="detailTitle"></h2>
+                <p id="detailSummary" class="summary"></p>
+                <div class="section-title">资料原文</div>
+                <p id="detailBody" class="body-text"></p>
+              </div>
+            </div>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='app.js', v='20260430-redesign4') }}"></script>
+  </body>
+</html>

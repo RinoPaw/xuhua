@@ -62,11 +62,15 @@ class EmbeddingClient:
         base_url: str | None = None,
         model: str | None = None,
         timeout: int | None = None,
+        max_retries: int | None = None,
+        retry_backoff: float | None = None,
     ):
         self.api_key = config.EMBEDDING_API_KEY if api_key is None else api_key
         self.base_url = (config.EMBEDDING_BASE_URL if base_url is None else base_url).rstrip("/")
         self.model = config.EMBEDDING_MODEL if model is None else model
         self.timeout = config.EMBEDDING_TIMEOUT if timeout is None else timeout
+        self.max_retries = config.EMBEDDING_MAX_RETRIES if max_retries is None else max_retries
+        self.retry_backoff = config.EMBEDDING_RETRY_BACKOFF if retry_backoff is None else retry_backoff
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not self.api_key:
@@ -75,15 +79,25 @@ class EmbeddingClient:
             return []
 
         last_error = ""
-        for attempt in range(config.EMBEDDING_MAX_RETRIES + 1):
+        for attempt in range(self.max_retries + 1):
             try:
                 return self._embed_texts_once(texts)
             except (EmbeddingUnavailable, TimeoutError) as exc:
                 last_error = str(exc) or type(exc).__name__
-                if attempt >= config.EMBEDDING_MAX_RETRIES:
+                if attempt >= self.max_retries:
                     break
-                time.sleep(retry_delay(exc, attempt))
+                time.sleep(self.retry_delay(exc, attempt))
         raise EmbeddingUnavailable(last_error or "Embedding request failed.")
+
+    def retry_delay(self, exc: Exception, attempt: int) -> float:
+        if isinstance(exc.__cause__, urllib.error.HTTPError):
+            retry_after = exc.__cause__.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    return max(float(retry_after), 0.0)
+                except ValueError:
+                    pass
+        return self.retry_backoff * (attempt + 1)
 
     def _embed_texts_once(self, texts: list[str]) -> list[list[float]]:
         payload = {
@@ -249,14 +263,3 @@ def describe_embedding_error(exc: Exception, api_key: str = "") -> str:
     if api_key:
         text = text.replace(api_key, "***")
     return textwrap.shorten(text, width=220, placeholder="...")
-
-
-def retry_delay(exc: Exception, attempt: int) -> float:
-    if isinstance(exc.__cause__, urllib.error.HTTPError):
-        retry_after = exc.__cause__.headers.get("Retry-After")
-        if retry_after:
-            try:
-                return max(float(retry_after), 0.0)
-            except ValueError:
-                pass
-    return config.EMBEDDING_RETRY_BACKOFF * (attempt + 1)

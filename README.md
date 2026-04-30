@@ -68,6 +68,8 @@ EMBEDDING_BASE_URL=https://api.vectorengine.ai/v1
 EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_TIMEOUT=60
 EMBEDDING_BATCH_SIZE=8
+EMBEDDING_WORKERS=6
+EMBEDDING_REQUEST_TIMEOUT=5
 EMBEDDING_MAX_RETRIES=4
 EMBEDDING_RETRY_BACKOFF=3
 EMBEDDING_REQUEST_DELAY=2
@@ -127,6 +129,8 @@ http://192.168.1.141:5050
 | `EMBEDDING_MODEL` | 否 | embedding 模型名称 | `text-embedding-3-small` |
 | `EMBEDDING_TIMEOUT` | 否 | embedding 请求超时时间，单位秒 | `60` |
 | `EMBEDDING_BATCH_SIZE` | 否 | 构建索引时每批请求条目数 | `64` |
+| `EMBEDDING_WORKERS` | 否 | 构建索引时的并发请求数 | `6` |
+| `EMBEDDING_REQUEST_TIMEOUT` | 否 | 构建索引时单个请求的超时时间，单位秒 | `5` |
 | `EMBEDDING_MAX_RETRIES` | 否 | embedding 请求失败后的最大重试次数 | `4` |
 | `EMBEDDING_RETRY_BACKOFF` | 否 | embedding 重试基础等待秒数 | `3` |
 | `EMBEDDING_REQUEST_DELAY` | 否 | 构建索引时每个批次后的等待秒数 | `0` |
@@ -229,13 +233,19 @@ python .\scripts\build_dataset.py --source-root D:\Projects\panda_mudan
 生成 embedding 语义索引：
 
 ```powershell
-python .\scripts\build_embeddings.py
+.\scripts\build_embeddings.ps1
 ```
 
 如果接口限速，可以调小批次并增加批次间隔：
 
 ```powershell
 python .\scripts\build_embeddings.py --batch-size 4 --delay 3
+```
+
+如果接口单次响应较快但偶发卡住，可以使用并发构建，并让慢请求 5 秒超时后重试：
+
+```powershell
+.\scripts\build_embeddings.ps1 -BatchSize 64 -Workers 6 -RequestTimeout 5
 ```
 
 运行开发检查：

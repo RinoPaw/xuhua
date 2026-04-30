@@ -67,6 +67,10 @@ AI_API_KEY=your_api_key
 EMBEDDING_BASE_URL=https://api.vectorengine.ai/v1
 EMBEDDING_MODEL=text-embedding-3-small
 EMBEDDING_TIMEOUT=60
+EMBEDDING_BATCH_SIZE=8
+EMBEDDING_MAX_RETRIES=4
+EMBEDDING_RETRY_BACKOFF=3
+EMBEDDING_REQUEST_DELAY=2
 SEARCH_USE_EMBEDDING=1
 EMBEDDING_API_KEY=your_embedding_api_key
 ```
@@ -123,6 +127,9 @@ http://192.168.1.141:5050
 | `EMBEDDING_MODEL` | 否 | embedding 模型名称 | `text-embedding-3-small` |
 | `EMBEDDING_TIMEOUT` | 否 | embedding 请求超时时间，单位秒 | `60` |
 | `EMBEDDING_BATCH_SIZE` | 否 | 构建索引时每批请求条目数 | `64` |
+| `EMBEDDING_MAX_RETRIES` | 否 | embedding 请求失败后的最大重试次数 | `4` |
+| `EMBEDDING_RETRY_BACKOFF` | 否 | embedding 重试基础等待秒数 | `3` |
+| `EMBEDDING_REQUEST_DELAY` | 否 | 构建索引时每个批次后的等待秒数 | `0` |
 | `EMBEDDING_INDEX_PATH` | 否 | 本地向量索引路径 | `data/embeddings/heritage_embeddings.json` |
 | `EMBEDDING_TEXT_MAX_CHARS` | 否 | 每条资料送入 embedding 的最大字符数 | `1400` |
 | `EMBEDDING_MIN_SCORE` | 否 | 语义召回最低相似度 | `0.15` |
@@ -223,6 +230,12 @@ python .\scripts\build_dataset.py --source-root D:\Projects\panda_mudan
 
 ```powershell
 python .\scripts\build_embeddings.py
+```
+
+如果接口限速，可以调小批次并增加批次间隔：
+
+```powershell
+python .\scripts\build_embeddings.py --batch-size 4 --delay 3
 ```
 
 运行开发检查：

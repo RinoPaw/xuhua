@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import textwrap
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Iterable
@@ -73,6 +74,18 @@ class EmbeddingClient:
         if not texts:
             return []
 
+        last_error = ""
+        for attempt in range(config.EMBEDDING_MAX_RETRIES + 1):
+            try:
+                return self._embed_texts_once(texts)
+            except (EmbeddingUnavailable, TimeoutError) as exc:
+                last_error = str(exc) or type(exc).__name__
+                if attempt >= config.EMBEDDING_MAX_RETRIES:
+                    break
+                time.sleep(retry_delay(exc, attempt))
+        raise EmbeddingUnavailable(last_error or "Embedding request failed.")
+
+    def _embed_texts_once(self, texts: list[str]) -> list[list[float]]:
         payload = {
             "model": self.model,
             "input": texts,
@@ -236,3 +249,14 @@ def describe_embedding_error(exc: Exception, api_key: str = "") -> str:
     if api_key:
         text = text.replace(api_key, "***")
     return textwrap.shorten(text, width=220, placeholder="...")
+
+
+def retry_delay(exc: Exception, attempt: int) -> float:
+    if isinstance(exc.__cause__, urllib.error.HTTPError):
+        retry_after = exc.__cause__.headers.get("Retry-After")
+        if retry_after:
+            try:
+                return max(float(retry_after), 0.0)
+            except ValueError:
+                pass
+    return config.EMBEDDING_RETRY_BACKOFF * (attempt + 1)

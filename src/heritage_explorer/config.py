@@ -50,6 +50,9 @@ EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "https://api.vectorengine.a
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 EMBEDDING_TIMEOUT = int(os.getenv("EMBEDDING_TIMEOUT", "60"))
 EMBEDDING_BATCH_SIZE = int(os.getenv("EMBEDDING_BATCH_SIZE", "64"))
+EMBEDDING_MAX_RETRIES = int(os.getenv("EMBEDDING_MAX_RETRIES", "4"))
+EMBEDDING_RETRY_BACKOFF = float(os.getenv("EMBEDDING_RETRY_BACKOFF", "3"))
+EMBEDDING_REQUEST_DELAY = float(os.getenv("EMBEDDING_REQUEST_DELAY", "0"))
 EMBEDDING_INDEX_PATH = env_path(
     "EMBEDDING_INDEX_PATH",
     "data/embeddings/heritage_embeddings.json",

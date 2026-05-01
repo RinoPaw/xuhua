@@ -136,7 +136,7 @@ http://192.168.1.141:5050
 | `EMBEDDING_REQUEST_DELAY` | 否 | 构建索引时每个批次后的等待秒数 | `0` |
 | `EMBEDDING_INDEX_PATH` | 否 | 本地向量索引路径 | `data/embeddings/heritage_embeddings.json` |
 | `EMBEDDING_TEXT_MAX_CHARS` | 否 | 每条资料送入 embedding 的最大字符数 | `1400` |
-| `EMBEDDING_MIN_SCORE` | 否 | 语义召回最低相似度 | `0.15` |
+| `EMBEDDING_MIN_SCORE` | 否 | 低层语义评分的备用最低相似度；应用混合检索使用排名融合，不依赖硬阈值 | `0.15` |
 | `SEARCH_USE_EMBEDDING` | 否 | 是否优先使用 embedding 混合检索，`1` 为启用 | `0` |
 
 `.env` 文件只用于本地运行，不应提交到仓库。

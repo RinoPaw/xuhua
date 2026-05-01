@@ -205,6 +205,7 @@ def embedding_scores(
     query: str,
     candidates: Iterable[HeritageItem],
     client: EmbeddingClient | None = None,
+    min_score: float | None = None,
 ) -> dict[str, float]:
     query = normalize_text(query)
     if not query:
@@ -222,12 +223,13 @@ def embedding_scores(
     records = {record.item_id: record.vector for record in index.records}
     candidate_ids = {item.id for item in candidates}
     known_ids = {item.id for item in kb.items}
+    threshold = config.EMBEDDING_MIN_SCORE if min_score is None else min_score
     scores: dict[str, float] = {}
     for item_id, vector in records.items():
         if item_id not in candidate_ids or item_id not in known_ids:
             continue
         score = dot(query_vector, vector)
-        if score >= config.EMBEDDING_MIN_SCORE:
+        if score >= threshold:
             scores[item_id] = score
     return scores
 

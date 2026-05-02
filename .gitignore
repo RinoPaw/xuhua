@@ -4,6 +4,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .archive/
+.agents/
 .claude/
 .venv/
 venv/
@@ -15,5 +16,6 @@ logs/
 tmp/
 data/embeddings/
 *.log
+skills-lock.json
 Thumbs.db
 .DS_Store

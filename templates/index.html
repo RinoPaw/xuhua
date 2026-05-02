@@ -3,84 +3,80 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>牡丹非遗知识库</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20260430-redesign4') }}" />
+    <title>叙华</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20260502-ink7') }}" />
   </head>
   <body>
-    <main class="app-shell">
-      <aside class="sidebar">
-        <div class="brand">
-          <div class="brand-mark">牡</div>
-          <div>
-            <h1>牡丹非遗知识库</h1>
-            <p id="metaText">资料库已就绪</p>
-          </div>
-        </div>
-
-        <section class="digital-human-panel" aria-label="数字人牡丹">
+    <div class="scroll-surface">
+      <!-- 挂轴：数字人 -->
+      <section class="hanging-scroll" aria-label="数字人叙华">
+        <div class="scroll-rod"></div>
+        <div class="scroll-body">
           <video
             id="digitalHumanVideo"
-            class="digital-human-video"
-            src="{{ url_for('static', filename='media/mudan-idle.mp4') }}"
-            autoplay
-            muted
-            loop
-            playsinline
+            class="scroll-video"
+            src="{{ url_for('static', filename='media/xuhua-idle.mp4') }}"
+            autoplay muted loop playsinline
           ></video>
-          <div class="digital-human-overlay">
-            <div>
-              <div class="digital-human-name">牡丹</div>
-              <div id="digitalHumanStatus" class="digital-human-status">待机</div>
+          <div class="scroll-inscription">
+            <span class="seal-mark">叙</span>
+            <div class="inscription-text">
+              <h1>叙华</h1>
+              <p id="metaText">资料库已就绪</p>
             </div>
-            <div id="digitalHumanSpeech" class="digital-human-speech">你好，我在这里。</div>
-          </div>
-        </section>
-      </aside>
-
-      <section class="workbench">
-        <section class="ask-panel">
-          <div class="panel-heading">
-            <strong>向牡丹提问</strong>
-            <span id="answerMode"></span>
-          </div>
-          <div class="ask-body">
-            <textarea id="questionInput" rows="3" placeholder="例如：罗山皮影戏有什么特色？"></textarea>
-            <div class="ask-actions">
-              <label>
-                <input id="voiceEnabled" type="checkbox" checked />
-                语音播报
-              </label>
-              <span id="voiceStatus" class="voice-status" aria-live="polite"></span>
-              <button id="askButton" type="button">提问</button>
-            </div>
-            <div id="answerBox" class="answer-box">等待提问。</div>
-          </div>
-        </section>
-
-        <article class="detail-panel reference-panel">
-          <div class="panel-heading">
-            <strong>相关资料</strong>
-            <span id="relatedCount"></span>
-          </div>
-          <div class="reference-body">
-            <div id="relatedList" class="item-list related-list">
-              <div class="detail-empty compact">暂无相关条目</div>
-            </div>
-            <div class="detail-view">
-              <div id="detailEmpty" class="detail-empty">选择相关条目查看详情</div>
-              <div id="detailContent" class="detail-content" hidden>
-                <div class="detail-kicker" id="detailCategory"></div>
-                <h2 id="detailTitle"></h2>
-                <p id="detailSummary" class="summary"></p>
-                <div class="section-title">资料原文</div>
-                <p id="detailBody" class="body-text"></p>
-              </div>
+            <div class="figure-caption">
+              <span id="digitalHumanStatus">待机</span>
+              <span id="digitalHumanSpeech" class="caption-line">你好，我在这里。</span>
             </div>
           </div>
-        </article>
+        </div>
+        <div class="scroll-rod bottom-rod"></div>
       </section>
-    </main>
 
-    <script src="{{ url_for('static', filename='app.js', v='20260430-redesign4') }}"></script>
+      <!-- 问页：问答 -->
+      <section class="ask-leaf">
+        <header class="leaf-head">
+          <span class="leaf-kicker">问</span>
+          <span class="leaf-title">向叙华提问</span>
+          <span id="answerMode" class="leaf-badge"></span>
+        </header>
+        <div class="leaf-body">
+          <textarea id="questionInput" rows="2" placeholder="例如：罗山皮影戏有什么特色？"></textarea>
+          <div class="ask-row">
+            <label class="voice-toggle">
+              <input id="voiceEnabled" type="checkbox" checked />
+              <span>语音</span>
+            </label>
+            <span id="voiceStatus" class="voice-hint"></span>
+            <button id="askButton" type="button">提问</button>
+          </div>
+          <div class="answer-scroll is-idle" id="answerBox">
+            <span class="idle-hint">等你开口。</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- 批注：参考资料 -->
+      <aside class="marginalia">
+        <header class="marginalia-head">
+          <span class="marginalia-kicker">注</span>
+          <span class="marginalia-title">相关资料</span>
+          <span id="relatedCount" class="marginalia-count"></span>
+        </header>
+        <div class="marginalia-list" id="relatedList">
+          <p class="marginalia-empty">暂无相关条目</p>
+        </div>
+        <div class="marginalia-detail" id="detailContent" hidden>
+          <span class="detail-tag" id="detailCategory"></span>
+          <h2 id="detailTitle"></h2>
+          <blockquote id="detailSummary" class="detail-blurb"></blockquote>
+          <p class="detail-label">原文</p>
+          <p id="detailBody" class="detail-body"></p>
+        </div>
+        <p class="marginalia-empty" id="detailEmpty">选择条目查看详情</p>
+      </aside>
+    </div>
+
+    <script src="{{ url_for('static', filename='app.js', v='20260502-ink7') }}"></script>
   </body>
 </html>

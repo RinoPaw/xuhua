@@ -9,7 +9,7 @@ def test_homepage_contains_digital_human_panel():
     html = response.get_data(as_text=True)
     assert response.status_code == 200
     assert 'id="digitalHumanVideo"' in html
-    assert "mudan-idle.mp4" in html
+    assert "xuhua-idle.mp4" in html
     assert 'id="voiceEnabled"' in html
     assert 'id="voiceStatus"' in html
     assert 'id="voiceReplayButton"' not in html

@@ -8,7 +8,7 @@ const relatedCount = document.querySelector("#relatedCount");
 const metaText = document.querySelector("#metaText");
 const detailEmpty = document.querySelector("#detailEmpty");
 const detailContent = document.querySelector("#detailContent");
-const detailPanel = document.querySelector(".detail-panel");
+const detailPanel = document.querySelector(".marginalia");
 const detailCategory = document.querySelector("#detailCategory");
 const detailTitle = document.querySelector("#detailTitle");
 const detailSummary = document.querySelector("#detailSummary");
@@ -19,15 +19,15 @@ const voiceEnabled = document.querySelector("#voiceEnabled");
 const voiceStatus = document.querySelector("#voiceStatus");
 const answerBox = document.querySelector("#answerBox");
 const answerMode = document.querySelector("#answerMode");
-const digitalHumanPanel = document.querySelector(".digital-human-panel");
+const digitalHumanPanel = document.querySelector(".hanging-scroll");
 const digitalHumanVideo = document.querySelector("#digitalHumanVideo");
 const digitalHumanStatus = document.querySelector("#digitalHumanStatus");
 const digitalHumanSpeech = document.querySelector("#digitalHumanSpeech");
 
 const humanVideos = {
-  idle: "/static/media/mudan-idle.mp4",
-  thinking: "/static/media/mudan-greet.mp4",
-  speaking: "/static/media/mudan-speak.mp4",
+  idle: "/static/media/xuhua-idle.mp4",
+  thinking: "/static/media/xuhua-greet.mp4",
+  speaking: "/static/media/xuhua-speak.mp4",
 };
 
 let humanIdleTimer = 0;
@@ -81,12 +81,21 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
-function setAnswerPlain(value) {
+function setAnswerState(stateName) {
+  answerBox.classList.remove("is-idle", "is-loading", "is-error");
+  if (stateName) {
+    answerBox.classList.add(`is-${stateName}`);
+  }
+}
+
+function setAnswerPlain(value, stateName = "") {
   answerBox.classList.remove("markdown-answer");
+  setAnswerState(stateName);
   answerBox.textContent = value;
 }
 
 function setAnswerMarkdown(value) {
+  setAnswerState("");
   answerBox.classList.add("markdown-answer");
   answerBox.innerHTML = renderMarkdown(value);
 }
@@ -191,8 +200,13 @@ function renderInlineMarkdown(value) {
     .replace(/_([^_]+)_/g, "<em>$1</em>");
 }
 
-function loadMeta() {
-  metaText.textContent = "资料库已就绪";
+async function loadMeta() {
+  try {
+    const data = await fetchJson("/api/meta");
+    metaText.textContent = `${data.item_count} 项 · ${data.category_count} 类`;
+  } catch {
+    metaText.textContent = "资料库已就绪";
+  }
 }
 
 async function loadRelatedItems(requestId = relatedRequestId) {
@@ -212,7 +226,7 @@ function renderRelatedItems(items, total = items.length) {
   relatedCount.textContent = state.query ? `${total} 条` : "";
   relatedList.innerHTML = items.length
     ? items.map(itemButtonHtml).join("")
-    : `<div class="detail-empty compact">${state.query ? "没有匹配条目" : "暂无相关条目"}</div>`;
+    : `<p class="marginalia-empty">${state.query ? "没有匹配条目" : "暂无相关条目"}</p>`;
   relatedList.querySelectorAll("button").forEach((button) => {
     button.classList.toggle("active", button.dataset.id === state.selectedId);
     button.addEventListener("click", () => loadDetail(button.dataset.id, true));
@@ -222,9 +236,9 @@ function renderRelatedItems(items, total = items.length) {
 function itemButtonHtml(item) {
   const summary = item.summary || "暂无摘要";
   return `
-    <button class="item-button" type="button" data-id="${escapeHtml(item.id)}">
-      <div class="item-title">${escapeHtml(item.title)}</div>
-      <div class="item-meta">${escapeHtml(item.category)} · ${escapeHtml(summary.slice(0, 46))}</div>
+    <button class="item-entry" type="button" data-id="${escapeHtml(item.id)}">
+      <div class="item-entry-title">${escapeHtml(item.title)}</div>
+      <div class="item-entry-meta">${escapeHtml(item.category)} · ${escapeHtml(summary.slice(0, 46))}</div>
     </button>
   `;
 }
@@ -272,6 +286,8 @@ function updateRelatedItems() {
     return;
   }
 
+  relatedCount.textContent = "检索中";
+  relatedList.innerHTML = `<p class="marginalia-empty is-live">正在检索</p>`;
   const requestId = relatedRequestId;
   relatedTimer = window.setTimeout(() => {
     loadRelatedItems(requestId);
@@ -289,7 +305,7 @@ questionInput.addEventListener("keydown", (event) => {
 async function askQuestion() {
   const question = questionInput.value.trim();
   if (!question) {
-    setAnswerPlain("请先输入问题。");
+    setAnswerPlain("请先输入问题。", "error");
     return;
   }
 
@@ -297,7 +313,7 @@ async function askQuestion() {
   askButton.disabled = true;
   askButton.textContent = "思考中";
   answerMode.textContent = "";
-  setAnswerPlain("正在检索数据集并生成回答...");
+  setAnswerPlain("正在检索数据集并生成回答...", "loading");
   lastSpeechText = "";
   setVoiceStatus("");
   setDigitalHumanState("thinking", "正在检索", "我先从资料库里找和问题最相关的内容。");
@@ -315,7 +331,7 @@ async function askQuestion() {
     renderRelatedItems(payload.sources, payload.sources.length);
   } catch (error) {
     const message = error.name === "AbortError" ? "问答超时，请稍后再试。" : `问答失败：${error.message}`;
-    setAnswerPlain(message);
+    setAnswerPlain(message, "error");
     setDigitalHumanState("idle", "出现错误", message);
     stopSpeech();
   } finally {

@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mudan-heritage-explorer"
+name = "xuhua"
 version = "0.1.0"
-description = "A clean local knowledge-base system for Chinese intangible cultural heritage data."
+description = "叙华 — 面向牡丹非遗资料的本地 Web 知识库与 AI 问答系统"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.scripts]
-heritage-explorer = "heritage_explorer.web:main"
+xuhua = "heritage_explorer.web:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

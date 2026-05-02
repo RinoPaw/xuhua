@@ -53,8 +53,8 @@ copy .env.example .env
 4. 如需接入大模型，编辑 `.env` 并填写 API Key：
 
 ```env
-AI_BASE_URL=https://open.bigmodel.cn/api/paas/v4
-AI_MODEL=glm-4-flash
+AI_BASE_URL=your_chat_base_url
+AI_MODEL=your_chat_model
 AI_TIMEOUT=60
 AI_API_KEY=your_api_key
 ```
@@ -64,8 +64,8 @@ AI_API_KEY=your_api_key
 5. 如需启用 embedding 语义检索，继续在 `.env` 中填写：
 
 ```env
-EMBEDDING_BASE_URL=https://api.vectorengine.ai/v1
-EMBEDDING_MODEL=text-embedding-3-small
+EMBEDDING_BASE_URL=your_embedding_base_url
+EMBEDDING_MODEL=your_embedding_model
 EMBEDDING_TIMEOUT=60
 EMBEDDING_BATCH_SIZE=8
 EMBEDDING_WORKERS=6
@@ -120,13 +120,13 @@ http://192.168.1.141:5050
 | `DEBUG` | 否 | 是否开启调试模式，`1` 为开启 | `0` |
 | `DATASET_PATH` | 否 | 非遗数据集路径 | `data/processed/heritage_items.json` |
 | `AI_API_KEY` | 否 | OpenAI 兼容接口密钥，留空时使用本地依据式回答 | 空 |
-| `AI_BASE_URL` | 否 | OpenAI 兼容接口基础地址 | `https://open.bigmodel.cn/api/paas/v4` |
-| `AI_MODEL` | 否 | 使用的模型名称 | `glm-4-flash` |
+| `AI_BASE_URL` | 否 | OpenAI 兼容接口基础地址 | 空 |
+| `AI_MODEL` | 否 | 使用的模型名称 | 空 |
 | `AI_TIMEOUT` | 否 | 模型请求超时时间，单位秒 | `60` |
 | `AI_MAX_CONTEXT_CHARS` | 否 | 发送给模型的资料上下文最大字符数 | `5200` |
 | `EMBEDDING_API_KEY` | 否 | OpenAI 兼容 embedding 接口密钥，留空时不启用语义检索 | 空 |
-| `EMBEDDING_BASE_URL` | 否 | embedding 接口基础地址 | `https://api.vectorengine.ai/v1` |
-| `EMBEDDING_MODEL` | 否 | embedding 模型名称 | `text-embedding-3-small` |
+| `EMBEDDING_BASE_URL` | 否 | embedding 接口基础地址 | 空 |
+| `EMBEDDING_MODEL` | 否 | embedding 模型名称 | 空 |
 | `EMBEDDING_TIMEOUT` | 否 | embedding 请求超时时间，单位秒 | `60` |
 | `EMBEDDING_BATCH_SIZE` | 否 | 构建索引时每批请求条目数 | `64` |
 | `EMBEDDING_WORKERS` | 否 | 构建索引时的并发请求数 | `6` |

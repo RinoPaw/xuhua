@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>叙华</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20260502-ink7') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20260504-ink15') }}" />
   </head>
   <body>
     <div class="scroll-surface">
@@ -43,9 +43,14 @@
         <div class="leaf-body">
           <textarea id="questionInput" rows="2" placeholder="例如：罗山皮影戏有什么特色？"></textarea>
           <div class="ask-row">
-            <label class="voice-toggle">
+            <label id="voiceToggle" class="voice-toggle" title="语音播报">
               <input id="voiceEnabled" type="checkbox" checked />
-              <span>语音</span>
+              <span class="voice-knob">
+                <span class="voice-wave">
+                  <i></i><i></i><i></i><i></i>
+                </span>
+              </span>
+              <span class="voice-label">播报</span>
             </label>
             <span id="voiceStatus" class="voice-hint"></span>
             <button id="askButton" type="button">提问</button>
@@ -77,6 +82,6 @@
       </aside>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js', v='20260502-ink7') }}"></script>
+    <script src="{{ url_for('static', filename='app.js', v='20260504-ink15') }}"></script>
   </body>
 </html>

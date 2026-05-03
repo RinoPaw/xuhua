@@ -21,9 +21,12 @@ def tokenize(query: str) -> list[str]:
     if not query:
         return []
     tokens = re.findall(r"[\w\u4e00-\u9fff]+", query)
-    if len(tokens) == 1 and len(tokens[0]) > 2:
+    if len(tokens) == 1:
         text = tokens[0]
-        tokens.extend(text[i : i + 2] for i in range(len(text) - 1))
+        if len(text) > 2:
+            tokens.extend(text[i : i + 2] for i in range(len(text) - 1))
+        elif len(text) == 2:
+            tokens.extend(ch for ch in text if "\u4e00" <= ch <= "\u9fff")
     return list(dict.fromkeys(tokens))
 
 
@@ -55,6 +58,34 @@ def search_items(
             ranked = rank_hybrid(kb, candidates, lowered_query, tokens)
         except Exception:  # noqa: BLE001 - semantic retrieval should degrade to lexical search.
             pass
+
+    result = [item for _, item in ranked]
+    return result[offset : offset + limit], len(result)
+
+
+def search_items_lexical(
+    kb: KnowledgeBase,
+    query: str = "",
+    category: str = "",
+    limit: int = 30,
+    offset: int = 0,
+) -> tuple[list[HeritageItem], int]:
+    """Fast lexical-only search that never calls the embedding API."""
+    query = normalize_text(query)
+    category = normalize_text(category)
+    candidates: Iterable[HeritageItem] = kb.items
+
+    if category:
+        candidates = (item for item in candidates if item.category == category)
+    candidates = list(candidates)
+
+    if not query:
+        result = sorted(candidates, key=lambda item: (item.category, item.title))
+        return result[offset : offset + limit], len(result)
+
+    tokens = tokenize(query)
+    lowered_query = query.lower()
+    ranked = rank_lexical(candidates, lowered_query, tokens)
 
     result = [item for _, item in ranked]
     return result[offset : offset + limit], len(result)

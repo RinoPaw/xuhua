@@ -7,9 +7,12 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .config import DATASET_PATH
+
+if TYPE_CHECKING:
+    from .extractor import SoftLabels, StructuredMeta
 
 
 def normalize_text(value: str) -> str:
@@ -78,6 +81,35 @@ def load_dataset(path: Path = DATASET_PATH) -> KnowledgeBase:
 @lru_cache(maxsize=1)
 def get_knowledge_base() -> KnowledgeBase:
     return load_dataset()
+
+
+_meta_cache: dict[str, "StructuredMeta"] | None = None
+_labels_cache: dict[str, "SoftLabels"] | None = None
+
+
+def _load_extraction_cache() -> tuple[dict[str, "StructuredMeta"], dict[str, "SoftLabels"]]:
+    global _labels_cache, _meta_cache
+    if _meta_cache is None or _labels_cache is None:
+        from .extractor import ExtractionCache
+
+        _meta_cache, _labels_cache = ExtractionCache().load()
+    return _meta_cache, _labels_cache
+
+
+def clear_extraction_cache() -> None:
+    global _labels_cache, _meta_cache
+    _meta_cache = None
+    _labels_cache = None
+
+
+def get_structured_meta(item_id: str) -> "StructuredMeta | None":
+    meta, _ = _load_extraction_cache()
+    return meta.get(item_id)
+
+
+def get_soft_labels(item_id: str) -> "SoftLabels | None":
+    _, labels = _load_extraction_cache()
+    return labels.get(item_id)
 
 
 def item_to_dict(item: HeritageItem, include_content: bool = False) -> dict[str, Any]:

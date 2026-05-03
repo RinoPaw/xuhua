@@ -34,4 +34,5 @@ def test_ask_api_returns_grounded_answer(monkeypatch):
     payload = response.get_json()
     assert payload["mode"] == "local"
     assert "太极拳" in payload["answer"]
+    assert payload["speech"]
     assert payload["sources"]

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from flask import Flask, abort, jsonify, render_template, request
+import json
 
-from .ai import answer_question
+from flask import Flask, Response, abort, jsonify, render_template, request
+
+from .agent import Agent, task_type_label
 from .config import DEBUG, HOST, PORT
 from .dataset import get_knowledge_base, item_to_dict
-from .search import search_items
+from .search import search_items, search_items_lexical
 
 
 def create_app() -> Flask:
@@ -19,7 +21,9 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index():
-        return render_template("index.html")
+        response = app.make_response(render_template("index.html"))
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
 
     @app.get("/api/meta")
     def meta():
@@ -47,6 +51,10 @@ def create_app() -> Flask:
         category = request.args.get("category", "")
         limit = min(max(int(request.args.get("limit", "30")), 1), 100)
         offset = max(int(request.args.get("offset", "0")), 0)
+
+        if request.args.get("stream") == "1":
+            return _stream_items(kb, query, category, limit, offset)
+
         result, total = search_items(kb, query=query, category=category, limit=limit, offset=offset)
         return jsonify({
             "total": total,
@@ -69,14 +77,68 @@ def create_app() -> Flask:
         payload = request.get_json(silent=True) or {}
         question = str(payload.get("question") or "")
         category = str(payload.get("category") or "")
-        answer = answer_question(kb, question=question, category=category)
+        agent = Agent(kb)
+        result = agent.dispatch(query=question, category=category)
         return jsonify({
-            "answer": answer.answer,
-            "mode": answer.mode,
-            "sources": answer.sources,
+            "answer": result.answer,
+            "speech": result.speech,
+            "mode": result.mode,
+            "task_type": result.task_type.value,
+            "task_label": task_type_label(result.task_type),
+            "confidence": result.confidence,
+            "sources": result.sources,
         })
 
     return app
+
+
+def _stream_items(
+    kb, query: str, category: str, limit: int, offset: int
+):
+    """SSE helper: push lexical results immediately, hybrid results when ready."""
+
+    def generate():
+        # Establish SSE connection to force first chunk flush
+        yield ":ready\n\n"
+
+        # Phase 1 — lexical (instant)
+        lex_result, lex_total = search_items_lexical(
+            kb, query=query, category=category, limit=limit, offset=offset
+        )
+        yield _sse_event({
+            "phase": "lexical",
+            "total": lex_total,
+            "items": [item_to_dict(item) for item in lex_result],
+        })
+
+        # Phase 2 — hybrid (with embedding, may be slower)
+        from . import config as cfg
+
+        if cfg.SEARCH_USE_EMBEDDING and query:
+            try:
+                hybrid_result, hybrid_total = search_items(
+                    kb, query=query, category=category, limit=limit, offset=offset
+                )
+                yield _sse_event({
+                    "phase": "hybrid",
+                    "total": hybrid_total,
+                    "items": [item_to_dict(item) for item in hybrid_result],
+                })
+            except Exception:
+                pass
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+def _sse_event(data: dict) -> str:
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
 def main() -> None:

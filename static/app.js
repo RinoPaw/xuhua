@@ -35,8 +35,19 @@ let currentUtterance = null;
 let lastSpeechText = "";
 let speechUnlocked = false;
 let speechCancelTimer = 0;
+let voiceState = "idle"; // idle | speaking | paused
+let loadingStepTimer = 0;
 
 const speechSupported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+const baseLoadingSteps = [
+  { title: "翻检资料库", detail: "正在查找最相关的非遗条目" },
+  { title: "比对资料", detail: "正在合并项目、地区和技艺线索" },
+  { title: "组织回答", detail: "正在把资料整理成可阅读的说明" },
+  { title: "生成回答", detail: "正在请模型生成最终文字" },
+];
+const speechLoadingStep = { title: "润色播报", detail: "正在准备更适合朗读的版本" };
+const finalLoadingStep = { title: "收束答案", detail: "正在整理最后的回答文本" };
+let activeLoadingSteps = [...baseLoadingSteps, speechLoadingStep];
 
 if (!speechSupported && voiceEnabled) {
   voiceEnabled.checked = false;
@@ -47,18 +58,35 @@ if (!speechSupported && voiceEnabled) {
 stopSpeech({ delayed: true });
 window.addEventListener("pagehide", () => stopSpeech({ delayed: true }));
 window.addEventListener("beforeunload", () => stopSpeech({ delayed: true }));
-window.addEventListener("unload", () => stopSpeech({ delayed: true }));
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
     stopSpeech({ delayed: true });
   }
 });
+
 voiceEnabled?.addEventListener("change", () => {
   if (!voiceEnabled.checked) {
-    stopSpeech({ delayed: true });
+    stopSpeech();
+    setVoiceState("idle");
+    setVoiceStatus("");
   } else {
     unlockSpeech();
     setVoiceStatus("");
+  }
+});
+
+document.querySelector("#voiceToggle")?.addEventListener("click", (e) => {
+  if (!voiceEnabled.checked) return;
+  if (voiceState === "speaking") {
+    e.preventDefault();
+    window.speechSynthesis?.pause();
+    setVoiceState("paused");
+    setVoiceStatus("已暂停");
+  } else if (voiceState === "paused") {
+    e.preventDefault();
+    window.speechSynthesis?.resume();
+    setVoiceState("speaking");
+    setVoiceStatus("正在播报");
   }
 });
 window.speechSynthesis?.addEventListener?.("voiceschanged", () => {
@@ -89,15 +117,64 @@ function setAnswerState(stateName) {
 }
 
 function setAnswerPlain(value, stateName = "") {
+  stopLoadingSteps();
   answerBox.classList.remove("markdown-answer");
   setAnswerState(stateName);
   answerBox.textContent = value;
 }
 
 function setAnswerMarkdown(value) {
+  stopLoadingSteps();
   setAnswerState("");
   answerBox.classList.add("markdown-answer");
   answerBox.innerHTML = renderMarkdown(value);
+}
+
+function startLoadingSteps() {
+  activeLoadingSteps = getLoadingSteps();
+  let stepIndex = 0;
+  setAnswerLoading(stepIndex);
+  window.clearInterval(loadingStepTimer);
+  loadingStepTimer = window.setInterval(() => {
+    stepIndex = Math.min(stepIndex + 1, activeLoadingSteps.length - 1);
+    setAnswerLoading(stepIndex);
+  }, 1800);
+}
+
+function getLoadingSteps() {
+  const finalStep = voiceEnabled?.checked ? speechLoadingStep : finalLoadingStep;
+  return [...baseLoadingSteps, finalStep];
+}
+
+function stopLoadingSteps() {
+  window.clearInterval(loadingStepTimer);
+  loadingStepTimer = 0;
+}
+
+function setAnswerLoading(activeIndex) {
+  answerBox.classList.remove("markdown-answer");
+  setAnswerState("loading");
+  const steps = activeLoadingSteps.length ? activeLoadingSteps : getLoadingSteps();
+  const active = steps[activeIndex] || steps[0];
+  answerBox.innerHTML = `
+    <div class="answer-loading" role="status" aria-live="polite">
+      <div class="loading-seal">叙</div>
+      <div class="loading-copy">
+        <p class="loading-title">${escapeHtml(active.title)}</p>
+        <p class="loading-detail">${escapeHtml(active.detail)}</p>
+      </div>
+      <div class="loading-steps">
+        ${steps.map((step, index) => `
+          <span class="loading-step ${index < activeIndex ? "is-done" : ""} ${index === activeIndex ? "is-active" : ""}">
+            ${escapeHtml(step.title)}
+          </span>
+        `).join("")}
+      </div>
+      <div class="loading-shimmer" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+  `;
 }
 
 function renderMarkdown(value) {
@@ -214,12 +291,55 @@ async function loadRelatedItems(requestId = relatedRequestId) {
   const params = new URLSearchParams({
     q: query,
     limit: "8",
+    stream: "1",
   });
-  const data = await fetchJson(`/api/items?${params}`);
-  if (requestId !== relatedRequestId || query !== state.query) {
-    return;
+
+  try {
+    const response = await fetch(`/api/items?${params}`);
+    if (!response.ok) throw new Error(`${response.status}`);
+    if (requestId !== relatedRequestId || query !== state.query) return;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (requestId !== relatedRequestId || query !== state.query) {
+        reader.cancel();
+        return;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        try {
+          const event = JSON.parse(line.slice(6));
+          if (event.phase === "lexical" || event.phase === "hybrid") {
+            renderRelatedItems(event.items, event.total);
+          }
+        } catch {
+          // skip unparseable events
+        }
+      }
+    }
+  } catch {
+    // SSE failed — fall back to plain JSON
+    const plainParams = new URLSearchParams({ q: query, limit: "8" });
+    try {
+      const data = await fetchJson(`/api/items?${plainParams}`);
+      if (requestId !== relatedRequestId || query !== state.query) return;
+      renderRelatedItems(data.items, data.total);
+    } catch {
+      if (requestId === relatedRequestId && query === state.query) {
+        renderRelatedItems([]);
+      }
+    }
   }
-  renderRelatedItems(data.items, data.total);
 }
 
 function renderRelatedItems(items, total = items.length) {
@@ -236,7 +356,7 @@ function renderRelatedItems(items, total = items.length) {
 function itemButtonHtml(item) {
   const summary = item.summary || "暂无摘要";
   return `
-    <button class="item-entry" type="button" data-id="${escapeHtml(item.id)}">
+    <button class="item-entry" type="button" data-id="${escapeHtml(item.id)}" data-category="${escapeHtml(item.category)}">
       <div class="item-entry-title">${escapeHtml(item.title)}</div>
       <div class="item-entry-meta">${escapeHtml(item.category)} · ${escapeHtml(summary.slice(0, 46))}</div>
     </button>
@@ -253,6 +373,7 @@ async function loadDetail(id, shouldFocus = false) {
   detailEmpty.hidden = true;
   detailContent.hidden = false;
   detailCategory.textContent = item.category;
+  detailCategory.setAttribute("data-category", item.category);
   detailTitle.textContent = item.title;
   detailSummary.textContent = item.summary || "暂无摘要。";
   detailBody.textContent = item.content || "暂无原文。";
@@ -295,12 +416,26 @@ function updateRelatedItems() {
 }
 
 askButton.addEventListener("click", askQuestion);
-questionInput.addEventListener("input", updateRelatedItems);
+questionInput.addEventListener("input", handleQuestionInput);
 questionInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
     askQuestion();
   }
 });
+
+function handleQuestionInput() {
+  resizeQuestionInput();
+  updateRelatedItems();
+}
+
+function resizeQuestionInput() {
+  questionInput.style.height = "auto";
+  const styles = window.getComputedStyle(questionInput);
+  const maxHeight = Number.parseFloat(styles.maxHeight) || 132;
+  const nextHeight = Math.min(questionInput.scrollHeight, maxHeight);
+  questionInput.style.height = `${nextHeight}px`;
+  questionInput.classList.toggle("is-scrollable", questionInput.scrollHeight > maxHeight + 1);
+}
 
 async function askQuestion() {
   const question = questionInput.value.trim();
@@ -313,7 +448,7 @@ async function askQuestion() {
   askButton.disabled = true;
   askButton.textContent = "思考中";
   answerMode.textContent = "";
-  setAnswerPlain("正在检索数据集并生成回答...", "loading");
+  startLoadingSteps();
   lastSpeechText = "";
   setVoiceStatus("");
   setDigitalHumanState("thinking", "正在检索", "我先从资料库里找和问题最相关的内容。");
@@ -325,9 +460,15 @@ async function askQuestion() {
       category: "",
     });
     setAnswerMarkdown(payload.answer);
+    const speech = payload.speech || payload.answer;
+    console.info("[xuhua:speech]", {
+      mode: payload.mode,
+      length: speech.length,
+      text: speech,
+    });
     answerMode.textContent = modeLabel(payload.mode);
-    setDigitalHumanState("speaking", "正在回答", payload.answer);
-    speakAnswer(payload.answer);
+    setDigitalHumanState("speaking", "正在回答", speech);
+    speakAnswer(speech);
     renderRelatedItems(payload.sources, payload.sources.length);
   } catch (error) {
     const message = error.name === "AbortError" ? "问答超时，请稍后再试。" : `问答失败：${error.message}`;
@@ -420,12 +561,15 @@ function speakText(text) {
   }
 
   utterance.onstart = () => {
+    setVoiceState("speaking");
     setVoiceStatus("正在播报");
   };
   utterance.onend = () => {
+    setVoiceState("idle");
     setVoiceStatus("");
   };
   utterance.onerror = () => {
+    setVoiceState("idle");
     setVoiceStatus("自动播报被浏览器拦截");
   };
 
@@ -446,6 +590,7 @@ function stopSpeech(options = {}) {
     }
   }
   currentUtterance = null;
+  setVoiceState("idle");
 }
 
 function unlockSpeech(withThinkingVoice = false) {
@@ -471,6 +616,26 @@ function setVoiceStatus(value) {
   if (voiceStatus) {
     voiceStatus.textContent = value;
   }
+  if (value) {
+    voiceStatus.classList.add("is-active");
+  } else {
+    voiceStatus.classList.remove("is-active");
+  }
+}
+
+function setVoiceState(state) {
+  voiceState = state;
+  const toggle = document.querySelector("#voiceToggle");
+  if (!toggle) return;
+  toggle.classList.remove("is-speaking", "is-paused");
+  if (state !== "idle") {
+    toggle.classList.add(`is-${state}`);
+  }
+  // Update label
+  const label = toggle.querySelector(".voice-label");
+  if (label) {
+    label.textContent = { speaking: "暂停", paused: "继续", idle: "播报" }[state] || "播报";
+  }
 }
 
 function speechText(value) {
@@ -478,7 +643,7 @@ function speechText(value) {
     .replace(/模型接口暂不可用[\s\S]*$/u, "")
     .replace(/\s+/g, " ")
     .trim();
-  return text.length > 520 ? `${text.slice(0, 520)}。` : text;
+  return text.length > 720 ? `${text.slice(0, 720)}。` : text;
 }
 
 function stripMarkdown(value) {
@@ -508,4 +673,15 @@ function compactSpeech(value) {
 }
 
 loadMeta();
-renderRelatedItems([]);
+syncRestoredQuestion();
+window.addEventListener("pageshow", syncRestoredQuestion);
+
+function syncRestoredQuestion() {
+  resizeQuestionInput();
+  const restoredQuery = questionInput.value.trim();
+  if (restoredQuery !== state.query) {
+    updateRelatedItems();
+  } else if (!restoredQuery) {
+    renderRelatedItems([]);
+  }
+}

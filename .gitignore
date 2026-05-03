@@ -15,6 +15,8 @@ env/
 logs/
 tmp/
 data/embeddings/
+data/processed/heritage_meta.json
+data/processed/heritage_labels.json
 *.log
 skills-lock.json
 Thumbs.db

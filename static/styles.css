@@ -25,6 +25,19 @@
   --scroll-rod-light: #5c4b40;
   --radius: 4px;
   --radius-soft: 2px;
+
+  /* 分类色标 */
+  --cat-传统戏剧: #c23a2b;
+  --cat-传统音乐: #d4770a;
+  --cat-传统美术: #b8860b;
+  --cat-传统舞蹈: #3b7a9e;
+  --cat-传统医药: #5a6e4a;
+  --cat-民俗: #8b5e3c;
+  --cat-传统技艺: #4a6b5e;
+  --cat-曲艺: #9b4a7b;
+  --cat-传统体育: #2c6e49;
+  --cat-民间文学: #7b5e3c;
+  --cat-未分类: #888;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -368,11 +381,12 @@ body::before {
 textarea {
   width: 100%;
   min-height: 74px;
-  max-height: 96px;
+  max-height: 132px;
   resize: none;
+  overflow-y: hidden;
   border: none;
   border-bottom: 2px solid rgba(26, 22, 20, 0.18);
-  padding: 12px 0;
+  padding: 12px 8px 12px 0;
   outline: none;
   background: transparent;
   color: var(--ink);
@@ -380,6 +394,25 @@ textarea {
   line-height: 1.7;
   font-family: "Noto Serif SC", "STSong", "SimSun", serif;
   transition: border-color 0.4s ease;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(107, 144, 128, 0.55) transparent;
+}
+
+textarea.is-scrollable {
+  overflow-y: auto;
+}
+
+textarea::-webkit-scrollbar {
+  width: 5px;
+}
+
+textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+textarea::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(107, 144, 128, 0.45);
 }
 
 textarea::placeholder {
@@ -401,29 +434,139 @@ textarea:focus {
 .voice-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--ink-muted);
+  gap: 10px;
   cursor: pointer;
-  font-family: "Noto Serif SC", "STSong", serif;
-  letter-spacing: 1px;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .voice-toggle input {
-  width: 15px;
-  height: 15px;
-  accent-color: var(--celadon);
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.voice-knob {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 26px;
+  border-radius: 13px;
+  background: rgba(0, 0, 0, 0.12);
+  transition: background 0.35s ease;
+}
+
+.voice-toggle input:checked + .voice-knob {
+  background: var(--celadon);
+}
+
+.voice-knob::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: white;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  transition: transform 0.3s cubic-bezier(.4,0,.2,1);
+}
+
+.voice-toggle input:checked + .voice-knob::after {
+  transform: translateX(14px);
+}
+
+/* 声波动画 */
+.voice-wave {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.voice-toggle input:checked + .voice-knob .voice-wave {
+  opacity: 1;
+}
+
+.voice-wave i {
+  display: block;
+  width: 2px;
+  height: 6px;
+  border-radius: 1px;
+  background: rgba(255,255,255,0.9);
+  animation: wave-bounce 0.9s ease-in-out infinite;
+}
+
+.voice-wave i:nth-child(1) { animation-delay: 0s; }
+.voice-wave i:nth-child(2) { animation-delay: 0.15s; }
+.voice-wave i:nth-child(3) { animation-delay: 0.3s; }
+.voice-wave i:nth-child(4) { animation-delay: 0.45s; }
+
+@keyframes wave-bounce {
+  0%, 100% { height: 4px; }
+  50%      { height: 10px; }
+}
+
+/* 说话时声波加速，暂停时静止 */
+.voice-toggle.is-speaking .voice-wave i {
+  animation-duration: 0.4s;
+}
+
+.voice-toggle.is-paused .voice-wave i {
+  animation-play-state: paused;
+  height: 4px;
+}
+
+/* 暂停指示：双竖线 */
+.voice-toggle.is-paused .voice-knob::after {
+  border-radius: 2px;
+  width: 4px;
+  height: 14px;
+  left: 14px;
+  box-shadow: 6px 0 0 white;
+  background: transparent;
+  transform: none;
+}
+
+.voice-label {
+  font-size: 12px;
+  color: var(--ink-muted);
+  letter-spacing: 2px;
+  font-family: "Noto Serif SC", "STSong", serif;
+  transition: color 0.3s ease;
+}
+
+.voice-toggle input:checked ~ .voice-label {
+  color: var(--celadon-dark);
+}
+
+.voice-toggle.is-speaking .voice-label {
+  color: var(--vermillion);
 }
 
 .voice-hint {
   flex: 1;
   min-width: 0;
   font-size: 11px;
-  color: #426657;
+  color: var(--celadon-dark);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: "KaiTi", "STKaiti", serif;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.voice-hint.is-active {
+  opacity: 1;
 }
 
 #askButton {
@@ -463,6 +606,7 @@ textarea:focus {
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
+  position: relative;
   padding: 20px 22px;
   border-top: 1px solid var(--paper-line);
   border-left: 2px solid rgba(184, 160, 122, 0.28);
@@ -526,6 +670,140 @@ textarea:focus {
 .answer-scroll.is-loading {
   color: #315346;
   border-left-color: rgba(107, 144, 128, 0.65);
+  overflow: hidden;
+}
+
+.answer-scroll.is-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.0) 28%,
+    rgba(255, 255, 255, 0.35) 45%,
+    transparent 62%
+  );
+  transform: translateX(-120%);
+  animation: answer-sheen 2.4s ease-in-out infinite;
+}
+
+.answer-loading {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px 14px;
+  width: min(560px, 100%);
+  padding: 20px;
+  text-align: left;
+}
+
+.loading-seal {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(107, 144, 128, 0.55);
+  color: var(--celadon-dark);
+  font: 900 24px/1 "KaiTi", "STKaiti", serif;
+  animation: loading-pulse 1.8s ease-in-out infinite;
+}
+
+.loading-copy {
+  min-width: 0;
+  align-self: center;
+}
+
+.loading-title {
+  margin: 0 0 4px;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 900;
+  letter-spacing: 2px;
+}
+
+.loading-detail {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 13px;
+  letter-spacing: 1px;
+}
+
+.loading-steps {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.loading-step {
+  padding: 4px 8px;
+  border-left: 2px solid rgba(107, 144, 128, 0.25);
+  color: var(--ink-soft);
+  font-size: 12px;
+  letter-spacing: 1px;
+  background: rgba(255, 255, 255, 0.18);
+}
+
+.loading-step.is-done {
+  color: var(--celadon-dark);
+  border-left-color: rgba(107, 144, 128, 0.6);
+}
+
+.loading-step.is-active {
+  color: var(--vermillion);
+  border-left-color: var(--vermillion);
+  background: rgba(194, 58, 43, 0.06);
+}
+
+.loading-shimmer {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 9px;
+  margin-top: 2px;
+}
+
+.loading-shimmer span {
+  position: relative;
+  display: block;
+  height: 9px;
+  overflow: hidden;
+  background: rgba(107, 144, 128, 0.12);
+}
+
+.loading-shimmer span:nth-child(1) { width: 92%; }
+.loading-shimmer span:nth-child(2) { width: 76%; }
+.loading-shimmer span:nth-child(3) { width: 84%; }
+
+.loading-shimmer span::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.55),
+    transparent
+  );
+  transform: translateX(-100%);
+  animation: loading-line 1.5s ease-in-out infinite;
+}
+
+@keyframes answer-sheen {
+  0% { transform: translateX(-120%); }
+  55%, 100% { transform: translateX(120%); }
+}
+
+@keyframes loading-line {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@keyframes loading-pulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(107, 144, 128, 0); }
+  50% { box-shadow: 0 0 18px rgba(107, 144, 128, 0.24); }
 }
 
 .answer-scroll.is-error {
@@ -668,6 +946,23 @@ textarea:focus {
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
 }
 
+/* 每个条目左边框按分类着色 */
+.item-entry[data-category] {
+  border-left-color: var(--celadon);
+}
+
+.item-entry[data-category="传统戏剧"] { border-left-color: var(--cat-传统戏剧); }
+.item-entry[data-category="传统音乐"] { border-left-color: var(--cat-传统音乐); }
+.item-entry[data-category="传统美术"] { border-left-color: var(--cat-传统美术); }
+.item-entry[data-category="传统舞蹈"] { border-left-color: var(--cat-传统舞蹈); }
+.item-entry[data-category="传统医药"] { border-left-color: var(--cat-传统医药); }
+.item-entry[data-category="民俗"]       { border-left-color: var(--cat-民俗); }
+.item-entry[data-category="传统技艺"]   { border-left-color: var(--cat-传统技艺); }
+.item-entry[data-category="曲艺"]       { border-left-color: var(--cat-曲艺); }
+.item-entry[data-category="传统体育、游艺与杂技"] { border-left-color: var(--cat-传统体育); }
+.item-entry[data-category="民间文学"]   { border-left-color: var(--cat-民间文学); }
+.item-entry[data-category="未分类"]     { border-left-color: var(--cat-未分类); }
+
 .item-entry-title {
   font-size: 14px;
   font-weight: 900;
@@ -718,6 +1013,29 @@ textarea:focus {
   font-size: 11px;
   font-weight: 900;
   letter-spacing: 1px;
+}
+
+.detail-tag[data-category="传统戏剧"] { background: var(--cat-传统戏剧); }
+.detail-tag[data-category="传统音乐"] { background: var(--cat-传统音乐); }
+.detail-tag[data-category="传统美术"] { background: var(--cat-传统美术); }
+.detail-tag[data-category="传统舞蹈"] { background: var(--cat-传统舞蹈); }
+.detail-tag[data-category="传统医药"] { background: var(--cat-传统医药); }
+.detail-tag[data-category="民俗"]       { background: var(--cat-民俗); }
+.detail-tag[data-category="传统技艺"]   { background: var(--cat-传统技艺); }
+.detail-tag[data-category="曲艺"]       { background: var(--cat-曲艺); }
+.detail-tag[data-category="传统体育、游艺与杂技"] { background: var(--cat-传统体育); }
+.detail-tag[data-category="民间文学"]   { background: var(--cat-民间文学); }
+.detail-tag[data-category="未分类"]     { background: var(--cat-未分类); }
+
+/* 摘要左边线跟着分类色走 */
+.detail-blurb {
+  margin: 0 0 22px;
+  padding: 12px 0 12px 14px;
+  border-left: 2px solid var(--gold-dim);
+  color: rgba(26, 22, 20, 0.68);
+  font-size: 13px;
+  line-height: 1.8;
+  font-family: "KaiTi", "STKaiti", serif;
 }
 
 .detail-blurb {

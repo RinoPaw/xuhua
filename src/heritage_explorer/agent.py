@@ -222,6 +222,8 @@ class TaskConfig:
     retrieval_limit: int = 5
     require_diversity: bool = False
     context_schema: str = "fact_sheet"
+    handler_name: str | None = None
+    generate_detail: str = "正在请模型生成最终文字"
 
 
 _TASK_CONFIGS: dict[TaskType, TaskConfig] = {
@@ -229,43 +231,57 @@ _TASK_CONFIGS: dict[TaskType, TaskConfig] = {
         task_type=TaskType.CHITCHAT,
         retrieval_limit=0,
         context_schema="none",
+        generate_detail="正在组织简短回应",
     ),
     TaskType.FACT_QA: TaskConfig(
         task_type=TaskType.FACT_QA,
         retrieval_limit=5,
         context_schema="fact_sheet",
+        generate_detail="正在请模型生成最终文字",
     ),
     TaskType.BROWSE_QUERY: TaskConfig(
         task_type=TaskType.BROWSE_QUERY,
         retrieval_limit=30,
         context_schema="fact_sheet",
+        handler_name="_handle_browse",
+        generate_detail="正在整理资料生成回答",
     ),
     TaskType.COMPARISON: TaskConfig(
         task_type=TaskType.COMPARISON,
         retrieval_limit=8,
         require_diversity=True,
         context_schema="comparison_table",
+        handler_name="_handle_comparison",
+        generate_detail="正在提取条目信息并生成对比表格",
     ),
     TaskType.RECOMMENDATION: TaskConfig(
         task_type=TaskType.RECOMMENDATION,
         retrieval_limit=10,
         require_diversity=True,
         context_schema="recommendation_cards",
+        handler_name="_handle_recommend",
+        generate_detail="正在按场景匹配和评分排序",
     ),
     TaskType.EXHIBITION_PLAN: TaskConfig(
         task_type=TaskType.EXHIBITION_PLAN,
         retrieval_limit=5,
         context_schema="exhibition_brief",
+        handler_name="_handle_exhibition",
+        generate_detail="正在匹配项目并生成策展方案",
     ),
     TaskType.STUDY_TASK: TaskConfig(
         task_type=TaskType.STUDY_TASK,
         retrieval_limit=5,
         context_schema="curriculum_brief",
+        handler_name="_handle_study_task",
+        generate_detail="正在匹配非遗项目并生成研学教案",
     ),
     TaskType.CONTENT_TRANSFORM: TaskConfig(
         task_type=TaskType.CONTENT_TRANSFORM,
         retrieval_limit=5,
         context_schema="creative_brief",
+        handler_name="_handle_content_transform",
+        generate_detail="正在匹配非遗项目并生成内容改稿",
     ),
 }
 
@@ -330,94 +346,59 @@ class Agent:
             return
 
         # Step 1: classify + analyze
-        yield {"type": "progress", "step": "classify", "title": "理解问题", "detail": "正在分析问题意图与检索条件"}
+        yield self._progress_event("classify", "理解问题", "正在分析问题意图与资料条件")
         decision = self.router.decide(query, self.kb, category)
         task_type = decision.task_type
-        yield {
-            "type": "progress",
-            "step": "classify",
-            "title": "规划任务",
-            "detail": decision.reason,
-        }
+        yield self._progress_event("classify", "规划任务", decision.reason)
         if decision.direct_answer:
-            response_title = "智能体回应" if decision.planner == "model" else "直接回应"
-            yield {
-                "type": "progress",
-                "step": "search",
-                "title": "无需检索",
-                "detail": "智能体决策为直接回应，已跳过资料库检索。",
-            }
-            yield {"type": "progress", "step": "generate", "title": response_title, "detail": "正在组织简短回应"}
-            yield AgentResult(
-                task_type=task_type,
-                answer=decision.direct_answer,
-                speech=decision.direct_answer if include_speech else "",
-                mode=decision.mode,
-                confidence=decision.confidence,
-                warnings=list(decision.warnings),
-                decision=decision.to_payload(),
-            )
+            yield from self._stream_direct_answer(decision, include_speech)
             return
 
         analyzer = QueryAnalyzer(self.kb)
         analysis = analyzer.analyze(query, task_type)
 
         # Step 2: search
-        yield {"type": "progress", "step": "search", "title": "检索资料", "detail": "正在从非遗数据库中查找匹配条目"}
+        yield self._progress_event("search", "检索资料", "正在从非遗数据库中查找匹配条目")
 
-        # ── MVP dedicated handlers ──
-        if task_type is TaskType.BROWSE_QUERY:
-            result = self._handle_browse(analysis)
-            yield {"type": "progress", "step": "generate", "title": "生成回答", "detail": "正在整理资料生成回答"}
-            if include_speech and result.speech:
-                yield {"type": "progress", "step": "speech", "title": "润色播报", "detail": "正在准备更适合朗读的版本"}
-            yield with_agent_decision(result, decision, include_speech)
-            return
+        task_config = _TASK_CONFIGS.get(task_type, _TASK_CONFIGS[TaskType.FACT_QA])
+        yield self._progress_event("generate", "生成回答", task_config.generate_detail)
+        if task_config.handler_name:
+            result = self._run_configured_handler(task_config, analysis)
+        else:
+            result = self._build_fact_result(analysis, query, category, decision)
+        yield from self._stream_completed_result(result, decision, include_speech)
 
-        if task_type is TaskType.RECOMMENDATION:
-            yield {"type": "progress", "step": "generate", "title": "生成回答", "detail": "正在按场景匹配和评分排序"}
-            result = self._handle_recommend(analysis)
-            if include_speech and result.speech:
-                yield {"type": "progress", "step": "speech", "title": "润色播报", "detail": "正在准备更适合朗读的版本"}
-            yield with_agent_decision(result, decision, include_speech)
-            return
+    def _progress_event(self, step: str, title: str, detail: str) -> dict[str, str]:
+        return {
+            "type": "progress",
+            "step": step,
+            "title": title,
+            "detail": detail,
+        }
 
-        if task_type is TaskType.EXHIBITION_PLAN:
-            yield {"type": "progress", "step": "generate", "title": "生成回答", "detail": "正在匹配项目并生成策展方案"}
-            result = self._handle_exhibition(analysis)
-            if include_speech and result.speech:
-                yield {"type": "progress", "step": "speech", "title": "润色播报", "detail": "正在准备更适合朗读的版本"}
-            yield with_agent_decision(result, decision, include_speech)
-            return
+    def _stream_direct_answer(self, decision: AgentDecision, include_speech: bool):
+        response_title = "智能体回应" if decision.planner == "model" else "直接回应"
+        yield self._progress_event("search", "直接回应", "智能体决策为直接回应，已跳过资料库检索。")
+        yield self._progress_event("generate", response_title, _TASK_CONFIGS[TaskType.CHITCHAT].generate_detail)
+        result = AgentResult(
+            task_type=decision.task_type,
+            answer=decision.direct_answer,
+            speech=decision.direct_answer,
+            mode=decision.mode,
+            confidence=decision.confidence,
+            warnings=list(decision.warnings),
+        )
+        yield from self._stream_completed_result(result, decision, include_speech)
 
-        if task_type is TaskType.COMPARISON:
-            yield {"type": "progress", "step": "generate", "title": "生成回答", "detail": "正在提取条目信息并生成对比表格"}
-            result = self._handle_comparison(analysis)
-            if include_speech and result.speech:
-                yield {"type": "progress", "step": "speech", "title": "润色播报", "detail": "正在准备更适合朗读的版本"}
-            yield with_agent_decision(result, decision, include_speech)
-            return
+    def _run_configured_handler(self, task_config: TaskConfig, analysis) -> AgentResult:
+        if not task_config.handler_name:
+            raise ValueError(f"Task config for {task_config.task_type.value} does not declare a handler.")
+        handler = getattr(self, task_config.handler_name)
+        return handler(analysis)
 
-        if task_type is TaskType.STUDY_TASK:
-            yield {"type": "progress", "step": "generate", "title": "生成回答", "detail": "正在匹配非遗项目并生成研学教案"}
-            result = self._handle_study_task(analysis)
-            if include_speech and result.speech:
-                yield {"type": "progress", "step": "speech", "title": "润色播报", "detail": "正在准备更适合朗读的版本"}
-            yield with_agent_decision(result, decision, include_speech)
-            return
-
-        if task_type is TaskType.CONTENT_TRANSFORM:
-            yield {"type": "progress", "step": "generate", "title": "生成回答", "detail": "正在匹配非遗项目并生成内容改稿"}
-            result = self._handle_content_transform(analysis)
-            if include_speech and result.speech:
-                yield {"type": "progress", "step": "speech", "title": "润色播报", "detail": "正在准备更适合朗读的版本"}
-            yield with_agent_decision(result, decision, include_speech)
-            return
-
-        # ── fallthrough: existing LLM pipeline ──
+    def _build_fact_result(self, analysis, query: str, category: str, decision: AgentDecision) -> AgentResult:
         from .ai import Answer, answer_question
 
-        yield {"type": "progress", "step": "generate", "title": "生成回答", "detail": "正在请模型生成最终文字"}
         answer_query = normalize_query_with_pinyin_anchor(
             self.kb,
             analysis.rewritten_query or query,
@@ -428,17 +409,24 @@ class Agent:
             question=answer_query,
             category=analysis.metadata_filters.get("category", category),
         )
-        if include_speech and answer.speech:
-            yield {"type": "progress", "step": "speech", "title": "润色播报", "detail": "正在准备更适合朗读的版本"}
-        yield AgentResult(
-            task_type=task_type,
+        return AgentResult(
+            task_type=decision.task_type,
             answer=answer.answer,
-            speech=answer.speech if include_speech else "",
+            speech=answer.speech,
             sources=answer.sources,
             confidence=0.85 if decision.confidence > 0.7 else 0.5,
             mode=answer.mode,
-            decision=decision.to_payload(),
         )
+
+    def _stream_completed_result(
+        self,
+        result: AgentResult,
+        decision: AgentDecision,
+        include_speech: bool,
+    ):
+        if include_speech and result.speech:
+            yield self._progress_event("speech", "润色播报", "正在准备更适合朗读的版本")
+        yield with_agent_decision(result, decision, include_speech)
 
     # ── MVP handlers ───────────────────────────────────────────────────
 

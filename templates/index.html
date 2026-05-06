@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>叙华</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20260506-agent6') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20260506-agent16') }}" />
   </head>
   <body>
     <div class="scroll-surface">
@@ -49,15 +49,12 @@
         <div class="leaf-body">
           <textarea id="questionInput" rows="2" placeholder="例如：罗山皮影戏有什么特色？"></textarea>
           <div class="ask-row">
-            <label id="voiceToggle" class="voice-toggle" title="语音播报">
-              <input id="voiceEnabled" type="checkbox" checked />
-              <span class="voice-knob">
-                <span class="voice-wave">
-                  <i></i><i></i><i></i><i></i>
-                </span>
+            <button id="voiceToggle" class="voice-button" type="button" title="播放或停止语音播报" aria-pressed="false" data-state="idle">
+              <span class="voice-icon" aria-hidden="true">
+                <span class="voice-glyph"></span>
               </span>
-              <span class="voice-label">播报</span>
-            </label>
+              <span class="voice-label">播放</span>
+            </button>
             <span id="voiceStatus" class="voice-hint"></span>
             <button id="askButton" type="button">提问</button>
           </div>
@@ -88,6 +85,6 @@
       </aside>
     </div>
 
-    <script src="{{ url_for('static', filename='app.js', v='20260506-agent6') }}"></script>
+    <script src="{{ url_for('static', filename='app.js', v='20260506-agent16') }}"></script>
   </body>
 </html>

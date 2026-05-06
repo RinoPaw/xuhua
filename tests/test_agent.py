@@ -1,5 +1,6 @@
 from heritage_explorer.agent import (
     Agent,
+    AgentResult,
     IntentRouter,
     TaskType,
     _TASK_CONFIGS,
@@ -371,6 +372,39 @@ def test_task_config_retrieval_limits():
     assert _TASK_CONFIGS[TaskType.COMPARISON].retrieval_limit == 8
     assert _TASK_CONFIGS[TaskType.RECOMMENDATION].retrieval_limit == 10
     assert _TASK_CONFIGS[TaskType.BROWSE_QUERY].retrieval_limit == 30
+    assert _TASK_CONFIGS[TaskType.RECOMMENDATION].handler_name == "_handle_recommend"
+    assert _TASK_CONFIGS[TaskType.CONTENT_TRANSFORM].handler_name == "_handle_content_transform"
+    assert _TASK_CONFIGS[TaskType.FACT_QA].handler_name is None
+    assert _TASK_CONFIGS[TaskType.CHITCHAT].generate_detail == "正在组织简短回应"
+
+
+def test_dispatch_stream_uses_task_config_generate_detail_for_rule_handler(monkeypatch):
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+
+    def fake_recommend(_analysis):
+        return AgentResult(
+            task_type=TaskType.RECOMMENDATION,
+            answer="推荐结果",
+            speech="推荐播报",
+            mode="local",
+        )
+
+    monkeypatch.setattr(agent, "_handle_recommend", fake_recommend)
+    events = list(agent.dispatch_stream("推荐3个适合校园展示的传统美术项目"))
+    progress_events = [event for event in events if isinstance(event, dict)]
+    result = next(event for event in events if isinstance(event, AgentResult))
+
+    assert any(
+        event.get("step") == "generate"
+        and event.get("detail") == _TASK_CONFIGS[TaskType.RECOMMENDATION].generate_detail
+        for event in progress_events
+    )
+    assert any(event.get("step") == "speech" for event in progress_events)
+    assert result.answer == "推荐结果"
+    assert result.speech == "推荐播报"
 
 
 # ── MVP handler tests ──

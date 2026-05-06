@@ -15,7 +15,7 @@ const detailSummary = document.querySelector("#detailSummary");
 const detailBody = document.querySelector("#detailBody");
 const questionInput = document.querySelector("#questionInput");
 const askButton = document.querySelector("#askButton");
-const voiceEnabled = document.querySelector("#voiceEnabled");
+const voiceToggle = document.querySelector("#voiceToggle");
 const voiceStatus = document.querySelector("#voiceStatus");
 const answerBox = document.querySelector("#answerBox");
 const answerMode = document.querySelector("#answerMode");
@@ -27,14 +27,14 @@ const digitalHumanSpeech = document.querySelector("#digitalHumanSpeech");
 
 const humanVideos = {
   idle: ["/static/media/wait1.mp4", "/static/media/wait2.mp4"],
-  thinking: "/static/media/greet1.mp4",
+  thinking: ["/static/media/greet1.mp4"],
   speaking: ["/static/media/speak1.mp4", "/static/media/speak2.mp4", "/static/media/speak3.mp4"],
-  farewell: "/static/media/thanksandbye.mp4",
+  farewell: ["/static/media/thanksandbye.mp4"],
 };
 const humanVideoIndexes = {};
 
 let humanIdleTimer = 0;
-let humanIdleLoopTimer = 0;
+let humanLoopTimer = 0;
 let humanTransitionTimer = 0;
 let humanDissolveTimer = 0;
 let humanTransitionSeq = 0;
@@ -45,9 +45,14 @@ let currentUtterance = null;
 let lastSpeechText = "";
 let speechUnlocked = false;
 let speechCancelTimer = 0;
-let voiceState = "idle"; // idle | speaking | paused
+let speechStartGuardTimer = 0;
+let voiceState = "idle"; // idle | speaking | disabled
+let lastSpeechHumanState = "speaking";
 let loadingStepTimer = 0;
+let loadingStepIndex = 0;
+let loadingTargetIndex = 0;
 let askAbortController = null;
+let askRequestId = 0;
 
 const speechSupported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
 const PROGRESS_STEP_INDEX = {
@@ -65,14 +70,10 @@ const baseLoadingSteps = [
 const speechLoadingStep = { title: "润色播报", detail: "正在准备更适合朗读的版本" };
 const finalLoadingStep = { title: "收束答案", detail: "正在整理最后的回答文本" };
 let activeLoadingSteps = [...baseLoadingSteps, speechLoadingStep];
+const HUMAN_MIN_THINKING_MS = 1120;
+const HUMAN_DISSOLVE_LEAD_MS = 1050;
 
-if (!speechSupported && voiceEnabled) {
-  voiceEnabled.checked = false;
-  voiceEnabled.disabled = true;
-  voiceStatus.textContent = "浏览器不支持语音";
-}
-
-stopSpeech({ delayed: true });
+stopSpeech({ delayed: true, preserveHuman: true });
 window.addEventListener("pagehide", () => stopSpeech({ delayed: true }));
 window.addEventListener("beforeunload", () => stopSpeech({ delayed: true }));
 document.addEventListener("visibilitychange", () => {
@@ -81,30 +82,25 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-voiceEnabled?.addEventListener("change", () => {
-  if (!voiceEnabled.checked) {
-    stopSpeech();
-    setVoiceState("idle");
-    setVoiceStatus("");
-  } else {
-    unlockSpeech();
-    setVoiceStatus("");
+voiceToggle?.addEventListener("click", () => {
+  if (!speechSupported) {
+    setVoiceStatus("浏览器不支持语音");
+    return;
   }
-});
-
-document.querySelector("#voiceToggle")?.addEventListener("click", (e) => {
-  if (!voiceEnabled.checked) return;
   if (voiceState === "speaking") {
-    e.preventDefault();
-    window.speechSynthesis?.pause();
-    setVoiceState("paused");
-    setVoiceStatus("已暂停");
-  } else if (voiceState === "paused") {
-    e.preventDefault();
-    window.speechSynthesis?.resume();
-    setVoiceState("speaking");
-    setVoiceStatus("正在播报");
+    stopSpeech();
+    setVoiceStatus("已停止");
+    return;
   }
+  if (!lastSpeechText) {
+    setVoiceStatus("暂无可播报内容");
+    return;
+  }
+  if (currentHumanState !== "speaking" && currentHumanState !== "farewell") {
+    setDigitalHumanState(lastSpeechHumanState, "正在回答", lastSpeechText);
+  }
+  unlockSpeech();
+  speakText(lastSpeechText);
 });
 window.speechSynthesis?.addEventListener?.("voiceschanged", () => {
   window.speechSynthesis.getVoices();
@@ -149,23 +145,35 @@ function setAnswerMarkdown(value) {
 
 function startLoadingSteps() {
   activeLoadingSteps = getLoadingSteps();
-  let stepIndex = 0;
-  setAnswerLoading(stepIndex);
+  loadingStepIndex = 0;
+  loadingTargetIndex = 0;
+  setAnswerLoading(loadingStepIndex);
   window.clearInterval(loadingStepTimer);
   loadingStepTimer = window.setInterval(() => {
-    stepIndex = Math.min(stepIndex + 1, activeLoadingSteps.length - 1);
-    setAnswerLoading(stepIndex);
+    const maxIndex = activeLoadingSteps.length - 1;
+    if (loadingStepIndex < loadingTargetIndex) {
+      loadingStepIndex += 1;
+      setAnswerLoading(loadingStepIndex);
+      return;
+    }
+    if (loadingTargetIndex < maxIndex) {
+      loadingTargetIndex += 1;
+      loadingStepIndex = Math.min(loadingStepIndex + 1, loadingTargetIndex);
+      setAnswerLoading(loadingStepIndex);
+    }
   }, 1800);
 }
 
 function getLoadingSteps() {
-  const finalStep = voiceEnabled?.checked ? speechLoadingStep : finalLoadingStep;
+  const finalStep = speechSupported ? speechLoadingStep : finalLoadingStep;
   return [...baseLoadingSteps, finalStep];
 }
 
 function stopLoadingSteps() {
   window.clearInterval(loadingStepTimer);
   loadingStepTimer = 0;
+  loadingStepIndex = 0;
+  loadingTargetIndex = 0;
 }
 
 function setAnswerLoading(activeIndex) {
@@ -204,7 +212,10 @@ function applyAskProgress(event) {
     title: event.title || activeLoadingSteps[index].title,
     detail: event.detail || activeLoadingSteps[index].detail,
   };
-  setAnswerLoading(index);
+  loadingTargetIndex = Math.max(loadingTargetIndex, index);
+  if (index <= loadingStepIndex) {
+    setAnswerLoading(loadingStepIndex);
+  }
 }
 
 function renderMarkdown(value) {
@@ -452,8 +463,8 @@ function updateRelatedItems() {
   }
 
   relatedRequestKey = newQuery;
-  relatedCount.textContent = "检索中";
-  relatedList.innerHTML = `<p class="marginalia-empty is-live">正在检索</p>`;
+  relatedCount.textContent = "思考中";
+  relatedList.innerHTML = `<p class="marginalia-empty is-live">正在思考</p>`;
   relatedTimer = window.setTimeout(() => {
     loadRelatedItems(newQuery);
   }, 1000);
@@ -481,6 +492,80 @@ function resizeQuestionInput() {
   questionInput.classList.toggle("is-scrollable", questionInput.scrollHeight > maxHeight + 1);
 }
 
+function isActiveAskRequest(requestId, controller = askAbortController) {
+  return requestId === askRequestId && controller === askAbortController;
+}
+
+function beginAskSession(question) {
+  const requestId = ++askRequestId;
+  askAbortController?.abort();
+  const controller = new AbortController();
+  askAbortController = controller;
+
+  state.query = question;
+  askButton.disabled = true;
+  askButton.textContent = "提问";
+  answerMode.textContent = "";
+  startLoadingSteps();
+  lastSpeechText = "";
+  stopSpeech({ preserveHuman: true });
+  const thinkingStartedAt = performance.now();
+  setDigitalHumanState("thinking", "正在思考", "我先从资料库里找和问题最相关的内容。");
+  unlockSpeech(true);
+
+  return { requestId, controller, thinkingStartedAt };
+}
+
+function finishAskSession(requestId, controller) {
+  if (!isActiveAskRequest(requestId, controller)) {
+    return;
+  }
+  askButton.disabled = false;
+  askButton.textContent = "提问";
+  askAbortController = null;
+}
+
+function answerSpeechFromPayload(payload) {
+  return payload?.speech || payload?.answer || "";
+}
+
+function answerRelatedItems(payload) {
+  return payload?.items?.length ? payload.items : (payload?.sources || []);
+}
+
+async function presentAskResponse(requestId, controller, question, payload, thinkingStartedAt) {
+  await waitForThinkingDissolve(thinkingStartedAt);
+  if (!isActiveAskRequest(requestId, controller)) {
+    return;
+  }
+
+  const speech = answerSpeechFromPayload(payload);
+  setAnswerMarkdown(payload.answer);
+  console.info("[xuhua:speech]", {
+    mode: payload.mode,
+    length: speech.length,
+    text: speech,
+  });
+  answerMode.textContent = taskModeLabel(payload);
+  lastSpeechHumanState = responseHumanState(question);
+  setDigitalHumanState(lastSpeechHumanState, "正在回答", speech);
+  if (!speakAnswer(speech)) {
+    scheduleHumanReturnToIdle(visualAnswerDuration(speech));
+  }
+  const related = answerRelatedItems(payload);
+  renderRelatedItems(related, related.length);
+}
+
+function presentAskError(requestId, controller, error) {
+  if (!isActiveAskRequest(requestId, controller)) {
+    return;
+  }
+  const message = error.name === "AbortError" ? "问答超时，请稍后再试。" : `问答失败：${error.message}`;
+  setAnswerPlain(message, "error");
+  setDigitalHumanState("idle", "出现错误", message);
+  stopSpeech();
+}
+
 async function askQuestion() {
   const question = questionInput.value.trim();
   if (!question) {
@@ -488,57 +573,26 @@ async function askQuestion() {
     return;
   }
 
-  state.query = question;
-  if (askAbortController) {
-    askAbortController.abort();
-  }
-  askAbortController = new AbortController();
-  askButton.disabled = true;
-  askButton.textContent = "思考中";
-  answerMode.textContent = "";
-  startLoadingSteps();
-  lastSpeechText = "";
-  setVoiceStatus("");
-  setDigitalHumanState("thinking", "正在检索", "我先从资料库里找和问题最相关的内容。");
-  unlockSpeech(true);
+  const session = beginAskSession(question);
 
   try {
     const payload = await postSseResult("/api/ask", {
       question,
       category: "",
-      voice_enabled: Boolean(voiceEnabled?.checked),
-    }, 65000, askAbortController.signal);
-    setAnswerMarkdown(payload.answer);
-    const speech = payload.speech || payload.answer;
-    console.info("[xuhua:speech]", {
-      mode: payload.mode,
-      length: speech.length,
-      text: speech,
-    });
-    answerMode.textContent = taskModeLabel(payload);
-    setDigitalHumanState(responseHumanState(question), "正在回答", speech);
-    speakAnswer(speech);
-    const related = payload.items?.length ? payload.items : (payload.sources || []);
-    renderRelatedItems(related, related.length);
+      voice_enabled: speechSupported,
+    }, 65000, session.controller);
+    await presentAskResponse(session.requestId, session.controller, question, payload, session.thinkingStartedAt);
   } catch (error) {
-    const message = error.name === "AbortError" ? "问答超时，请稍后再试。" : `问答失败：${error.message}`;
-    setAnswerPlain(message, "error");
-    setDigitalHumanState("idle", "出现错误", message);
-    stopSpeech();
+    presentAskError(session.requestId, session.controller, error);
   } finally {
-    askButton.disabled = false;
-    askButton.textContent = "提问";
-    askAbortController = null;
+    finishAskSession(session.requestId, session.controller);
   }
 }
 
-async function postSseResult(url, data, timeoutMs = 65000, externalSignal = null) {
-  const controller = externalSignal ? null : new AbortController();
-  const signal = externalSignal || controller.signal;
-  const timer = window.setTimeout(() => {
-    if (controller) controller.abort();
-    else askAbortController?.abort();
-  }, timeoutMs);
+async function postSseResult(url, data, timeoutMs = 65000, controller = null) {
+  const requestController = controller || new AbortController();
+  const signal = requestController.signal;
+  const timer = window.setTimeout(() => requestController.abort(), timeoutMs);
 
   try {
     const response = await fetch(url, {
@@ -588,27 +642,6 @@ async function postSseResult(url, data, timeoutMs = 65000, externalSignal = null
   }
 }
 
-async function postJson(url, data, timeoutMs = 65000) {
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(data),
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`${response.status} ${response.statusText}`);
-    }
-    return response.json();
-  } finally {
-    window.clearTimeout(timer);
-  }
-}
-
 function modeLabel(mode) {
   const labels = {
     local: "资料库回答",
@@ -627,29 +660,23 @@ function taskModeLabel(payload) {
   return payload?.task_label || modeLabel(payload?.mode);
 }
 
-function setDigitalHumanState(stateName, status, speech) {
+function setDigitalHumanState(stateName, status, speech = "") {
   window.clearTimeout(humanIdleTimer);
-  window.clearTimeout(humanIdleLoopTimer);
+  window.clearTimeout(humanLoopTimer);
   currentHumanState = stateName;
   digitalHumanPanel.dataset.state = stateName;
   digitalHumanStatus.textContent = status;
-  digitalHumanSpeech.textContent = compactSpeech(speech);
+  digitalHumanSpeech.textContent = digitalHumanCaption(stateName, status, speech);
 
   const nextSrc = pickHumanVideo(stateName);
   transitionHumanVideo(nextSrc, stateName);
-
-  if (stateName === "speaking" || stateName === "farewell") {
-    humanIdleTimer = window.setTimeout(() => {
-      setDigitalHumanState("idle", "待机", "我在这里，可以继续问我。");
-    }, 7000);
-  }
 }
 
-function transitionHumanVideo(nextSrc, stateName = currentHumanState) {
-  if (!activeHumanVideo || activeHumanVideo.src.endsWith(nextSrc)) {
+function transitionHumanVideo(nextSrc, stateName = currentHumanState, options = {}) {
+  if (!activeHumanVideo || (activeHumanVideo.src.endsWith(nextSrc) && !options.force)) {
     configureHumanVideoPlayback(activeHumanVideo, stateName);
     activeHumanVideo?.play().catch(() => {});
-    scheduleIdleAdvance(activeHumanVideo, stateName);
+    scheduleHumanVideoAdvance(activeHumanVideo, stateName);
     return;
   }
   const transitionSeq = ++humanTransitionSeq;
@@ -658,7 +685,7 @@ function transitionHumanVideo(nextSrc, stateName = currentHumanState) {
     activeHumanVideo.src = nextSrc;
     activeHumanVideo.load();
     activeHumanVideo.play().catch(() => {});
-    scheduleIdleAdvance(activeHumanVideo, stateName);
+    scheduleHumanVideoAdvance(activeHumanVideo, stateName);
     return;
   }
 
@@ -696,7 +723,7 @@ function transitionHumanVideo(nextSrc, stateName = currentHumanState) {
     }, 980);
     activeHumanVideo = incoming;
     standbyHumanVideo = outgoing;
-    scheduleIdleAdvance(incoming, stateName);
+    scheduleHumanVideoAdvance(incoming, stateName);
     humanTransitionTimer = window.setTimeout(() => {
       outgoing.pause();
       outgoing.removeAttribute("src");
@@ -711,25 +738,25 @@ function transitionHumanVideo(nextSrc, stateName = currentHumanState) {
 
 function configureHumanVideoPlayback(video, stateName) {
   if (!video) return;
-  video.loop = stateName === "thinking" || stateName === "speaking";
+  video.loop = false;
   video.muted = true;
   video.playsInline = true;
 }
 
-function scheduleIdleAdvance(video, stateName = currentHumanState) {
-  window.clearTimeout(humanIdleLoopTimer);
-  if (!video || stateName !== "idle" || currentHumanState !== "idle") {
+function scheduleHumanVideoAdvance(video, stateName = currentHumanState) {
+  window.clearTimeout(humanLoopTimer);
+  if (!video || currentHumanState !== stateName) {
     return;
   }
   const schedule = () => {
-    if (currentHumanState !== "idle" || activeHumanVideo !== video) {
+    if (currentHumanState !== stateName || activeHumanVideo !== video) {
       return;
     }
     const duration = Number.isFinite(video.duration) ? video.duration : 5;
-    const delay = Math.max(1200, (duration - 0.65) * 1000);
-    humanIdleLoopTimer = window.setTimeout(() => {
-      if (currentHumanState === "idle" && activeHumanVideo === video) {
-        setDigitalHumanState("idle", "待机", digitalHumanSpeech.textContent || "我在这里，可以继续问我。");
+    const delay = Math.max(1200, duration * 1000 - HUMAN_DISSOLVE_LEAD_MS);
+    humanLoopTimer = window.setTimeout(() => {
+      if (currentHumanState === stateName && activeHumanVideo === video) {
+        transitionHumanVideo(pickHumanVideo(stateName, { allowSame: true }), stateName, { force: true });
       }
     }, delay);
   };
@@ -740,14 +767,12 @@ function scheduleIdleAdvance(video, stateName = currentHumanState) {
   }
 }
 
-function pickHumanVideo(stateName) {
-  const videos = humanVideos[stateName] || humanVideos.idle;
-  if (!Array.isArray(videos)) {
-    return videos;
-  }
+function pickHumanVideo(stateName, options = {}) {
+  const source = humanVideos[stateName] || humanVideos.idle;
+  const videos = Array.isArray(source) ? source : [source];
   let index = humanVideoIndexes[stateName] || 0;
   let next = videos[index % videos.length];
-  if (videos.length > 1 && activeHumanVideo?.src.endsWith(next)) {
+  if (!options.allowSame && videos.length > 1 && activeHumanVideo?.src.endsWith(next)) {
     index += 1;
     next = videos[index % videos.length];
   }
@@ -760,20 +785,67 @@ function responseHumanState(query) {
   return farewellTerms.some((term) => query.includes(term)) ? "farewell" : "speaking";
 }
 
-function speakAnswer(value) {
-  lastSpeechText = speechText(value);
-  if (!voiceEnabled?.checked || !lastSpeechText) {
+function waitForThinkingDissolve(startedAt) {
+  if (currentHumanState !== "thinking") {
+    return Promise.resolve();
+  }
+  const elapsed = performance.now() - startedAt;
+  const remaining = Math.max(0, HUMAN_MIN_THINKING_MS - elapsed);
+  return remaining ? new Promise((resolve) => window.setTimeout(resolve, remaining)) : Promise.resolve();
+}
+
+function scheduleHumanReturnToIdle(delayMs) {
+  window.clearTimeout(humanIdleTimer);
+  humanIdleTimer = window.setTimeout(() => {
+    if (currentHumanState === "speaking" || currentHumanState === "farewell") {
+      setDigitalHumanState("idle", "待机", "我在这里，可以继续问我。");
+    }
+  }, delayMs);
+}
+
+function visualAnswerDuration(text) {
+  const length = stripMarkdown(text).length;
+  return Math.min(22000, Math.max(7500, 3600 + length * 90));
+}
+
+function digitalHumanCaption(stateName, status, fallback = "") {
+  const captions = {
+    idle: "我在这里，可以继续问我。",
+    thinking: "我先从资料库里找和问题最相关的内容。",
+    speaking: "正在为你讲述。",
+    farewell: "期待下次再见。",
+  };
+  if (status === "出现错误") {
+    return "刚才没有答好，请再试一次。";
+  }
+  return captions[stateName] || fallback || "我在这里。";
+}
+
+function syncVoiceIdleState(status = "") {
+  if (!speechSupported) {
+    setVoiceState("disabled");
+    setVoiceStatus("浏览器不支持语音");
     return;
   }
-  speakText(lastSpeechText);
+  setVoiceState("idle");
+  setVoiceStatus(status);
+}
+
+function speakAnswer(value) {
+  lastSpeechText = speechText(value);
+  if (!speechSupported || !lastSpeechText) {
+    return false;
+  }
+  return speakText(lastSpeechText);
 }
 
 function speakText(text) {
   if (!speechSupported) {
     setVoiceStatus("浏览器不支持语音");
-    return;
+    return false;
   }
-  stopSpeech();
+  stopSpeech({ preserveHuman: true });
+  clearSpeechStartGuard();
   window.speechSynthesis.resume();
   const utterance = new SpeechSynthesisUtterance(text);
   currentUtterance = utterance;
@@ -788,27 +860,48 @@ function speakText(text) {
   }
 
   utterance.onstart = () => {
+    if (currentUtterance !== utterance) return;
+    clearSpeechStartGuard();
     setVoiceState("speaking");
     setVoiceStatus("正在播报");
   };
   utterance.onend = () => {
-    setVoiceState("idle");
-    setVoiceStatus("");
+    if (currentUtterance !== utterance) return;
+    clearSpeechStartGuard();
+    finishSpeechPlayback("");
   };
   utterance.onerror = () => {
-    setVoiceState("idle");
-    setVoiceStatus("自动播报被浏览器拦截");
+    if (currentUtterance !== utterance) return;
+    clearSpeechStartGuard();
+    finishSpeechPlayback("自动播报被浏览器拦截");
   };
 
   window.speechSynthesis.speak(utterance);
-  window.setTimeout(() => {
+  speechStartGuardTimer = window.setTimeout(() => {
+    if (currentUtterance !== utterance) return;
     if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
-      setVoiceStatus("播报未启动");
+      finishSpeechPlayback("播报未启动");
     }
   }, 700);
+  return true;
+}
+
+function clearSpeechStartGuard() {
+  window.clearTimeout(speechStartGuardTimer);
+  speechStartGuardTimer = 0;
+}
+
+function finishSpeechPlayback(status = "") {
+  clearSpeechStartGuard();
+  currentUtterance = null;
+  syncVoiceIdleState(status);
+  if (currentHumanState === "speaking" || currentHumanState === "farewell") {
+    setDigitalHumanState("idle", "待机", "我在这里，可以继续问我。");
+  }
 }
 
 function stopSpeech(options = {}) {
+  clearSpeechStartGuard();
   if (speechSupported) {
     window.clearTimeout(speechCancelTimer);
     window.speechSynthesis.cancel();
@@ -817,16 +910,19 @@ function stopSpeech(options = {}) {
     }
   }
   currentUtterance = null;
-  setVoiceState("idle");
+  syncVoiceIdleState("");
+  if (!options.preserveHuman && (currentHumanState === "speaking" || currentHumanState === "farewell")) {
+    setDigitalHumanState("idle", "待机", "我在这里，可以继续问我。");
+  }
 }
 
 function unlockSpeech(withThinkingVoice = false) {
-  if (!speechSupported || speechUnlocked || !voiceEnabled?.checked) {
+  if (!speechSupported || speechUnlocked) {
     return;
   }
   speechUnlocked = true;
   try {
-    const text = withThinkingVoice ? "正在思考" : "语音播报已准备";
+    const text = withThinkingVoice ? "正在检索" : "语音播报已准备";
     const warmup = new SpeechSynthesisUtterance(text);
     warmup.lang = "zh-CN";
     warmup.rate = 1;
@@ -852,16 +948,18 @@ function setVoiceStatus(value) {
 
 function setVoiceState(state) {
   voiceState = state;
-  const toggle = document.querySelector("#voiceToggle");
-  if (!toggle) return;
-  toggle.classList.remove("is-speaking", "is-paused");
-  if (state !== "idle") {
-    toggle.classList.add(`is-${state}`);
+  if (!voiceToggle) return;
+  voiceToggle.classList.toggle("is-speaking", state === "speaking");
+  voiceToggle.dataset.state = state;
+  voiceToggle.setAttribute("aria-pressed", state === "speaking" ? "true" : "false");
+  if (state === "disabled") {
+    voiceToggle.setAttribute("disabled", "disabled");
+  } else {
+    voiceToggle.removeAttribute("disabled");
   }
-  // Update label
-  const label = toggle.querySelector(".voice-label");
+  const label = voiceToggle.querySelector(".voice-label");
   if (label) {
-    label.textContent = { speaking: "暂停", paused: "继续", idle: "播报" }[state] || "播报";
+    label.textContent = { speaking: "停止", idle: "播放", disabled: "播放" }[state] || "播放";
   }
 }
 
@@ -891,16 +989,8 @@ function stripMarkdown(value) {
     .trim();
 }
 
-function compactSpeech(value) {
-  const text = stripMarkdown(value);
-  if (!text) {
-    return "我在这里。";
-  }
-  return text.length > 86 ? `${text.slice(0, 86)}...` : text;
-}
-
 configureHumanVideoPlayback(activeHumanVideo, "idle");
-scheduleIdleAdvance(activeHumanVideo, "idle");
+scheduleHumanVideoAdvance(activeHumanVideo, "idle");
 loadMeta();
 syncRestoredQuestion();
 window.addEventListener("pageshow", syncRestoredQuestion);

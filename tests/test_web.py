@@ -1,7 +1,11 @@
 import json
+from pathlib import Path
 
 from heritage_explorer import config
 from heritage_explorer.web import create_app
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _sse_result(response):
@@ -32,9 +36,125 @@ def test_homepage_contains_digital_human_panel():
     assert response.status_code == 200
     assert 'id="digitalHumanVideo"' in html
     assert "wait1.mp4" in html
-    assert 'id="voiceEnabled"' in html
+    assert 'id="voiceToggle"' in html
+    assert '播放或停止语音播报' in html
+    assert 'voice-wave' not in html
     assert 'id="voiceStatus"' in html
     assert 'id="voiceReplayButton"' not in html
+
+
+def test_digital_human_animation_waits_for_speech_end():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "HUMAN_MIN_THINKING_MS" in script
+    assert "waitForThinkingDissolve(thinkingStartedAt)" in script
+    assert "finishSpeechPlayback" in script
+    assert "stopSpeech({ preserveHuman: true })" in script
+    assert "currentUtterance !== utterance" in script
+    assert "}, 7000)" not in script
+    finish_block = script.split("function finishSpeechPlayback", 1)[1].split("function stopSpeech", 1)[0]
+    assert "options." not in finish_block
+
+
+def test_voice_button_uses_play_stop_without_pause():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
+
+    assert 'label.textContent = { speaking: "停止", idle: "播放", disabled: "播放" }[state] || "播放";' in script
+    assert 'setVoiceStatus("已停止")' in script
+    assert "window.speechSynthesis?.pause()" not in script
+    assert '"paused"' not in script
+    assert ".voice-button" in styles
+    assert ".voice-toggle" not in styles
+    assert ".voice-wave" not in styles
+
+
+def test_voice_status_guard_does_not_overwrite_manual_stop():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "let speechStartGuardTimer = 0;" in script
+    assert "function clearSpeechStartGuard()" in script
+    assert 'finishSpeechPlayback("播报未启动")' in script
+    stop_block = script.split("function stopSpeech", 1)[1].split("function unlockSpeech", 1)[0]
+    assert "clearSpeechStartGuard();" in stop_block
+
+
+def test_voice_idle_state_keeps_disabled_support_message():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "function syncVoiceIdleState(status = \"\")" in script
+    sync_block = script.split("function syncVoiceIdleState", 1)[1].split("function speakAnswer", 1)[0]
+    assert 'setVoiceState("disabled");' in sync_block
+    assert 'setVoiceStatus("浏览器不支持语音");' in sync_block
+    assert 'setVoiceState("idle");' in sync_block
+
+
+def test_loading_progress_uses_shared_forward_only_indices():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "let loadingStepIndex = 0;" in script
+    assert "let loadingTargetIndex = 0;" in script
+    assert "loadingTargetIndex = Math.max(loadingTargetIndex, index);" in script
+    assert "if (index <= loadingStepIndex) {" in script
+    assert "let stepIndex = 0;" not in script
+
+
+def test_ask_flow_uses_request_guards_and_single_sse_path():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "let askRequestId = 0;" in script
+    assert "function beginAskSession(question)" in script
+    assert "askAbortController?.abort();" in script
+    assert "stopSpeech({ preserveHuman: true });" in script
+    assert "function isActiveAskRequest(requestId, controller = askAbortController)" in script
+    assert "await presentAskResponse(session.requestId, session.controller, question, payload, session.thinkingStartedAt);" in script
+    assert "presentAskError(session.requestId, session.controller, error);" in script
+    assert "voice_enabled: speechSupported" in script
+    assert "async function postJson" not in script
+
+
+def test_digital_human_caption_does_not_show_answer_text():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    state_block = script.split("function setDigitalHumanState", 1)[1].split("function transitionHumanVideo", 1)[0]
+
+    assert "digitalHumanCaption" in state_block
+    assert "compactSpeech" not in script
+    assert "我先从资料库里找和问题最相关的内容。" in script
+    assert 'setDigitalHumanState("thinking", "正在思考"' in script
+    assert 'relatedCount.textContent = "思考中"' in script
+    assert 'relatedList.innerHTML = `<p class="marginalia-empty is-live">正在思考</p>`' in script
+    assert 'askButton.textContent = "提问"' in script
+    assert 'const text = withThinkingVoice ? "正在检索" : "语音播报已准备";' in script
+    assert "翻检资料库" in script
+    assert "进入思考" not in script
+    assert "我先想一想。" not in script
+    assert "正在为你讲述。" in script
+
+
+def test_digital_human_thinking_state_has_mask():
+    styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
+
+    assert '.hanging-scroll[data-state="thinking"] .scroll-body::after' in styles
+    assert "rgba(36, 88, 74, 0.72)" in styles
+    assert '.hanging-scroll[data-state="speaking"] .scroll-body::after' in styles
+
+
+def test_all_digital_human_video_states_use_dissolve_scheduler():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "video.loop = false" in script
+    assert "scheduleHumanVideoAdvance" in script
+    assert "scheduleIdleAdvance" not in script
+    assert "HUMAN_DISSOLVE_LEAD_MS" in script
+    assert "allowSame: true" in script
+    assert "force: true" in script
+
+
+def test_agent_progress_uses_search_wording_outside_preserved_thinking_states():
+    agent_source = (ROOT / "src" / "heritage_explorer" / "agent.py").read_text(encoding="utf-8")
+
+    assert 'self._progress_event("search", "检索资料"' in agent_source
+    assert '"title": "思考资料"' not in agent_source
 
 
 def test_items_api_returns_payload():

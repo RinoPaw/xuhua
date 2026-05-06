@@ -178,11 +178,31 @@ body::before {
 
 .scroll-video {
   display: block;
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   object-position: center top;
+  opacity: 0;
   filter: saturate(0.85) contrast(1.06) brightness(0.92);
+  background: #171310;
+  pointer-events: none;
+  transform: translateZ(0);
+  transition:
+    opacity 920ms cubic-bezier(0.45, 0, 0.2, 1),
+    filter 920ms ease;
+  will-change: opacity, filter;
+  z-index: 0;
+}
+
+.scroll-video.is-active {
+  opacity: 1;
+  z-index: 1;
+}
+
+.scroll-body.is-dissolving .scroll-video {
+  filter: saturate(0.82) contrast(1.03) brightness(0.94) blur(0.35px);
 }
 
 /* 画面底部淡出 */

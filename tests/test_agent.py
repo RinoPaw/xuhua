@@ -3,6 +3,13 @@ from heritage_explorer.agent import (
     IntentRouter,
     TaskType,
     _TASK_CONFIGS,
+    build_chitchat_answer,
+    decision_from_planner_payload,
+    has_domain_hint,
+    is_chitchat_query,
+    normalize_query_with_pinyin_anchor,
+    replace_homophone_span,
+    should_answer_out_of_scope,
     task_type_from_str,
     task_type_label,
 )
@@ -18,6 +25,158 @@ def test_intent_router_classifies_factual_qa():
     task_type, confidence = router.classify("太极拳是什么")
     assert task_type is TaskType.FACTUAL_QA
     assert confidence >= 0.5
+
+
+def test_intent_router_classifies_short_greeting_as_chitchat():
+    router = IntentRouter()
+
+    for query in [
+        "你好",
+        "您好！",
+        "hello",
+        "在吗",
+        "你是谁",
+        "你叫什么名字",
+        "你能做什么",
+        "你知道什么",
+        "资料库里有什么",
+    ]:
+        task_type, confidence = router.classify(query)
+        assert task_type is TaskType.CHITCHAT
+        assert confidence >= 0.9
+
+    assert is_chitchat_query("你好。")
+    assert not is_chitchat_query("你好，介绍一下皮影戏")
+    assert not is_chitchat_query("你是谁，介绍一下皮影戏")
+
+
+def test_chitchat_answer_handles_identity_and_capability():
+    identity = build_chitchat_answer("你是谁")
+    capability = build_chitchat_answer("你能做什么")
+
+    assert "我是叙华" in identity
+    assert "河南非遗资料库" in identity
+    assert "历史" in capability
+    assert "筛选" in capability
+
+
+def test_chitchat_answer_uses_kb_for_knowledge_inventory():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    answer = build_chitchat_answer("你知道什么", kb)
+
+    assert str(len(kb.items)) in answer
+    assert "非遗项目" in answer
+    assert "筛选" in answer
+    assert "推荐" in answer
+
+
+def test_fact_qa_scope_gate_skips_unrelated_questions():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+
+    assert not has_domain_hint("天气怎么样")
+    assert has_domain_hint("皮影戏有什么特色")
+    assert should_answer_out_of_scope(kb, "天气怎么样")
+    assert not should_answer_out_of_scope(kb, "汴绣")
+    assert not should_answer_out_of_scope(kb, "落山皮影戏")
+
+
+def test_fact_qa_normalizes_homophone_item_name_before_generation():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+
+    assert replace_homophone_span("落山皮影戏有什么特色", "罗山皮影戏") == "罗山皮影戏有什么特色"
+    assert normalize_query_with_pinyin_anchor(kb, "落山皮影戏有什么特色") == "罗山皮影戏有什么特色"
+
+
+def test_intent_router_decision_is_explicit_about_actions():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    router = IntentRouter()
+
+    greeting = router.decide("你是谁", kb)
+    inventory = router.decide("你知道什么", kb)
+    factual = router.decide("陈氏太极拳是什么", kb)
+    unrelated = router.decide("天气怎么样", kb)
+    recommendation = router.decide("推荐3个适合校园展示的传统美术项目", kb)
+
+    assert greeting.task_type is TaskType.CHITCHAT
+    assert not greeting.needs_retrieval
+    assert not greeting.needs_llm
+    assert greeting.direct_answer
+
+    assert inventory.task_type is TaskType.CHITCHAT
+    assert not inventory.needs_retrieval
+    assert not inventory.needs_llm
+    assert "非遗项目" in inventory.direct_answer
+
+    assert factual.task_type is TaskType.FACT_QA
+    assert factual.needs_retrieval
+    assert factual.needs_llm
+
+    assert unrelated.task_type is TaskType.FACT_QA
+    assert not unrelated.needs_retrieval
+    assert not unrelated.needs_llm
+    assert unrelated.mode == "no_context"
+    assert unrelated.direct_answer
+
+    assert recommendation.task_type is TaskType.RECOMMENDATION
+    assert recommendation.needs_retrieval
+    assert not recommendation.needs_llm
+
+
+def test_model_planner_payload_becomes_agent_decision():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    decision = decision_from_planner_payload(
+        {
+            "task_type": "chitchat",
+            "confidence": 0.93,
+            "needs_retrieval": True,
+            "needs_llm": True,
+            "reason": "用户在询问智能体掌握什么资料。",
+            "direct_answer": "我知道当前非遗资料库里的项目和任务能力。",
+            "mode": "local",
+        },
+        "你知道什么",
+        kb,
+    )
+
+    assert decision.task_type is TaskType.CHITCHAT
+    assert decision.planner == "model"
+    assert not decision.needs_retrieval
+    assert not decision.needs_llm
+    assert decision.direct_answer
+
+
+def test_model_planner_chitchat_answer_cannot_leak_internal_controller():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    decision = decision_from_planner_payload(
+        {
+            "task_type": "chitchat",
+            "confidence": 0.96,
+            "needs_retrieval": False,
+            "needs_llm": False,
+            "reason": "用户询问智能体身份。",
+            "direct_answer": "我是叙华智能体的控制器，负责协调您的查询和回答。",
+            "mode": "no_context",
+        },
+        "你叫什么",
+        kb,
+    )
+
+    assert decision.task_type is TaskType.CHITCHAT
+    assert decision.mode == "local"
+    assert "控制器" not in decision.direct_answer
+    assert "我是叙华" in decision.direct_answer
 
 
 def test_intent_router_classifies_comparison():
@@ -145,20 +304,171 @@ def test_agent_dispatch_handles_empty_query():
     assert result.sources == []
 
 
+def test_agent_dispatch_handles_chitchat_locally():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("你好")
+
+    assert result.task_type is TaskType.CHITCHAT
+    assert result.mode == "local"
+    assert result.answer
+    assert "我在这里" in result.answer
+    assert result.items == []
+    assert result.sources == []
+    assert result.evidence == []
+
+
+def test_agent_dispatch_handles_identity_question_locally():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("你是谁")
+
+    assert result.task_type is TaskType.CHITCHAT
+    assert result.mode == "local"
+    assert "我是叙华" in result.answer
+    assert "水晶雕刻" not in result.answer
+    assert result.items == []
+    assert result.sources == []
+    assert result.evidence == []
+
+
+def test_agent_dispatch_skips_model_for_out_of_scope_question():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("天气怎么样")
+
+    assert result.task_type is TaskType.FACT_QA
+    assert result.mode == "no_context"
+    assert "非遗资料库" in result.answer
+    assert result.sources == []
+    assert result.warnings
+    assert result.decision["needs_retrieval"] is False
+    assert result.decision["needs_llm"] is False
+
+
 def test_task_type_label_returns_chinese():
+    assert task_type_label(TaskType.CHITCHAT) == "对话回应"
     assert task_type_label(TaskType.FACTUAL_QA) == "事实问答"
     assert task_type_label(TaskType.COMPARISON) == "项目对比"
     assert task_type_label(TaskType.RECOMMENDATION) == "项目推荐"
 
 
 def test_task_type_from_str():
-    assert task_type_from_str("factual_qa") is TaskType.FACTUAL_QA
+    assert task_type_from_str("fact_qa") is TaskType.FACT_QA
     assert task_type_from_str("comparison") is TaskType.COMPARISON
-    assert task_type_from_str("unknown_type") is TaskType.FACTUAL_QA
+    assert task_type_from_str("browse_query") is TaskType.BROWSE_QUERY
+    assert task_type_from_str("unknown_type") is TaskType.FACT_QA
 
 
 def test_task_config_retrieval_limits():
-    assert _TASK_CONFIGS[TaskType.FACTUAL_QA].retrieval_limit == 5
+    assert _TASK_CONFIGS[TaskType.FACT_QA].retrieval_limit == 5
     assert _TASK_CONFIGS[TaskType.COMPARISON].retrieval_limit == 8
     assert _TASK_CONFIGS[TaskType.RECOMMENDATION].retrieval_limit == 10
-    assert _TASK_CONFIGS[TaskType.DATA_EXPLORE].retrieval_limit == 20
+    assert _TASK_CONFIGS[TaskType.BROWSE_QUERY].retrieval_limit == 30
+
+
+# ── MVP handler tests ──
+
+
+def test_browse_query_returns_items():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("河南有哪些传统美术")
+
+    assert result.task_type is TaskType.BROWSE_QUERY
+    assert result.mode == "local"
+    assert result.confidence == 0.95
+    assert len(result.items) > 0
+    assert len(result.evidence) > 0
+    assert "传统美术" in result.answer
+
+
+def test_browse_query_combined_filters():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("列出河南省的国家级传统技艺")
+
+    assert result.task_type is TaskType.BROWSE_QUERY
+    assert result.mode == "local"
+    assert len(result.answer) > 0
+
+
+def test_recommendation_returns_items():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("推荐3个适合校园展示的传统美术项目")
+
+    assert result.task_type is TaskType.RECOMMENDATION
+    assert result.mode == "fallback"
+    assert result.selection_reason
+    assert "推荐" in result.answer
+
+
+def test_recommendation_has_evidence():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("推荐适合社区活动的项目")
+
+    assert result.task_type is TaskType.RECOMMENDATION
+    for ev in result.evidence:
+        assert ev["type"] == "inferred"
+        assert "item_id" in ev
+
+
+def test_exhibition_plan_returns_template():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("策划一个河南非遗校园展")
+
+    assert result.task_type is TaskType.EXHIBITION_PLAN
+    assert result.mode == "fallback"
+    assert "展示策划方案" in result.answer
+    assert "推荐展项" in result.answer
+    assert len(result.warnings) >= 1
+
+
+def test_agent_result_has_all_required_fields():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("太极拳是什么")
+
+    assert hasattr(result, "task_type")
+    assert hasattr(result, "answer")
+    assert hasattr(result, "items")
+    assert hasattr(result, "sources")
+    assert hasattr(result, "evidence")
+    assert hasattr(result, "selection_reason")
+    assert hasattr(result, "mode")
+    assert hasattr(result, "confidence")
+    assert hasattr(result, "warnings")
+    assert hasattr(result, "speech")  # backward-compat
+
+
+def test_browse_query_has_backward_compat_speech():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("列出河南省的传统技艺")
+
+    assert result.task_type is TaskType.BROWSE_QUERY
+    # speech may be empty for local mode (no LLM), but field must exist
+    assert isinstance(result.speech, str)

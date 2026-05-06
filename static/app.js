@@ -21,24 +21,41 @@ const answerBox = document.querySelector("#answerBox");
 const answerMode = document.querySelector("#answerMode");
 const digitalHumanPanel = document.querySelector(".hanging-scroll");
 const digitalHumanVideo = document.querySelector("#digitalHumanVideo");
+const digitalHumanVideoNext = document.querySelector("#digitalHumanVideoNext");
 const digitalHumanStatus = document.querySelector("#digitalHumanStatus");
 const digitalHumanSpeech = document.querySelector("#digitalHumanSpeech");
 
 const humanVideos = {
-  idle: "/static/media/xuhua-idle.mp4",
-  thinking: "/static/media/xuhua-greet.mp4",
-  speaking: "/static/media/xuhua-speak.mp4",
+  idle: ["/static/media/wait1.mp4", "/static/media/wait2.mp4"],
+  thinking: "/static/media/greet1.mp4",
+  speaking: ["/static/media/speak1.mp4", "/static/media/speak2.mp4", "/static/media/speak3.mp4"],
+  farewell: "/static/media/thanksandbye.mp4",
 };
+const humanVideoIndexes = {};
 
 let humanIdleTimer = 0;
+let humanIdleLoopTimer = 0;
+let humanTransitionTimer = 0;
+let humanDissolveTimer = 0;
+let humanTransitionSeq = 0;
+let currentHumanState = "idle";
+let activeHumanVideo = digitalHumanVideo;
+let standbyHumanVideo = digitalHumanVideoNext;
 let currentUtterance = null;
 let lastSpeechText = "";
 let speechUnlocked = false;
 let speechCancelTimer = 0;
 let voiceState = "idle"; // idle | speaking | paused
 let loadingStepTimer = 0;
+let askAbortController = null;
 
 const speechSupported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+const PROGRESS_STEP_INDEX = {
+  classify: 0,
+  search: 1,
+  generate: 3,
+  speech: 4,
+};
 const baseLoadingSteps = [
   { title: "翻检资料库", detail: "正在查找最相关的非遗条目" },
   { title: "比对资料", detail: "正在合并项目、地区和技艺线索" },
@@ -177,6 +194,19 @@ function setAnswerLoading(activeIndex) {
   `;
 }
 
+function applyAskProgress(event) {
+  const index = PROGRESS_STEP_INDEX[event.step];
+  if (index === undefined || index >= activeLoadingSteps.length) {
+    return;
+  }
+  activeLoadingSteps[index] = {
+    ...activeLoadingSteps[index],
+    title: event.title || activeLoadingSteps[index].title,
+    detail: event.detail || activeLoadingSteps[index].detail,
+  };
+  setAnswerLoading(index);
+}
+
 function renderMarkdown(value) {
   const lines = String(value || "").replace(/\r\n/g, "\n").split("\n");
   const html = [];
@@ -286,58 +316,65 @@ async function loadMeta() {
   }
 }
 
-async function loadRelatedItems(requestId = relatedRequestId) {
-  const query = state.query;
-  const params = new URLSearchParams({
-    q: query,
-    limit: "8",
-    stream: "1",
-  });
-
+async function loadRelatedItems(requestKey = relatedRequestKey) {
+  inFlightKey = requestKey;
   try {
-    const response = await fetch(`/api/items?${params}`);
-    if (!response.ok) throw new Error(`${response.status}`);
-    if (requestId !== relatedRequestId || query !== state.query) return;
+    const query = state.query;
+    const params = new URLSearchParams({
+      q: query,
+      limit: "8",
+      stream: "1",
+    });
 
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
+    try {
+      const response = await fetch(`/api/items?${params}`);
+      if (!response.ok) throw new Error(`${response.status}`);
+      if (requestKey !== relatedRequestKey || query !== state.query) return;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (requestId !== relatedRequestId || query !== state.query) {
-        reader.cancel();
-        return;
-      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
 
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split("\n");
-      buffer = lines.pop() || "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (requestKey !== relatedRequestKey || query !== state.query) {
+          reader.cancel();
+          return;
+        }
 
-      for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        try {
-          const event = JSON.parse(line.slice(6));
-          if (event.phase === "lexical" || event.phase === "hybrid") {
-            renderRelatedItems(event.items, event.total);
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const event = JSON.parse(line.slice(6));
+            if (event.phase === "lexical" || event.phase === "hybrid") {
+              renderRelatedItems(event.items, event.total);
+            }
+          } catch {
+            // skip unparseable events
           }
-        } catch {
-          // skip unparseable events
+        }
+      }
+    } catch {
+      // SSE failed — fall back to plain JSON
+      const plainParams = new URLSearchParams({ q: query, limit: "8" });
+      try {
+        const data = await fetchJson(`/api/items?${plainParams}`);
+        if (requestKey !== relatedRequestKey || query !== state.query) return;
+        renderRelatedItems(data.items, data.total);
+      } catch {
+        if (requestKey === relatedRequestKey && query === state.query) {
+          renderRelatedItems([]);
         }
       }
     }
-  } catch {
-    // SSE failed — fall back to plain JSON
-    const plainParams = new URLSearchParams({ q: query, limit: "8" });
-    try {
-      const data = await fetchJson(`/api/items?${plainParams}`);
-      if (requestId !== relatedRequestId || query !== state.query) return;
-      renderRelatedItems(data.items, data.total);
-    } catch {
-      if (requestId === relatedRequestId && query === state.query) {
-        renderRelatedItems([]);
-      }
+  } finally {
+    if (inFlightKey === requestKey) {
+      inFlightKey = "";
     }
   }
 }
@@ -393,26 +430,33 @@ function clearDetail() {
 }
 
 let relatedTimer = 0;
-let relatedRequestId = 0;
+let relatedRequestKey = "";
+let inFlightKey = "";
 function updateRelatedItems() {
-  state.query = questionInput.value.trim();
+  const newQuery = questionInput.value.trim();
+  state.query = newQuery;
   state.selectedId = "";
-  relatedRequestId += 1;
   relatedList.querySelectorAll("button").forEach((button) => button.classList.remove("active"));
   clearDetail();
 
   window.clearTimeout(relatedTimer);
-  if (!state.query) {
+  if (!newQuery) {
+    relatedRequestKey = "";
     renderRelatedItems([]);
     return;
   }
 
+  if (newQuery === inFlightKey) {
+    relatedRequestKey = newQuery;
+    return;
+  }
+
+  relatedRequestKey = newQuery;
   relatedCount.textContent = "检索中";
   relatedList.innerHTML = `<p class="marginalia-empty is-live">正在检索</p>`;
-  const requestId = relatedRequestId;
   relatedTimer = window.setTimeout(() => {
-    loadRelatedItems(requestId);
-  }, 160);
+    loadRelatedItems(newQuery);
+  }, 1000);
 }
 
 askButton.addEventListener("click", askQuestion);
@@ -445,6 +489,10 @@ async function askQuestion() {
   }
 
   state.query = question;
+  if (askAbortController) {
+    askAbortController.abort();
+  }
+  askAbortController = new AbortController();
   askButton.disabled = true;
   askButton.textContent = "思考中";
   answerMode.textContent = "";
@@ -455,10 +503,11 @@ async function askQuestion() {
   unlockSpeech(true);
 
   try {
-    const payload = await postJson("/api/ask", {
+    const payload = await postSseResult("/api/ask", {
       question,
       category: "",
-    });
+      voice_enabled: Boolean(voiceEnabled?.checked),
+    }, 65000, askAbortController.signal);
     setAnswerMarkdown(payload.answer);
     const speech = payload.speech || payload.answer;
     console.info("[xuhua:speech]", {
@@ -466,10 +515,11 @@ async function askQuestion() {
       length: speech.length,
       text: speech,
     });
-    answerMode.textContent = modeLabel(payload.mode);
-    setDigitalHumanState("speaking", "正在回答", speech);
+    answerMode.textContent = taskModeLabel(payload);
+    setDigitalHumanState(responseHumanState(question), "正在回答", speech);
     speakAnswer(speech);
-    renderRelatedItems(payload.sources, payload.sources.length);
+    const related = payload.items?.length ? payload.items : (payload.sources || []);
+    renderRelatedItems(related, related.length);
   } catch (error) {
     const message = error.name === "AbortError" ? "问答超时，请稍后再试。" : `问答失败：${error.message}`;
     setAnswerPlain(message, "error");
@@ -478,6 +528,63 @@ async function askQuestion() {
   } finally {
     askButton.disabled = false;
     askButton.textContent = "提问";
+    askAbortController = null;
+  }
+}
+
+async function postSseResult(url, data, timeoutMs = 65000, externalSignal = null) {
+  const controller = externalSignal ? null : new AbortController();
+  const signal = externalSignal || controller.signal;
+  const timer = window.setTimeout(() => {
+    if (controller) controller.abort();
+    else askAbortController?.abort();
+  }, timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+      signal,
+    });
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+
+    if (!response.body) {
+      return response.json();
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let payload = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const event = JSON.parse(line.slice(6));
+        if (event.type === "progress") {
+          applyAskProgress(event);
+        } else if (event.type === "result") {
+          payload = event;
+        }
+      }
+    }
+
+    if (!payload) {
+      throw new Error("未收到回答结果");
+    }
+    return payload;
+  } finally {
+    window.clearTimeout(timer);
   }
 }
 
@@ -504,33 +611,153 @@ async function postJson(url, data, timeoutMs = 65000) {
 
 function modeLabel(mode) {
   const labels = {
-    local: "本地依据式回答",
+    local: "资料库回答",
     llm: "模型生成",
-    fallback: "本地回退",
-    no_context: "未检索到资料",
+    fallback: "回退回答",
+    no_context: "能力边界",
     empty: "等待问题",
   };
   return labels[mode] || mode;
 }
 
+function taskModeLabel(payload) {
+  if (payload?.task_type === "chitchat") {
+    return payload?.decision?.planner === "model" ? "智能体回应" : "直接回应";
+  }
+  return payload?.task_label || modeLabel(payload?.mode);
+}
+
 function setDigitalHumanState(stateName, status, speech) {
   window.clearTimeout(humanIdleTimer);
+  window.clearTimeout(humanIdleLoopTimer);
+  currentHumanState = stateName;
   digitalHumanPanel.dataset.state = stateName;
   digitalHumanStatus.textContent = status;
   digitalHumanSpeech.textContent = compactSpeech(speech);
 
-  const nextSrc = humanVideos[stateName] || humanVideos.idle;
-  if (!digitalHumanVideo.src.endsWith(nextSrc)) {
-    digitalHumanVideo.src = nextSrc;
-    digitalHumanVideo.load();
-  }
-  digitalHumanVideo.play().catch(() => {});
+  const nextSrc = pickHumanVideo(stateName);
+  transitionHumanVideo(nextSrc, stateName);
 
-  if (stateName === "speaking") {
+  if (stateName === "speaking" || stateName === "farewell") {
     humanIdleTimer = window.setTimeout(() => {
       setDigitalHumanState("idle", "待机", "我在这里，可以继续问我。");
     }, 7000);
   }
+}
+
+function transitionHumanVideo(nextSrc, stateName = currentHumanState) {
+  if (!activeHumanVideo || activeHumanVideo.src.endsWith(nextSrc)) {
+    configureHumanVideoPlayback(activeHumanVideo, stateName);
+    activeHumanVideo?.play().catch(() => {});
+    scheduleIdleAdvance(activeHumanVideo, stateName);
+    return;
+  }
+  const transitionSeq = ++humanTransitionSeq;
+  if (!standbyHumanVideo) {
+    configureHumanVideoPlayback(activeHumanVideo, stateName);
+    activeHumanVideo.src = nextSrc;
+    activeHumanVideo.load();
+    activeHumanVideo.play().catch(() => {});
+    scheduleIdleAdvance(activeHumanVideo, stateName);
+    return;
+  }
+
+  window.clearTimeout(humanTransitionTimer);
+  window.clearTimeout(humanDissolveTimer);
+  const incoming = standbyHumanVideo;
+  const outgoing = activeHumanVideo;
+  let started = false;
+
+  incoming.pause();
+  incoming.classList.remove("is-active");
+  configureHumanVideoPlayback(incoming, stateName);
+  incoming.src = nextSrc;
+  incoming.load();
+
+  const startTransition = () => {
+    if (started || transitionSeq !== humanTransitionSeq) return;
+    started = true;
+    incoming.play().catch(() => {});
+    window.requestAnimationFrame(() => {
+      incoming.style.opacity = "0";
+      incoming.classList.add("is-active");
+      incoming.classList.add("is-dissolve-in");
+      outgoing.classList.add("is-dissolve-out");
+      digitalHumanVideo.parentElement?.classList.add("is-dissolving");
+      window.requestAnimationFrame(() => {
+        incoming.style.opacity = "";
+        outgoing.classList.remove("is-active");
+      });
+    });
+    humanDissolveTimer = window.setTimeout(() => {
+      incoming.classList.remove("is-dissolve-in");
+      outgoing.classList.remove("is-dissolve-out");
+      digitalHumanVideo.parentElement?.classList.remove("is-dissolving");
+    }, 980);
+    activeHumanVideo = incoming;
+    standbyHumanVideo = outgoing;
+    scheduleIdleAdvance(incoming, stateName);
+    humanTransitionTimer = window.setTimeout(() => {
+      outgoing.pause();
+      outgoing.removeAttribute("src");
+      outgoing.load();
+    }, 1020);
+  };
+
+  incoming.addEventListener("loadeddata", startTransition, { once: true });
+  incoming.addEventListener("canplay", startTransition, { once: true });
+  window.setTimeout(startTransition, 240);
+}
+
+function configureHumanVideoPlayback(video, stateName) {
+  if (!video) return;
+  video.loop = stateName === "thinking" || stateName === "speaking";
+  video.muted = true;
+  video.playsInline = true;
+}
+
+function scheduleIdleAdvance(video, stateName = currentHumanState) {
+  window.clearTimeout(humanIdleLoopTimer);
+  if (!video || stateName !== "idle" || currentHumanState !== "idle") {
+    return;
+  }
+  const schedule = () => {
+    if (currentHumanState !== "idle" || activeHumanVideo !== video) {
+      return;
+    }
+    const duration = Number.isFinite(video.duration) ? video.duration : 5;
+    const delay = Math.max(1200, (duration - 0.65) * 1000);
+    humanIdleLoopTimer = window.setTimeout(() => {
+      if (currentHumanState === "idle" && activeHumanVideo === video) {
+        setDigitalHumanState("idle", "待机", digitalHumanSpeech.textContent || "我在这里，可以继续问我。");
+      }
+    }, delay);
+  };
+  if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+    schedule();
+  } else {
+    video.addEventListener("loadedmetadata", schedule, { once: true });
+  }
+}
+
+function pickHumanVideo(stateName) {
+  const videos = humanVideos[stateName] || humanVideos.idle;
+  if (!Array.isArray(videos)) {
+    return videos;
+  }
+  let index = humanVideoIndexes[stateName] || 0;
+  let next = videos[index % videos.length];
+  if (videos.length > 1 && activeHumanVideo?.src.endsWith(next)) {
+    index += 1;
+    next = videos[index % videos.length];
+  }
+  humanVideoIndexes[stateName] = (index + 1) % videos.length;
+  return next;
+}
+
+function responseHumanState(query) {
+  const farewellTerms = ["谢谢", "感谢", "辛苦了", "再见", "拜拜", "下次见"];
+  return farewellTerms.some((term) => query.includes(term)) ? "farewell" : "speaking";
 }
 
 function speakAnswer(value) {
@@ -672,6 +899,8 @@ function compactSpeech(value) {
   return text.length > 86 ? `${text.slice(0, 86)}...` : text;
 }
 
+configureHumanVideoPlayback(activeHumanVideo, "idle");
+scheduleIdleAdvance(activeHumanVideo, "idle");
 loadMeta();
 syncRestoredQuestion();
 window.addEventListener("pageshow", syncRestoredQuestion);

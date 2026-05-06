@@ -1,5 +1,11 @@
 from heritage_explorer.dataset import load_dataset
-from heritage_explorer.search import rank_hybrid, search_items, tokenize
+from heritage_explorer.search import (
+    LEXICAL_RANK_WEIGHT,
+    rank_hybrid,
+    search_items,
+    search_items_lexical,
+    tokenize,
+)
 
 
 def test_dataset_loads():
@@ -13,6 +19,26 @@ def test_search_finds_known_item():
     results, total = search_items(kb, query="陈氏太极拳", limit=5)
     assert total > 0
     assert any("太极拳" in item.title for item in results)
+
+
+def test_search_matches_homophone_query_with_pinyin():
+    kb = load_dataset()
+    results, total = search_items(kb, query="落山皮影戏", limit=5)
+
+    assert total > 0
+    assert results[0].title == "罗山皮影戏"
+
+
+def test_lexical_search_matches_partial_homophone_query_with_pinyin():
+    kb = load_dataset()
+    results, total = search_items_lexical(kb, query="落山", limit=5)
+
+    assert total > 0
+    assert results[0].title == "罗山皮影戏"
+
+
+def test_lexical_rank_weight_keeps_pinyin_visible_in_hybrid_results():
+    assert LEXICAL_RANK_WEIGHT == 1.3
 
 
 def test_search_falls_back_without_embedding_index(monkeypatch, tmp_path):

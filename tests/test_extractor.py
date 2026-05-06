@@ -21,8 +21,8 @@ def test_rule_extractor_extracts_known_sample_fields():
     assert meta.district == "内乡县"
     assert "王晓杰" in meta.inheritors
     assert meta.coordinates == (111.855712, 33.054557)
-    assert "其他" in meta.exhibition_types
-    assert "展示馆传习所" in meta.exhibition_types
+    assert "其他" in meta.display_forms
+    assert "展示馆传习所" in meta.display_forms
     assert meta.organization == "内乡县县衙博物馆"
 
 
@@ -52,7 +52,7 @@ def test_extraction_cache_round_trips_meta_and_labels(tmp_path):
             district="洛宁县",
             inheritors=("张三",),
             coordinates=(111.1, 34.2),
-            exhibition_types=("展示馆传习所",),
+            display_forms=("展示馆传习所",),
             organization="洛宁县文化馆",
         )
     }
@@ -60,7 +60,7 @@ def test_extraction_cache_round_trips_meta_and_labels(tmp_path):
         "h_test": SoftLabels(
             suitable_scenarios=("校园展览",),
             target_audience=("青少年",),
-            interactivity="高",
+            interaction_potential="高",
             cultural_keywords=("民俗", "教育"),
         )
     }
@@ -88,7 +88,7 @@ def test_dataset_helpers_lazy_load_extraction_cache(monkeypatch, tmp_path):
     cache = ExtractionCache(meta_path=meta_path, labels_path=labels_path)
     cache.save(
         {"h_cached": StructuredMeta(level="省级", province="河南省")},
-        {"h_cached": SoftLabels(educational_value="高")},
+        {"h_cached": SoftLabels(education_value="高")},
     )
     monkeypatch.setattr(extractor, "META_PATH", meta_path)
     monkeypatch.setattr(extractor, "LABELS_PATH", labels_path)
@@ -99,6 +99,6 @@ def test_dataset_helpers_lazy_load_extraction_cache(monkeypatch, tmp_path):
         level="省级",
         province="河南省",
     )
-    assert dataset.get_soft_labels("h_cached") == SoftLabels(educational_value="高")
+    assert dataset.get_soft_labels("h_cached") == SoftLabels(education_value="高")
 
     dataset.clear_extraction_cache()

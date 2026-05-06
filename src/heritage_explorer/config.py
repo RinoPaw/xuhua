@@ -40,10 +40,11 @@ PORT = int(os.getenv("PORT", "5050"))
 DEBUG = os.getenv("DEBUG", "0") == "1"
 
 AI_API_KEY = os.getenv("AI_API_KEY", "")
-AI_BASE_URL = os.getenv("AI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
-AI_MODEL = os.getenv("AI_MODEL", "glm-4-flash")
+AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.deepseek.com")
+AI_MODEL = os.getenv("AI_MODEL", "deepseek-v4-flash")
 AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "60"))
 AI_MAX_CONTEXT_CHARS = int(os.getenv("AI_MAX_CONTEXT_CHARS", "5200"))
+AI_AGENT_PLANNER = os.getenv("AI_AGENT_PLANNER", "1") == "1"
 
 EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "")
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "https://api.vectorengine.ai/v1")

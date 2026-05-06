@@ -2,18 +2,109 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Iterable
+from functools import lru_cache
 
 from . import config
-from .dataset import HeritageItem, KnowledgeBase, normalize_text
+from .dataset import HeritageItem, KnowledgeBase, get_structured_meta, normalize_text
 
 
+LOGGER = logging.getLogger(__name__)
 HYBRID_LEXICAL_CANDIDATES = 80
 HYBRID_SEMANTIC_CANDIDATES = 80
 RRF_K = 60
-LEXICAL_RANK_WEIGHT = 1.0
+LEXICAL_RANK_WEIGHT = 1.3
 SEMANTIC_RANK_WEIGHT = 1.35
+
+# Pinyin fuzzy search constants
+_PINYIN_MIN_QUERY_LEN = 2  # minimum query chars to try pinyin matching
+_PINYIN_MATCH_BONUS = 0.3  # score for pinyin-exact match
+_PINYIN_INDEX: dict[str, list[str]] | None = None
+
+
+def _build_pinyin_index(kb: KnowledgeBase) -> dict[str, list[str]]:
+    """Build a pinyin-to-item-id index for all heritage items.
+
+    Converts each item's title and aliases to pinyin and maps the
+    resulting pinyin strings to item IDs for homophone fuzzy matching.
+    """
+    global _PINYIN_INDEX
+    if _PINYIN_INDEX is not None:
+        return _PINYIN_INDEX
+
+    try:
+        from pypinyin import lazy_pinyin  # noqa: PLC0415 - optional dependency
+
+        index: dict[str, list[str]] = {}
+        for item in kb.items:
+            texts = [item.title]
+            if item.aliases:
+                texts.extend(item.aliases)
+            for text in texts:
+                py = "".join(lazy_pinyin(text))
+                py_compact = py.replace(" ", "")
+                if py_compact:
+                    index.setdefault(py_compact, []).append(item.id)
+        _PINYIN_INDEX = index
+        LOGGER.info("Pinyin index built: %d entries", len(index))
+        return index
+    except ImportError:
+        LOGGER.debug("pypinyin not installed, pinyin fuzzy search disabled")
+        _PINYIN_INDEX = {}
+        return {}
+
+
+def search_items_pinyin(
+    kb: KnowledgeBase,
+    query: str,
+) -> list[HeritageItem]:
+    """Try pinyin-based homophone matching as a fallback.
+
+    Converts the query characters to pinyin and looks for items whose
+    title/alias pinyin matches.  Returns [] when pypinyin is unavailable
+    or no matches are found.
+    """
+    if not query or len(query) < _PINYIN_MIN_QUERY_LEN:
+        return []
+
+    index = _build_pinyin_index(kb)
+    if not index:
+        return []
+
+    try:
+        from pypinyin import lazy_pinyin  # noqa: PLC0415 - optional dependency
+
+        query_py = "".join(lazy_pinyin(query))
+    except ImportError:
+        return []
+
+    matched_ids: list[str] = []
+
+    # 1) Exact full-pinyin match
+    if query_py in index:
+        matched_ids.extend(index[query_py])
+
+    # 2) Partial: query-pinyin and title-pinyin may contain each other.
+    for py, ids in index.items():
+        if py == query_py:
+            continue
+        if query_py in py or py in query_py:
+            matched_ids.extend(ids)
+
+    # Deduplicate and resolve
+    seen: set[str] = set()
+    result: list[HeritageItem] = []
+    for item_id in matched_ids:
+        if item_id in seen:
+            continue
+        seen.add(item_id)
+        item = kb.get(item_id)
+        if item is not None:
+            result.append(item)
+
+    return result
 
 
 def tokenize(query: str) -> list[str]:
@@ -34,15 +125,41 @@ def search_items(
     kb: KnowledgeBase,
     query: str = "",
     category: str = "",
+    province: str = "",
+    level: str = "",
+    district: str = "",
+    keywords: str = "",
     limit: int = 30,
     offset: int = 0,
 ) -> tuple[list[HeritageItem], int]:
     query = normalize_text(query)
     category = normalize_text(category)
+    province = normalize_text(province)
+    level = normalize_text(level)
+    district = normalize_text(district)
+    keywords = normalize_text(keywords)
     candidates: Iterable[HeritageItem] = kb.items
 
     if category:
         candidates = (item for item in candidates if item.category == category)
+    if province:
+        candidates = (
+            item for item in candidates
+            if (meta := get_structured_meta(item.id)) and meta.province == province
+        )
+    if level:
+        candidates = (
+            item for item in candidates
+            if (meta := get_structured_meta(item.id)) and meta.level == level
+        )
+    if district:
+        candidates = (
+            item for item in candidates
+            if (meta := get_structured_meta(item.id)) and district in meta.district
+        )
+    if keywords:
+        query = f"{keywords} {query}".strip()
+
     candidates = list(candidates)
 
     if not query:
@@ -60,6 +177,7 @@ def search_items(
             pass
 
     result = [item for _, item in ranked]
+    result = prepend_pinyin_matches(kb, result, query, candidates)
     return result[offset : offset + limit], len(result)
 
 
@@ -67,16 +185,42 @@ def search_items_lexical(
     kb: KnowledgeBase,
     query: str = "",
     category: str = "",
+    province: str = "",
+    level: str = "",
+    district: str = "",
+    keywords: str = "",
     limit: int = 30,
     offset: int = 0,
 ) -> tuple[list[HeritageItem], int]:
     """Fast lexical-only search that never calls the embedding API."""
     query = normalize_text(query)
     category = normalize_text(category)
+    province = normalize_text(province)
+    level = normalize_text(level)
+    district = normalize_text(district)
+    keywords = normalize_text(keywords)
     candidates: Iterable[HeritageItem] = kb.items
 
     if category:
         candidates = (item for item in candidates if item.category == category)
+    if province:
+        candidates = (
+            item for item in candidates
+            if (meta := get_structured_meta(item.id)) and meta.province == province
+        )
+    if level:
+        candidates = (
+            item for item in candidates
+            if (meta := get_structured_meta(item.id)) and meta.level == level
+        )
+    if district:
+        candidates = (
+            item for item in candidates
+            if (meta := get_structured_meta(item.id)) and district in meta.district
+        )
+    if keywords:
+        query = f"{keywords} {query}".strip()
+
     candidates = list(candidates)
 
     if not query:
@@ -88,7 +232,36 @@ def search_items_lexical(
     ranked = rank_lexical(candidates, lowered_query, tokens)
 
     result = [item for _, item in ranked]
+    result = prepend_pinyin_matches(kb, result, query, candidates)
+
     return result[offset : offset + limit], len(result)
+
+
+def prepend_pinyin_matches(
+    kb: KnowledgeBase,
+    ranked_items: list[HeritageItem],
+    query: str,
+    candidates: list[HeritageItem],
+) -> list[HeritageItem]:
+    """Place homophone title matches before normal ranked results.
+
+    Pinyin matching is intentionally a lexical supplement: it helps misspelled
+    or same-sound Chinese queries such as "落山" find "罗山", without feeding
+    those same-sound tokens into embedding search.
+    """
+    if not query or len(query) < _PINYIN_MIN_QUERY_LEN:
+        return ranked_items
+
+    candidate_ids = {item.id for item in candidates}
+    pinyin_results = [
+        item for item in search_items_pinyin(kb, query)
+        if item.id in candidate_ids
+    ]
+    if not pinyin_results:
+        return ranked_items
+
+    pinyin_ids = {item.id for item in pinyin_results}
+    return pinyin_results + [item for item in ranked_items if item.id not in pinyin_ids]
 
 
 def rank_lexical(

@@ -435,16 +435,14 @@ class Agent:
         from .search import search_items_lexical
 
         # Resolve target entities — try explicit entities first, fall back to splitting
-        _ENTITY_SUFFIX_RE = re.compile(
-            r"(?:有什么区别|有什么不同|的区别|的差异|哪个更受欢迎|哪个更|哪个好|的比较|的对比|对比一下)$"
-        )
         targets: list[str] = []
         if analysis.entities:
-            targets = [_ENTITY_SUFFIX_RE.sub("", e) for e in analysis.entities]
+            targets = [_clean_comparison_target(e) for e in analysis.entities]
         else:
             # Fallback: split rewritten query on common separators
             parts = re.split(r"\s+", analysis.rewritten_query)
-            targets = [_ENTITY_SUFFIX_RE.sub("", p) for p in parts if len(p) >= 2]
+            targets = [_clean_comparison_target(p) for p in parts if len(p) >= 2]
+        targets = [target for target in targets if target]
 
         if len(targets) < 2:
             # Not enough entities to compare — fall through to LLM
@@ -466,33 +464,60 @@ class Agent:
         # Search each target entity in the KB
         resolved: list[tuple[str, Any, Any, Any]] = []  # (entity_name, item, meta, labels)
         unmatched: list[str] = []
+        used_item_ids: set[str] = set()
 
         for t in targets:
-            result, _ = search_items_lexical(self.kb, query=t, limit=1)
-            if result:
-                item = result[0]
-                meta = get_structured_meta(item.id)
-                labels = get_soft_labels(item.id)
-                resolved.append((t, item, meta, labels))
+            match = _resolve_comparison_target(self.kb, t, used_item_ids)
+            if match:
+                display_name, item, meta, labels = match
+                used_item_ids.add(item.id)
+                resolved.append((display_name, item, meta, labels))
             else:
                 unmatched.append(t)
 
         if len(resolved) < 2:
-            # Insufficient matches — fall through to LLM
-            from .ai import Answer, answer_question
+            suggestion_query = _comparison_suggestion_query(targets)
+            suggestions: list[Any] = []
+            if suggestion_query:
+                suggestions, _ = search_items_lexical(self.kb, query=suggestion_query, limit=4)
+            suggestion_cards = [_enriched_item_card(item) for item in suggestions]
+            suggestion_sources = [{"id": item.id, "title": item.title, "category": item.category} for item in suggestions]
+            missing = unmatched or targets
+            missing_text = "、".join(missing)
+            answer_lines = [
+                f"资料库中暂未找到可直接对应「{missing_text}」的非遗条目，因此当前不能做依据式对比。",
+            ]
+            if suggestion_cards:
+                topic_text = f"与“{suggestion_query}”相关" if suggestion_query else "当前最接近"
+                answer_lines.extend([
+                    "",
+                    f"资料库里 {topic_text} 的项目有：",
+                    "",
+                ])
+                for index, item in enumerate(suggestions, 1):
+                    meta = get_structured_meta(item.id)
+                    location = " · ".join(part for part in [meta.province if meta else "", meta.city if meta else ""] if part)
+                    category = item.category
+                    desc = " · ".join(part for part in [category, location] if part)
+                    answer_lines.append(f"{index}. {item.title}" + (f"（{desc}）" if desc else ""))
+                answer_lines.extend([
+                    "",
+                    "你可以继续追问这些已收录项目之间的区别，或改问资料库中实际存在的地区化项目。",
+                ])
 
-            answer: Answer = answer_question(
-                self.kb,
-                question=analysis.rewritten_query or analysis.original_query,
+            speech = (
+                f"资料库中暂时没有可直接对应{missing_text}的条目，所以现在不能做依据式对比。"
+                + (f"当前最接近的项目主要有：{'、'.join(item.title for item in suggestions)}。" if suggestions else "")
             )
             return AgentResult(
                 task_type=TaskType.COMPARISON,
-                answer=answer.answer,
-                speech=answer.speech,
-                sources=answer.sources,
-                mode=answer.mode,
-                confidence=0.6,
-                warnings=[f"仅匹配到 {len(resolved)} 个项目" + (f"，未找到：{'、'.join(unmatched)}" if unmatched else "")],
+                answer="\n".join(answer_lines),
+                speech=speech,
+                items=suggestion_cards,
+                sources=suggestion_sources,
+                mode="local",
+                confidence=0.45,
+                warnings=[f"未在资料库中找到可直接对应的比较项：{missing_text}"],
             )
 
         # Build comparison answer
@@ -859,15 +884,15 @@ class Agent:
 
         if config.AI_API_KEY:
             try:
-                answer_text = self._call_transform_model(
+                answer_text = _call_transform_model(
                     transform_type=transform_type,
                     context=context,
                     query=analysis.original_query,
                 )
                 sources = [{"id": target_item.id, "title": target_item.title, "category": target_item.category}]
-                from .ai import build_speech_text
+                from .ai import build_spoken_answer
 
-                speech_text = build_speech_text(answer_text, question=analysis.original_query, sources=[target_item])
+                speech_text = build_spoken_answer(answer_text, question=analysis.original_query, sources=[target_item])
 
                 return AgentResult(
                     task_type=TaskType.CONTENT_TRANSFORM,
@@ -1368,6 +1393,113 @@ def with_agent_decision(
     if not include_speech:
         result = replace(result, speech="")
     return result
+
+
+_COMPARISON_TARGET_TRAILING_RE = re.compile(
+    r"(?:有什么区别|有什么不同|有何区别|有何不同|的区别|的差异|哪个更受欢迎|哪个更适合|哪个更|哪个好|的比较|的对比|对比一下|比较一下)$"
+)
+
+
+def _clean_comparison_target(value: str) -> str:
+    cleaned = normalize_text(value)
+    cleaned = _COMPARISON_TARGET_TRAILING_RE.sub("", cleaned)
+    cleaned = cleaned.strip("，,。！？?、；：:~～ ")
+    return cleaned
+
+
+def _comparison_target_parts(target: str) -> tuple[str, str]:
+    from .retriever import _PROVINCE_PATTERN, _SHORT_PROVINCE_MAP
+
+    cleaned = _clean_comparison_target(target)
+    province = ""
+    match = _PROVINCE_PATTERN.search(cleaned)
+    if match:
+        province = match.group(1)
+    else:
+        for short, full in sorted(_SHORT_PROVINCE_MAP.items(), key=lambda item: len(item[0]), reverse=True):
+            if short in cleaned:
+                province = full
+                cleaned = cleaned.replace(short, "", 1)
+                break
+
+    if province:
+        cleaned = cleaned.replace(province, "")
+        for short, full in _SHORT_PROVINCE_MAP.items():
+            if full == province:
+                cleaned = cleaned.replace(short, "")
+                break
+
+    core = cleaned.strip(" 的")
+    return province, core or _clean_comparison_target(target)
+
+
+def _resolve_comparison_target(kb: KnowledgeBase, target: str, used_item_ids: set[str]):
+    from .search import search_items_lexical
+
+    cleaned = _clean_comparison_target(target)
+    province, core = _comparison_target_parts(cleaned)
+
+    candidate_queries = [cleaned]
+    if core and core != cleaned:
+        candidate_queries.append(core)
+
+    candidates: list[Any] = []
+    seen_ids: set[str] = set()
+    for query in candidate_queries:
+        if not query:
+            continue
+        result, _ = search_items_lexical(kb, query=query, limit=8)
+        for item in result:
+            if item.id in used_item_ids or item.id in seen_ids:
+                continue
+            seen_ids.add(item.id)
+            candidates.append(item)
+
+    best = None
+    best_score = 0
+    for item in candidates:
+        meta = get_structured_meta(item.id)
+        if province and (meta is None or meta.province != province):
+            continue
+
+        labels = get_soft_labels(item.id)
+        names = [item.title, item.title.split("（")[0].split("(")[0].strip(), *item.aliases]
+        score = 0
+        if cleaned in names:
+            score += 120
+        if core in names:
+            score += 100
+        if cleaned and cleaned in item.title:
+            score += 90
+        if core and core in item.title:
+            score += 70
+        if core and core in item.summary:
+            score += 30
+        if province and meta and meta.province == province:
+            score += 25
+
+        if score > best_score:
+            best = (item.title, item, meta, labels)
+            best_score = score
+
+    if best_score < 60:
+        return None
+    return best
+
+
+def _comparison_suggestion_query(targets: list[str]) -> str:
+    cores = []
+    for target in targets:
+        _, core = _comparison_target_parts(target)
+        if core:
+            cores.append(core)
+    unique = list(dict.fromkeys(core for core in cores if len(core) >= 2))
+    if len(unique) == 1:
+        return unique[0]
+    for candidate in sorted(unique, key=len, reverse=True):
+        if all(candidate in core for core in unique):
+            return candidate
+    return unique[0] if unique else ""
 
 
 def _enriched_item_card(item) -> dict[str, Any]:

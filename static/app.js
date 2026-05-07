@@ -1,19 +1,24 @@
 const state = {
   query: "",
   selectedId: "",
+  currentTaskType: "",
 };
 
 const relatedList = document.querySelector("#relatedList");
 const relatedCount = document.querySelector("#relatedCount");
+const relatedTitle = document.querySelector("#relatedTitle");
 const metaText = document.querySelector("#metaText");
 const detailEmpty = document.querySelector("#detailEmpty");
 const detailContent = document.querySelector("#detailContent");
 const detailPanel = document.querySelector(".marginalia");
 const detailCategory = document.querySelector("#detailCategory");
 const detailTitle = document.querySelector("#detailTitle");
+const detailMeta = document.querySelector("#detailMeta");
+const detailSupport = document.querySelector("#detailSupport");
 const detailSummary = document.querySelector("#detailSummary");
 const detailBody = document.querySelector("#detailBody");
 const questionInput = document.querySelector("#questionInput");
+const querySuggestions = document.querySelector("#querySuggestions");
 const askButton = document.querySelector("#askButton");
 const voiceToggle = document.querySelector("#voiceToggle");
 const voiceStatus = document.querySelector("#voiceStatus");
@@ -53,6 +58,57 @@ let loadingStepIndex = 0;
 let loadingTargetIndex = 0;
 let askAbortController = null;
 let askRequestId = 0;
+
+const defaultSuggestionQueries = [
+  "汴绣是什么？",
+  "河南有哪些传统美术类非遗？",
+  "四川皮影和湖北皮影有什么区别？",
+  "推荐适合校园展示的河南非遗项目",
+  "给朱仙镇木版年画生成讲解词",
+  "适合社区活动展示的非遗有哪些？",
+];
+const followupQueriesByTask = {
+  fact_qa: [
+    "这个项目更适合校园展示还是社区活动？",
+    "它和同类非遗有什么区别？",
+    "帮我把它改成适合讲解的口语版",
+  ],
+  browse_query: [
+    "从这些项目里推荐 3 个适合校园展示的",
+    "把这些项目按展示难度做个比较",
+    "帮我从中挑适合社区活动的项目",
+  ],
+  comparison: [
+    "把这两个项目整理成展板讲解词",
+    "推荐更适合校园展示的那个",
+    "再加入一个同类项目一起比较",
+  ],
+  recommendation: [
+    "基于这些推荐生成校园展示策划",
+    "给每个推荐项目写一句推荐理由",
+    "把推荐结果改成适合播报的讲解词",
+  ],
+  exhibition_plan: [
+    "把这个方案压缩成 3 分钟讲解流程",
+    "继续生成互动问题和研学任务",
+    "改成适合社区活动的版本",
+  ],
+  study_task: [
+    "再补 3 个课堂互动问题",
+    "改成适合小学生的版本",
+    "把这份任务单压缩成 15 分钟活动",
+  ],
+  content_transform: [
+    "再生成一个更年轻化的版本",
+    "改成双语传播文案",
+    "基于这个项目再推荐几个相关非遗",
+  ],
+  chitchat: [
+    "推荐适合校园展示的河南非遗项目",
+    "四川皮影和湖北皮影有什么区别？",
+    "河南有哪些传统美术类非遗？",
+  ],
+};
 
 const speechSupported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
 const PROGRESS_STEP_INDEX = {
@@ -131,7 +187,7 @@ function setAnswerState(stateName) {
 
 function setAnswerPlain(value, stateName = "") {
   stopLoadingSteps();
-  answerBox.classList.remove("markdown-answer");
+  answerBox.classList.remove("markdown-answer", "result-answer");
   setAnswerState(stateName);
   answerBox.textContent = value;
 }
@@ -139,8 +195,19 @@ function setAnswerPlain(value, stateName = "") {
 function setAnswerMarkdown(value) {
   stopLoadingSteps();
   setAnswerState("");
+  answerBox.classList.remove("result-answer");
   answerBox.classList.add("markdown-answer");
   answerBox.innerHTML = renderMarkdown(value);
+}
+
+function setAnswerResult(question, payload) {
+  stopLoadingSteps();
+  setAnswerState("");
+  answerBox.classList.remove("markdown-answer");
+  answerBox.classList.add("result-answer");
+  answerBox.innerHTML = renderResultAnswer(question, payload);
+  bindQueryChips(answerBox);
+  bindResultItemLinks(answerBox);
 }
 
 function startLoadingSteps() {
@@ -177,7 +244,7 @@ function stopLoadingSteps() {
 }
 
 function setAnswerLoading(activeIndex) {
-  answerBox.classList.remove("markdown-answer");
+  answerBox.classList.remove("markdown-answer", "result-answer");
   setAnswerState("loading");
   const steps = activeLoadingSteps.length ? activeLoadingSteps : getLoadingSteps();
   const active = steps[activeIndex] || steps[0];
@@ -318,6 +385,280 @@ function renderInlineMarkdown(value) {
     .replace(/_([^_]+)_/g, "<em>$1</em>");
 }
 
+function renderSuggestionStrip(queries, options = {}) {
+  if (!queries?.length) {
+    return "";
+  }
+  const chips = queries.map((query) => `
+    <button
+      class="query-chip ${options.compact ? "is-compact" : ""}"
+      type="button"
+      data-query="${escapeHtml(query)}"
+      data-submit="${options.submit === false ? "0" : "1"}"
+    >${escapeHtml(query)}</button>
+  `).join("");
+  return chips;
+}
+
+function renderQuerySuggestions() {
+  if (!querySuggestions) {
+    return;
+  }
+  querySuggestions.innerHTML = renderSuggestionStrip(defaultSuggestionQueries, { submit: true });
+  bindQueryChips(querySuggestions);
+}
+
+function bindQueryChips(scope) {
+  scope?.querySelectorAll?.(".query-chip[data-query]")?.forEach((button) => {
+    button.addEventListener("click", () => {
+      questionInput.value = button.dataset.query || "";
+      resizeQuestionInput();
+      updateRelatedItems();
+      if (button.dataset.submit !== "0") {
+        askQuestion();
+      } else {
+        questionInput.focus();
+      }
+    });
+  });
+}
+
+function bindResultItemLinks(scope) {
+  scope?.querySelectorAll?.(".result-item-link[data-id]")?.forEach((button) => {
+    button.addEventListener("click", () => loadDetail(button.dataset.id, true));
+  });
+}
+
+function resultIntroText(question, payload) {
+  const taskType = payload?.task_type || "";
+  const itemCount = payload?.items?.length || payload?.sources?.length || 0;
+  const totalCount = payload?.total_count || itemCount;
+  const sourceTitle = payload?.items?.[0]?.title || payload?.sources?.[0]?.title || "";
+  const taskLabel = payload?.task_label || "任务";
+
+  if (taskType === "browse_query") {
+    return `系统已根据你的问题整理出 ${totalCount} 个匹配项目，当前优先展示其中最相关的 ${itemCount} 项。`;
+  }
+  if (taskType === "comparison") {
+    return `系统把你关心的项目放到同一组维度里对照，方便直接看差异和适用场景。`;
+  }
+  if (taskType === "recommendation") {
+    return `系统会围绕你的使用场景，从资料库里挑出更合适的项目，并说明为什么推荐它们。`;
+  }
+  if (taskType === "exhibition_plan") {
+    return `系统正在把候选非遗项目整理成可直接落地的展示方案，而不只是给一段说明文字。`;
+  }
+  if (taskType === "study_task") {
+    return `系统把资料库内容转成研学和教学任务，方便继续做课堂活动或学习单。`;
+  }
+  if (taskType === "content_transform") {
+    return `系统先匹配最相关的非遗项目，再把内容改写成更适合传播或展示的版本。`;
+  }
+  if (taskType === "chitchat") {
+    return "这是一次直接回应。如果你想查项目、做筛选、对比或策划，也可以直接自然提问。";
+  }
+  if (sourceTitle) {
+    return `系统正围绕「${sourceTitle}」回答你的问题，并把可追溯的资料条目放在右侧。`;
+  }
+  return `系统已识别为「${taskLabel}」任务，并结合资料库来回答「${question}」。`;
+}
+
+function resultStats(payload) {
+  const taskType = payload?.task_type || "";
+  const itemCount = payload?.items?.length || payload?.sources?.length || 0;
+  const totalCount = payload?.total_count || 0;
+  const stats = [];
+
+  if (taskType) {
+    stats.push(`任务类型 · ${payload?.task_label || modeLabel(payload?.mode)}`);
+  }
+  if (totalCount) {
+    stats.push(`命中 ${totalCount} 项`);
+  } else if (itemCount) {
+    stats.push(`涉及 ${itemCount} 项`);
+  }
+  if (taskType === "comparison" && itemCount) {
+    stats.push(`当前对比 ${itemCount} 项`);
+  }
+  if (taskType === "recommendation") {
+    stats.push("已进入场景推荐");
+  }
+  if (taskType === "exhibition_plan") {
+    stats.push("已整理展示方案");
+  }
+  if (taskType === "content_transform") {
+    stats.push("已切换内容转化");
+  }
+  return stats;
+}
+
+function renderResultStats(payload) {
+  const stats = resultStats(payload);
+  if (!stats.length) {
+    return "";
+  }
+  return `
+    <section class="result-section">
+      <h3>任务概览</h3>
+      <div class="result-stats">
+        ${stats.map((value) => `<span class="result-stat">${escapeHtml(value)}</span>`).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function itemMetaParts(item) {
+  const parts = [];
+  if (item?.category) parts.push(item.category);
+  if (item?.level) parts.push(item.level);
+  const location = [item?.province, item?.city].filter(Boolean).join(" · ");
+  if (location) parts.push(location);
+  return parts;
+}
+
+function itemTagList(item, limit = 4) {
+  const tags = [];
+  for (const form of item?.display_forms || []) {
+    if (form && !tags.includes(form)) tags.push(form);
+    if (tags.length >= limit) break;
+  }
+  for (const keyword of item?.cultural_keywords || []) {
+    if (keyword && !tags.includes(keyword)) tags.push(keyword);
+    if (tags.length >= limit) break;
+  }
+  return tags;
+}
+
+function renderResultItems(payload) {
+  const items = payload?.items?.length ? payload.items : payload?.sources || [];
+  if (!items.length) {
+    return "";
+  }
+  return `
+    <section class="result-section">
+      <h3>重点项目</h3>
+      <div class="result-items">
+        ${items.slice(0, 6).map((item) => {
+          const meta = itemMetaParts(item).join(" · ");
+          const tags = itemTagList(item, 3);
+          return `
+            <button class="result-item-link" type="button" data-id="${escapeHtml(item.id)}">
+              <span class="result-item-title">${escapeHtml(item.title || "未命名项目")}</span>
+              ${meta ? `<span class="result-item-meta">${escapeHtml(meta)}</span>` : ""}
+              ${tags.length ? `<span class="result-item-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</span>` : ""}
+            </button>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderSelectionReason(payload) {
+  if (!payload?.selection_reason) {
+    return "";
+  }
+  return `
+    <section class="result-section">
+      <h3>为什么这样选</h3>
+      <p class="result-note">${escapeHtml(payload.selection_reason)}</p>
+    </section>
+  `;
+}
+
+function renderWarnings(payload) {
+  if (!payload?.warnings?.length) {
+    return "";
+  }
+  return `
+    <section class="result-section">
+      <h3>补充说明</h3>
+      <ul class="result-warnings">
+        ${payload.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}
+      </ul>
+    </section>
+  `;
+}
+
+function followupQueries(payload) {
+  return followupQueriesByTask[payload?.task_type] || followupQueriesByTask.fact_qa;
+}
+
+function renderFollowups(payload) {
+  const queries = followupQueries(payload);
+  if (!queries.length) {
+    return "";
+  }
+  return `
+    <section class="result-section">
+      <h3>下一步可以这样问</h3>
+      <div class="result-followups">
+        ${renderSuggestionStrip(queries, { compact: true, submit: true })}
+      </div>
+    </section>
+  `;
+}
+
+function renderResultAnswer(question, payload) {
+  const taskLabel = payload?.task_label || modeLabel(payload?.mode);
+  return `
+    <div class="result-shell" data-task="${escapeHtml(payload?.task_type || "fact_qa")}">
+      <section class="result-section">
+        <h3>任务理解</h3>
+        <p class="result-intro">${escapeHtml(resultIntroText(question, payload))}</p>
+      </section>
+      ${renderResultStats(payload)}
+      ${renderResultItems(payload)}
+      ${renderSelectionReason(payload)}
+      <section class="result-section">
+        <h3>${escapeHtml(taskLabel)}结果</h3>
+        <div class="result-markdown">${renderMarkdown(payload?.answer || "")}</div>
+      </section>
+      ${renderWarnings(payload)}
+      ${renderFollowups(payload)}
+    </div>
+  `;
+}
+
+function detailCardMeta(item) {
+  const tags = [];
+  for (const value of [item?.category, item?.level, item?.province, item?.city]) {
+    if (value && !tags.includes(value)) {
+      tags.push(value);
+    }
+  }
+  for (const form of item?.display_forms || []) {
+    if (form && !tags.includes(form)) {
+      tags.push(form);
+    }
+    if (tags.length >= 7) break;
+  }
+  for (const keyword of item?.cultural_keywords || []) {
+    if (keyword && !tags.includes(keyword)) {
+      tags.push(keyword);
+    }
+    if (tags.length >= 10) break;
+  }
+  return tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("");
+}
+
+function detailSupportText(item) {
+  const parts = [];
+  if (item?.suitable_scenarios?.length) {
+    parts.push(`适用场景：${item.suitable_scenarios.slice(0, 3).join("、")}`);
+  }
+  if (item?.target_audience?.length) {
+    parts.push(`适合人群：${item.target_audience.slice(0, 3).join("、")}`);
+  }
+  if (item?.education_value) {
+    parts.push(`教育价值：${item.education_value}`);
+  }
+  if (item?.interaction_potential) {
+    parts.push(`互动潜力：${item.interaction_potential}`);
+  }
+  return parts.join(" · ");
+}
+
 async function loadMeta() {
   try {
     const data = await fetchJson("/api/meta");
@@ -390,7 +731,31 @@ async function loadRelatedItems(requestKey = relatedRequestKey) {
   }
 }
 
+function relatedPanelTitle(taskType = state.currentTaskType) {
+  if (!state.query) {
+    return "相关资料";
+  }
+  const titles = {
+    browse_query: "匹配项目",
+    comparison: "对比项目",
+    recommendation: "候选项目",
+    exhibition_plan: "候选项目",
+    study_task: "候选项目",
+    content_transform: "相关项目",
+    fact_qa: "相关资料",
+    chitchat: "相关资料",
+  };
+  return titles[taskType] || "匹配项目";
+}
+
+function updateRelatedPanelTitle(taskType = state.currentTaskType) {
+  if (relatedTitle) {
+    relatedTitle.textContent = relatedPanelTitle(taskType);
+  }
+}
+
 function renderRelatedItems(items, total = items.length) {
+  updateRelatedPanelTitle();
   relatedCount.textContent = state.query ? `${total} 条` : "";
   relatedList.innerHTML = items.length
     ? items.map(itemButtonHtml).join("")
@@ -403,10 +768,17 @@ function renderRelatedItems(items, total = items.length) {
 
 function itemButtonHtml(item) {
   const summary = item.summary || "暂无摘要";
+  const meta = itemMetaParts(item).join(" · ");
+  const tags = itemTagList(item, 4);
   return `
     <button class="item-entry" type="button" data-id="${escapeHtml(item.id)}" data-category="${escapeHtml(item.category)}">
-      <div class="item-entry-title">${escapeHtml(item.title)}</div>
-      <div class="item-entry-meta">${escapeHtml(item.category)} · ${escapeHtml(summary.slice(0, 46))}</div>
+      <div class="item-entry-head">
+        <div class="item-entry-title">${escapeHtml(item.title)}</div>
+        <div class="item-entry-action">查看详情</div>
+      </div>
+      ${meta ? `<div class="item-entry-meta">${escapeHtml(meta)}</div>` : ""}
+      <div class="item-entry-summary">${escapeHtml(summary.slice(0, 74))}</div>
+      ${tags.length ? `<div class="item-entry-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>` : ""}
     </button>
   `;
 }
@@ -423,6 +795,10 @@ async function loadDetail(id, shouldFocus = false) {
   detailCategory.textContent = item.category;
   detailCategory.setAttribute("data-category", item.category);
   detailTitle.textContent = item.title;
+  detailMeta.innerHTML = detailCardMeta(item);
+  const support = detailSupportText(item);
+  detailSupport.hidden = !support;
+  detailSupport.textContent = support;
   detailSummary.textContent = item.summary || "暂无摘要。";
   detailBody.textContent = item.content || "暂无原文。";
 
@@ -436,6 +812,9 @@ function clearDetail() {
   detailContent.hidden = true;
   detailCategory.textContent = "";
   detailTitle.textContent = "";
+  detailMeta.innerHTML = "";
+  detailSupport.hidden = true;
+  detailSupport.textContent = "";
   detailSummary.textContent = "";
   detailBody.textContent = "";
 }
@@ -447,8 +826,10 @@ function updateRelatedItems() {
   const newQuery = questionInput.value.trim();
   state.query = newQuery;
   state.selectedId = "";
+  state.currentTaskType = "";
   relatedList.querySelectorAll("button").forEach((button) => button.classList.remove("active"));
   clearDetail();
+  updateRelatedPanelTitle();
 
   window.clearTimeout(relatedTimer);
   if (!newQuery) {
@@ -501,11 +882,15 @@ function beginAskSession(question) {
   askAbortController?.abort();
   const controller = new AbortController();
   askAbortController = controller;
+  window.clearTimeout(relatedTimer);
+  relatedRequestKey = `ask:${requestId}`;
+  inFlightKey = "";
 
   state.query = question;
+  state.currentTaskType = "";
   askButton.disabled = true;
   askButton.textContent = "提问";
-  answerMode.textContent = "";
+  answerMode.textContent = "正在识别任务";
   startLoadingSteps();
   lastSpeechText = "";
   stopSpeech({ preserveHuman: true });
@@ -540,7 +925,8 @@ async function presentAskResponse(requestId, controller, question, payload, thin
   }
 
   const speech = answerSpeechFromPayload(payload);
-  setAnswerMarkdown(payload.answer);
+  state.currentTaskType = payload?.task_type || "";
+  setAnswerResult(question, payload);
   console.info("[xuhua:speech]", {
     mode: payload.mode,
     length: speech.length,
@@ -553,15 +939,17 @@ async function presentAskResponse(requestId, controller, question, payload, thin
     scheduleHumanReturnToIdle(visualAnswerDuration(speech));
   }
   const related = answerRelatedItems(payload);
-  renderRelatedItems(related, related.length);
+  renderRelatedItems(related, payload?.total_count || related.length);
 }
 
 function presentAskError(requestId, controller, error) {
   if (!isActiveAskRequest(requestId, controller)) {
     return;
   }
+  state.currentTaskType = "";
   const message = error.name === "AbortError" ? "问答超时，请稍后再试。" : `问答失败：${error.message}`;
   setAnswerPlain(message, "error");
+  answerMode.textContent = "系统自动识别任务";
   setDigitalHumanState("idle", "出现错误", message);
   stopSpeech();
 }
@@ -655,9 +1043,9 @@ function modeLabel(mode) {
 
 function taskModeLabel(payload) {
   if (payload?.task_type === "chitchat") {
-    return payload?.decision?.planner === "model" ? "智能体回应" : "直接回应";
+    return payload?.decision?.planner === "model" ? "对话回应" : "对话回应";
   }
-  return payload?.task_label || modeLabel(payload?.mode);
+  return `已识别：${payload?.task_label || modeLabel(payload?.mode)}`;
 }
 
 function setDigitalHumanState(stateName, status, speech = "") {
@@ -991,7 +1379,9 @@ function stripMarkdown(value) {
 
 configureHumanVideoPlayback(activeHumanVideo, "idle");
 scheduleHumanVideoAdvance(activeHumanVideo, "idle");
+renderQuerySuggestions();
 loadMeta();
+updateRelatedPanelTitle();
 syncRestoredQuestion();
 window.addEventListener("pageshow", syncRestoredQuestion);
 

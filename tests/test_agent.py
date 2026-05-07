@@ -293,6 +293,24 @@ def test_agent_dispatch_handles_comparison_intent():
     assert len(result.sources) >= 1
 
 
+def test_comparison_with_region_only_terms_does_not_fabricate_duplicate_items():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("四川皮影和湖北皮影有什么区别？", include_speech=False)
+
+    item_ids = [item["id"] for item in result.items]
+    source_ids = [source["id"] for source in result.sources]
+
+    assert result.task_type is TaskType.COMPARISON
+    assert result.mode == "local"
+    assert len(item_ids) == len(set(item_ids))
+    assert len(source_ids) == len(set(source_ids))
+    assert "暂未找到可直接对应" in result.answer
+    assert any("四川皮影" in warning or "湖北皮影" in warning for warning in result.warnings)
+
+
 def test_agent_dispatch_handles_empty_query():
     from heritage_explorer.dataset import load_dataset
 
@@ -405,6 +423,30 @@ def test_dispatch_stream_uses_task_config_generate_detail_for_rule_handler(monke
     assert any(event.get("step") == "speech" for event in progress_events)
     assert result.answer == "推荐结果"
     assert result.speech == "推荐播报"
+
+
+def test_content_transform_llm_branch_uses_spoken_answer_rewrite(monkeypatch):
+    from heritage_explorer.dataset import load_dataset
+    from heritage_explorer import config
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    monkeypatch.setattr(config, "AI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "heritage_explorer.agent._call_transform_model",
+        lambda **_kwargs: "展示版改写：汴绣适合年轻受众传播。",
+    )
+    monkeypatch.setattr(
+        "heritage_explorer.ai.build_spoken_answer",
+        lambda answer, question="", sources=None, prefer_model=True, max_chars=760: f"播报版：{answer}",
+    )
+
+    result = agent.dispatch("把汴绣改写成口播稿")
+
+    assert result.task_type is TaskType.CONTENT_TRANSFORM
+    assert result.mode == "llm"
+    assert result.answer == "展示版改写：汴绣适合年轻受众传播。"
+    assert result.speech == "播报版：展示版改写：汴绣适合年轻受众传播。"
 
 
 # ── MVP handler tests ──

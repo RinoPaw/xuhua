@@ -8,7 +8,7 @@ from flask import Flask, Response, abort, jsonify, render_template, request
 
 from .agent import Agent, AgentResult, task_type_label
 from .config import DEBUG, HOST, PORT
-from .dataset import get_knowledge_base, item_to_dict
+from .dataset import get_knowledge_base, get_soft_labels, get_structured_meta, item_to_dict
 from .search import search_items, search_items_lexical
 
 
@@ -74,7 +74,7 @@ def create_app() -> Flask:
             "total": total,
             "limit": limit,
             "offset": offset,
-            "items": [item_to_dict(item) for item in result],
+            "items": [_item_payload(item) for item in result],
         })
 
     @app.get("/api/items/<item_id>")
@@ -83,7 +83,7 @@ def create_app() -> Flask:
         item = kb.get(item_id)
         if item is None:
             abort(404)
-        return jsonify(item_to_dict(item, include_content=True))
+        return jsonify(_item_payload(item, include_content=True))
 
     @app.post("/api/ask")
     def ask():
@@ -148,7 +148,7 @@ def _stream_items(
         yield _sse_event({
             "phase": "lexical",
             "total": lex_total,
-            "items": [item_to_dict(item) for item in lex_result],
+            "items": [_item_payload(item) for item in lex_result],
         })
 
         # Phase 2 — hybrid (with embedding, may be slower)
@@ -164,7 +164,7 @@ def _stream_items(
                 yield _sse_event({
                     "phase": "hybrid",
                     "total": hybrid_total,
-                    "items": [item_to_dict(item) for item in hybrid_result],
+                    "items": [_item_payload(item) for item in hybrid_result],
                 })
             except Exception:
                 pass
@@ -181,6 +181,25 @@ def _stream_items(
 
 def _sse_event(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+def _item_payload(item, include_content: bool = False) -> dict:
+    data = item_to_dict(item, include_content=include_content)
+    meta = get_structured_meta(item.id)
+    if meta:
+        data["level"] = meta.level
+        data["province"] = meta.province
+        data["city"] = meta.city
+        data["district"] = meta.district
+        data["display_forms"] = list(meta.display_forms)
+    labels = get_soft_labels(item.id)
+    if labels:
+        data["suitable_scenarios"] = list(labels.suitable_scenarios[:4])
+        data["target_audience"] = list(labels.target_audience[:4])
+        data["interaction_potential"] = labels.interaction_potential
+        data["education_value"] = labels.education_value
+        data["cultural_keywords"] = list(labels.cultural_keywords[:6])
+    return data
 
 
 def main() -> None:

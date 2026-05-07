@@ -129,6 +129,10 @@ _COMPARISON_SPLIT_PATTERN = re.compile(
     r"(?:比较|对比|和|与|跟|同|以及|还有|VS\.?)\s*",
     re.IGNORECASE,
 )
+_COMPARISON_TRAILING_PATTERN = re.compile(
+    r"(?:有什么区别|有什么不同|有何区别|有何不同|的区别|的差异|哪个更好|哪个更适合|哪个更|哪个好|区别在哪|差异在哪|比较一下|对比一下)$"
+)
+_TRAILING_PUNCTUATION = "，,。！？?、；：:~～ \t\r\n"
 
 
 @dataclass
@@ -331,7 +335,12 @@ class QueryAnalyzer:
         )
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
         parts = [p.strip() for p in cleaned.split("|")]
-        names = [p for p in parts if p and len(p) >= 2]
+        names = []
+        for part in parts:
+            candidate = part.strip(_TRAILING_PUNCTUATION)
+            candidate = _COMPARISON_TRAILING_PATTERN.sub("", candidate).strip(_TRAILING_PUNCTUATION)
+            if candidate and len(candidate) >= 2:
+                names.append(candidate)
         return names or parts
 
     # ── new MVP extraction methods ──

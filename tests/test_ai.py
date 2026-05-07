@@ -35,6 +35,54 @@ def test_fallback_answer_hides_provider_error(monkeypatch):
     assert "错误：" not in answer.answer
 
 
+def test_llm_answer_uses_second_model_for_speech(monkeypatch):
+    monkeypatch.setattr(config, "AI_API_KEY", "test-key")
+    calls = {}
+
+    def fake_chat(question, sources):
+        calls["chat"] = (question, [item.title for item in sources])
+        return "展示版回答：罗山皮影戏历史悠久。"
+
+    def fake_speech(answer_text, question="", sources=None, max_chars=520):
+        calls["speech"] = (answer_text, question, [item.title for item in sources or []], max_chars)
+        return "播报版回答：罗山皮影戏历史悠久，表演生动。"
+
+    monkeypatch.setattr("heritage_explorer.ai.call_chat_model", fake_chat)
+    monkeypatch.setattr("heritage_explorer.ai.call_speech_model", fake_speech)
+
+    kb = load_dataset()
+    answer = answer_question(kb, "罗山皮影戏")
+
+    assert answer.mode == "llm"
+    assert answer.answer == "展示版回答：罗山皮影戏历史悠久。"
+    assert answer.speech == "播报版回答：罗山皮影戏历史悠久，表演生动。"
+    assert calls["chat"][0] == "罗山皮影戏"
+    assert calls["speech"][0] == answer.answer
+    assert calls["speech"][1] == "罗山皮影戏"
+    assert "罗山皮影戏" in calls["speech"][2]
+
+
+def test_speech_rewrite_failure_falls_back_without_downgrading_answer(monkeypatch):
+    monkeypatch.setattr(config, "AI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "heritage_explorer.ai.call_chat_model",
+        lambda _question, _sources: "## 汴绣\n\n历史：汴绣起源于北宋时期。",
+    )
+    monkeypatch.setattr(
+        "heritage_explorer.ai.call_speech_model",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("speech model timeout")),
+    )
+
+    kb = load_dataset()
+    answer = answer_question(kb, "汴绣")
+
+    assert answer.mode == "llm"
+    assert answer.answer.startswith("## 汴绣")
+    assert answer.speech
+    assert "从历史来看，汴绣起源于北宋时期" in answer.speech
+    assert "#" not in answer.speech
+
+
 def test_speech_text_removes_markdown_structure():
     speech = build_speech_text(
         "# 皮影戏\n\n"

@@ -75,7 +75,7 @@ def answer_question(kb: KnowledgeBase, question: str, category: str = "") -> Ans
                 answer=answer,
                 mode="llm",
                 sources=[source_payload(item) for item in sources],
-                speech=build_speech_text(answer, question=question, sources=sources),
+                speech=build_spoken_answer(answer, question=question, sources=sources),
             )
         except Exception as exc:  # noqa: BLE001 - API failures should gracefully fall back.
             LOGGER.warning("Chat model unavailable: %s", describe_model_error(exc))
@@ -87,7 +87,7 @@ def answer_question(kb: KnowledgeBase, question: str, category: str = "") -> Ans
                 answer=fallback,
                 mode="fallback",
                 sources=[source_payload(item) for item in sources],
-                speech=build_speech_text(fallback, question=question, sources=sources),
+                speech=build_spoken_answer(fallback, question=question, sources=sources, prefer_model=False),
             )
 
     answer = build_local_answer(question, sources)
@@ -95,17 +95,44 @@ def answer_question(kb: KnowledgeBase, question: str, category: str = "") -> Ans
         answer=answer,
         mode="local",
         sources=[source_payload(item) for item in sources],
-        speech=build_speech_text(answer, question=question, sources=sources),
+        speech=build_spoken_answer(answer, question=question, sources=sources, prefer_model=False),
     )
 
 
 def call_chat_model(question: str, sources: list[HeritageItem]) -> str:
-    if should_use_zhipu_sdk():
-        return call_zhipu_sdk(question, sources)
-    return call_openai_compatible_model(question, sources)
+    return call_model_with_messages(
+        build_messages(question, sources),
+        temperature=0.2,
+        max_tokens=1000,
+    )
+
+
+def call_speech_model(
+    answer: str,
+    question: str = "",
+    sources: list[HeritageItem] | None = None,
+    max_chars: int = 520,
+) -> str:
+    return call_model_with_messages(
+        build_speech_messages(answer, question=question, sources=sources or [], max_chars=max_chars),
+        temperature=0.3,
+        max_tokens=700,
+    )
 
 
 def call_zhipu_sdk(question: str, sources: list[HeritageItem]) -> str:
+    return call_zhipu_messages(
+        build_messages(question, sources),
+        temperature=0.2,
+        max_tokens=1000,
+    )
+
+
+def call_zhipu_messages(
+    messages: list[dict[str, str]],
+    temperature: float = 0.2,
+    max_tokens: int = 1000,
+) -> str:
     from zhipuai import ZhipuAI
 
     client = ZhipuAI(
@@ -116,10 +143,10 @@ def call_zhipu_sdk(question: str, sources: list[HeritageItem]) -> str:
     )
     response = client.chat.completions.create(
         model=config.AI_MODEL,
-        messages=build_messages(question, sources),
-        temperature=0.2,
+        messages=messages,
+        temperature=temperature,
         top_p=0.8,
-        max_tokens=1000,
+        max_tokens=max_tokens,
         **zhipu_extra_options(),
         stream=False,
     )
@@ -144,10 +171,23 @@ def call_zhipu_sdk(question: str, sources: list[HeritageItem]) -> str:
 
 
 def call_openai_compatible_model(question: str, sources: list[HeritageItem]) -> str:
+    return call_openai_compatible_messages(
+        build_messages(question, sources),
+        temperature=0.2,
+        max_tokens=1000,
+    )
+
+
+def call_openai_compatible_messages(
+    messages: list[dict[str, str]],
+    temperature: float = 0.2,
+    max_tokens: int = 1000,
+) -> str:
     payload = {
         "model": config.AI_MODEL,
-        "messages": build_messages(question, sources),
-        "temperature": 0.2,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
     }
     url = config.AI_BASE_URL.rstrip("/") + "/chat/completions"
     request = urllib.request.Request(
@@ -168,6 +208,16 @@ def call_openai_compatible_model(question: str, sources: list[HeritageItem]) -> 
         raise RuntimeError(f"Unexpected model response: {body}") from exc
 
 
+def call_model_with_messages(
+    messages: list[dict[str, str]],
+    temperature: float = 0.2,
+    max_tokens: int = 1000,
+) -> str:
+    if should_use_zhipu_sdk():
+        return call_zhipu_messages(messages, temperature=temperature, max_tokens=max_tokens)
+    return call_openai_compatible_messages(messages, temperature=temperature, max_tokens=max_tokens)
+
+
 def build_messages(question: str, sources: list[HeritageItem]) -> list[dict[str, str]]:
     context = build_context(sources, config.AI_MAX_CONTEXT_CHARS)
     return [
@@ -185,6 +235,38 @@ def build_messages(question: str, sources: list[HeritageItem]) -> list[dict[str,
                 "role": "user",
                 "content": f"问题：{question}\n\n资料：\n{context}",
             },
+    ]
+
+
+def build_speech_messages(
+    answer: str,
+    question: str = "",
+    sources: list[HeritageItem] | None = None,
+    max_chars: int = 520,
+) -> list[dict[str, str]]:
+    source_titles = "、".join(item.title for item in (sources or [])[:3]) or "无"
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是一个中文语音播报编辑。"
+                "请把给定的展示版回答改写成适合 TTS 朗读的播报稿。"
+                "只允许依据展示版回答和给出的资料标题改写，不要补充新事实。"
+                "去掉 markdown、标题、项目符号、表格感和书面提纲腔。"
+                "保留专有名词和关键信息，让语句自然连贯、适合口播。"
+                "不要输出“以下是”“第一点”“基本信息”“根据数据集”等提示语。"
+                "只输出纯文本，不要加引号、列表、emoji。"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"用户问题：{question or '未提供'}\n"
+                f"相关资料标题：{source_titles}\n"
+                f"展示版回答：\n{answer}\n\n"
+                f"请将它改写为一段适合直接播报的中文口语文本，尽量控制在 {max_chars} 字以内。"
+            ),
+        },
     ]
 
 
@@ -227,6 +309,25 @@ def sanitize_error(value: str, max_chars: int = 220) -> str:
     if config.AI_API_KEY:
         text = text.replace(config.AI_API_KEY, "***")
     return textwrap.shorten(text, width=max_chars, placeholder="...")
+
+
+def build_spoken_answer(
+    answer: str,
+    question: str = "",
+    sources: list[HeritageItem] | None = None,
+    prefer_model: bool = True,
+    max_chars: int = 760,
+) -> str:
+    if prefer_model and config.AI_API_KEY:
+        try:
+            spoken = call_speech_model(answer, question=question, sources=sources or [], max_chars=min(max_chars, 520))
+            spoken = normalize_text(spoken)
+            if spoken:
+                return spoken
+        except Exception as exc:  # noqa: BLE001 - speech rewrite should never break the main answer path.
+            LOGGER.warning("Speech rewrite unavailable: %s", describe_model_error(exc))
+
+    return build_speech_text(answer, question=question, sources=sources or [], max_chars=max_chars)
 
 
 def build_context(sources: list[HeritageItem], max_chars: int) -> str:

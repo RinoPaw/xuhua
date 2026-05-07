@@ -88,6 +88,15 @@ def test_comparison_task_rewritten_contains_target_names():
     assert "少林" in plan.rewritten_query
 
 
+def test_comparison_task_cleans_region_targets():
+    kb = load_dataset()
+    analyzer = QueryAnalyzer(kb)
+    plan = analyzer.analyze("四川皮影和湖北皮影有什么区别？", TaskType.COMPARISON)
+
+    assert plan.entities == ["四川皮影", "湖北皮影"]
+    assert plan.provinces == ["四川省", "湖北省"]
+
+
 def test_default_retrieval_count_varies_by_task_type():
     kb = load_dataset()
     analyzer = QueryAnalyzer(kb)

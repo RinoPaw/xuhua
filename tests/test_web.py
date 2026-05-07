@@ -41,6 +41,9 @@ def test_homepage_contains_digital_human_panel():
     assert 'voice-wave' not in html
     assert 'id="voiceStatus"' in html
     assert 'id="voiceReplayButton"' not in html
+    assert 'id="querySuggestions"' in html
+    assert "猜你想搜" in html
+    assert 'id="relatedTitle"' in html
 
 
 def test_digital_human_animation_waits_for_speech_end():
@@ -111,6 +114,10 @@ def test_ask_flow_uses_request_guards_and_single_sse_path():
     assert "presentAskError(session.requestId, session.controller, error);" in script
     assert "voice_enabled: speechSupported" in script
     assert "async function postJson" not in script
+    assert 'answerMode.textContent = "正在识别任务";' in script
+    assert "setAnswerResult(question, payload);" in script
+    assert "renderQuerySuggestions();" in script
+    assert 'relatedRequestKey = `ask:${requestId}`;' in script
 
 
 def test_digital_human_caption_does_not_show_answer_text():
@@ -160,11 +167,30 @@ def test_agent_progress_uses_search_wording_outside_preserved_thinking_states():
 def test_items_api_returns_payload():
     app = create_app()
     client = app.test_client()
-    response = client.get("/api/items?q=皮影戏&limit=3")
+    response = client.get("/api/items?q=汴绣&limit=3")
     assert response.status_code == 200
     payload = response.get_json()
     assert payload["total"] > 0
     assert len(payload["items"]) <= 3
+    item = payload["items"][0]
+    assert "level" in item
+    assert "display_forms" in item
+    assert "cultural_keywords" in item
+
+
+def test_item_detail_returns_enriched_metadata():
+    app = create_app()
+    client = app.test_client()
+    search_response = client.get("/api/items?q=汴绣&limit=1")
+    item = search_response.get_json()["items"][0]
+
+    response = client.get(f"/api/items/{item['id']}")
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["title"]
+    assert "content" in payload
+    assert "level" in payload
+    assert "display_forms" in payload
 
 
 def test_ask_api_returns_grounded_answer(monkeypatch):

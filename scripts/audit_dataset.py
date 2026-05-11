@@ -8,9 +8,7 @@ import re
 import time
 import urllib.error
 import urllib.request
-from copy import deepcopy
 from pathlib import Path
-from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = ROOT / "data" / "processed" / "heritage_items.json"
@@ -286,7 +284,7 @@ def main() -> None:
             f.write("\n")
         print(f"\nApplied. Written to {args.output}")
     else:
-        print(f"\nDRY RUN. Use --apply to write changes.")
+        print("\nDRY RUN. Use --apply to write changes.")
 
 
 if __name__ == "__main__":

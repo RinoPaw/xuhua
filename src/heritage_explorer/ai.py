@@ -14,10 +14,19 @@ from typing import Any
 
 from . import config
 from .dataset import HeritageItem, KnowledgeBase, item_to_dict, normalize_text
-from .search import search_items
+from .search import normalize_search_query, search_items
 
 
 LOGGER = logging.getLogger(__name__)
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F1E6-\U0001F1FF"
+    "\U0001F300-\U0001FAFF"
+    "\u2600-\u27BF"
+    "\u200D"
+    "\uFE0F"
+    "]+"
+)
 
 STRUCTURED_LABELS = (
     "序号",
@@ -56,17 +65,17 @@ class Answer:
     speech: str = ""
 
 
-def answer_question(kb: KnowledgeBase, question: str, category: str = "") -> Answer:
+def answer_question(kb: KnowledgeBase, question: str, category: str = "", include_speech: bool = True) -> Answer:
     question = normalize_text(question)
     category = normalize_text(category)
     if not question:
         answer = "请先输入问题。"
-        return Answer(answer=answer, mode="empty", sources=[], speech=answer)
+        return Answer(answer=answer, mode="empty", sources=[], speech=answer if include_speech else "")
 
-    sources, _ = search_items(kb, query=question, category=category, limit=5)
+    sources = fact_question_sources(kb, question=question, category=category, limit=5)
     if not sources:
         answer = "没有在数据集中找到足够相关的资料。"
-        return Answer(answer=answer, mode="no_context", sources=[], speech=answer)
+        return Answer(answer=answer, mode="no_context", sources=[], speech=answer if include_speech else "")
 
     if config.AI_API_KEY:
         try:
@@ -75,7 +84,7 @@ def answer_question(kb: KnowledgeBase, question: str, category: str = "") -> Ans
                 answer=answer,
                 mode="llm",
                 sources=[source_payload(item) for item in sources],
-                speech=build_spoken_answer(answer, question=question, sources=sources),
+                speech=build_spoken_answer(answer, question=question, sources=sources) if include_speech else "",
             )
         except Exception as exc:  # noqa: BLE001 - API failures should gracefully fall back.
             LOGGER.warning("Chat model unavailable: %s", describe_model_error(exc))
@@ -87,7 +96,9 @@ def answer_question(kb: KnowledgeBase, question: str, category: str = "") -> Ans
                 answer=fallback,
                 mode="fallback",
                 sources=[source_payload(item) for item in sources],
-                speech=build_spoken_answer(fallback, question=question, sources=sources, prefer_model=False),
+                speech=build_spoken_answer(fallback, question=question, sources=sources, prefer_model=False)
+                if include_speech
+                else "",
             )
 
     answer = build_local_answer(question, sources)
@@ -95,7 +106,9 @@ def answer_question(kb: KnowledgeBase, question: str, category: str = "") -> Ans
         answer=answer,
         mode="local",
         sources=[source_payload(item) for item in sources],
-        speech=build_spoken_answer(answer, question=question, sources=sources, prefer_model=False),
+        speech=build_spoken_answer(answer, question=question, sources=sources, prefer_model=False)
+        if include_speech
+        else "",
     )
 
 
@@ -105,6 +118,69 @@ def call_chat_model(question: str, sources: list[HeritageItem]) -> str:
         temperature=0.2,
         max_tokens=1000,
     )
+
+
+def fact_question_sources(
+    kb: KnowledgeBase,
+    question: str,
+    category: str = "",
+    limit: int = 5,
+) -> list[HeritageItem]:
+    """Choose grounded sources for factual answers.
+
+    Direct item questions like "汴绣是什么" should stay anchored to 汴绣 rather
+    than using semantic search to fill the source list with loosely related items.
+    """
+    search_query = normalize_search_query(question)
+    direct_matches = direct_item_matches(kb, search_query, category=category)
+    if direct_matches:
+        return direct_matches[:limit]
+
+    sources, _ = search_items(kb, query=search_query or question, category=category, limit=limit)
+    return sources
+
+
+def direct_item_matches(
+    kb: KnowledgeBase,
+    search_query: str,
+    category: str = "",
+) -> list[HeritageItem]:
+    search_query = normalize_text(search_query)
+    category = normalize_text(category)
+    if len(search_query) < 2:
+        return []
+
+    exact_title: list[HeritageItem] = []
+    exact_family: list[HeritageItem] = []
+    title_contains: list[HeritageItem] = []
+    family_contains: list[HeritageItem] = []
+    for item in kb.items:
+        if category and item.category != category:
+            continue
+        title = normalize_text(item.title)
+        family = normalize_text(item.family)
+
+        if search_query == title:
+            exact_title.append(item)
+        elif title and (search_query in title or title in search_query):
+            title_contains.append(item)
+        elif family and search_query == family:
+            exact_family.append(item)
+        elif family and (search_query in family or family in search_query):
+            family_contains.append(item)
+
+    return exact_title or _dedupe_items(title_contains + exact_family + family_contains)
+
+
+def _dedupe_items(items: list[HeritageItem]) -> list[HeritageItem]:
+    seen: set[str] = set()
+    result: list[HeritageItem] = []
+    for item in items:
+        if item.id in seen:
+            continue
+        seen.add(item.id)
+        result.append(item)
+    return result
 
 
 def call_speech_model(
@@ -250,12 +326,14 @@ def build_speech_messages(
             "role": "system",
             "content": (
                 "你是一个中文语音播报编辑。"
-                "请把给定的展示版回答改写成适合 TTS 朗读的播报稿。"
+                "请先判断给定的展示版回答是否已经适合 TTS 直接朗读。"
                 "只允许依据展示版回答和给出的资料标题改写，不要补充新事实。"
-                "去掉 markdown、标题、项目符号、表格感和书面提纲腔。"
-                "保留专有名词和关键信息，让语句自然连贯、适合口播。"
+                "如果原文已经是自然连贯的口语纯文本，且没有 markdown、emoji、列表、表格感或明显提纲腔，"
+                "请直接输出原文内容。"
+                "如果不适合直接朗读，请去掉 markdown、标题、项目符号、emoji、表格感和书面提纲腔，"
+                "保留专有名词和关键信息，润色成自然连贯、适合口播的文本。"
                 "不要输出“以下是”“第一点”“基本信息”“根据数据集”等提示语。"
-                "只输出纯文本，不要加引号、列表、emoji。"
+                "只输出最终可播报文本，不要解释判断过程，不要写“无需修改”或“需要修改”。"
             ),
         },
         {
@@ -264,7 +342,8 @@ def build_speech_messages(
                 f"用户问题：{question or '未提供'}\n"
                 f"相关资料标题：{source_titles}\n"
                 f"展示版回答：\n{answer}\n\n"
-                f"请将它改写为一段适合直接播报的中文口语文本，尽量控制在 {max_chars} 字以内。"
+                f"如果它无需修改，请直接输出原文；如果需要修改，请输出润色后的文本。"
+                f"最终文本尽量控制在 {max_chars} 字以内。"
             ),
         },
     ]
@@ -321,13 +400,16 @@ def build_spoken_answer(
     if prefer_model and config.AI_API_KEY:
         try:
             spoken = call_speech_model(answer, question=question, sources=sources or [], max_chars=min(max_chars, 520))
-            spoken = normalize_text(spoken)
+            spoken = clean_spoken_output(spoken, max_chars=max_chars)
             if spoken:
                 return spoken
         except Exception as exc:  # noqa: BLE001 - speech rewrite should never break the main answer path.
             LOGGER.warning("Speech rewrite unavailable: %s", describe_model_error(exc))
 
-    return build_speech_text(answer, question=question, sources=sources or [], max_chars=max_chars)
+    return clean_spoken_output(
+        build_speech_text(answer, question=question, sources=sources or [], max_chars=max_chars),
+        max_chars=max_chars,
+    )
 
 
 def build_context(sources: list[HeritageItem], max_chars: int) -> str:
@@ -388,7 +470,7 @@ def build_local_answer(question: str, sources: list[HeritageItem]) -> str:
     lead = f"根据数据集中与“{question}”最相关的资料，可以先这样理解："
     bullets = []
     for item in sources[:3]:
-        text = item.summary or item.content
+        text = item_context_text(item) or item.summary or item.content
         snippet = summarize_snippet(text)
         bullets.append(f"- {item.title}（{item.category}）：{snippet}")
     return "\n".join([lead, *bullets])
@@ -396,6 +478,7 @@ def build_local_answer(question: str, sources: list[HeritageItem]) -> str:
 
 def summarize_snippet(text: str, max_chars: int = 180) -> str:
     text = normalize_text(text)
+    text = re.sub(r"^(介绍|历史|主要特色|重要价值|传承人)[:：]\s*", "", text)
     if not text:
         return "暂无摘要。"
     sentences = [part.strip() for part in text.replace("；", "。").split("。") if part.strip()]
@@ -419,6 +502,7 @@ def build_speech_text(
 
 def build_answer_speech(answer: str, max_chars: int = 760) -> str:
     text = str(answer or "")
+    text = remove_speech_symbols(text)
     text = re.sub(r"```[\s\S]*?```", " ", text)
     text = re.sub(r"!\[[^\]]*]\([^)]+\)", " ", text)
     text = re.sub(r"\[([^\]]+)]\([^)]+\)", r"\1", text)
@@ -446,6 +530,7 @@ def build_answer_speech(answer: str, max_chars: int = 760) -> str:
 
     text = "。".join(spoken_lines)
     text = re.sub(r"[>#*_~|]+", " ", text)
+    text = remove_speech_symbols(text)
     text = re.sub(r"[，、；：]\s*([。！？])", r"\1", text)
     text = re.sub(r"。{2,}", "。", text)
     text = normalize_text(text)
@@ -458,6 +543,39 @@ def build_answer_speech(answer: str, max_chars: int = 760) -> str:
         if text and text[-1] not in "。！？":
             text += "。"
     return text
+
+
+def clean_spoken_output(text: str, max_chars: int = 760) -> str:
+    text = remove_speech_symbols(text)
+    text = re.sub(r"^\s*(?:无需修改|需要修改|润色后|播报稿|最终播报文本)\s*[:：]\s*", "", text)
+    text = re.sub(r"```[\s\S]*?```", " ", text)
+    text = re.sub(r"!\[[^\]]*]\([^)]+\)", " ", text)
+    text = re.sub(r"\[([^\]]+)]\([^)]+\)", r"\1", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"__([^_]+)__", r"\1", text)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = re.sub(r"_([^_]+)_", r"\1", text)
+    text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*[-*+]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^\s*\d+[.)]\s+", "", text, flags=re.MULTILINE)
+    text = re.sub(r"[>#*_~|]+", " ", text)
+    text = normalize_text(text)
+    text = re.sub(r"[，、；：]\s*([。！？])", r"\1", text)
+    text = re.sub(r"。{2,}", "。", text).strip()
+    if len(text) > max_chars:
+        boundary = max(text.rfind(mark, 0, max_chars) for mark in "。！？")
+        if boundary < max_chars // 2:
+            boundary = max_chars
+        text = text[: boundary + 1].rstrip("，、；： ")
+        if text and text[-1] not in "。！？":
+            text += "。"
+    return text
+
+
+def remove_speech_symbols(text: str) -> str:
+    text = _EMOJI_RE.sub(" ", str(text or ""))
+    return re.sub(r"[ \t\f\v]+", " ", text).strip()
 
 
 def speech_section_heading(line: str) -> str:

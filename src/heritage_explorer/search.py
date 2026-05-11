@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable
-from functools import lru_cache
 
 from . import config
 from .dataset import HeritageItem, KnowledgeBase, get_structured_meta, normalize_text
@@ -22,12 +21,42 @@ SEMANTIC_RANK_WEIGHT = 1.35
 _PINYIN_MIN_QUERY_LEN = 2  # minimum query chars to try pinyin matching
 _PINYIN_MATCH_BONUS = 0.3  # score for pinyin-exact match
 _PINYIN_INDEX: dict[str, list[str]] | None = None
+_SEARCH_TRAILING_PUNCTUATION = "？?！!。.，,、 \t\r\n"
+_SEARCH_QUERY_FILLERS = (
+    "是什么",
+    "是啥",
+    "有哪些",
+    "有那些",
+    "有什么",
+    "有啥",
+    "生成讲解词",
+    "生成讲解稿",
+    "生成口播稿",
+    "生成文案",
+    "讲解词",
+    "讲解稿",
+    "口播稿",
+    "解说词",
+    "写一段",
+    "写一个",
+    "生成",
+    "给",
+    "请问",
+    "请介绍一下",
+    "请介绍",
+    "介绍一下",
+    "介绍",
+    "讲讲",
+    "说说",
+    "帮我看看",
+    "我想知道",
+)
 
 
 def _build_pinyin_index(kb: KnowledgeBase) -> dict[str, list[str]]:
     """Build a pinyin-to-item-id index for all heritage items.
 
-    Converts each item's title and aliases to pinyin and maps the
+    Converts each item's title and family to pinyin and maps the
     resulting pinyin strings to item IDs for homophone fuzzy matching.
     """
     global _PINYIN_INDEX
@@ -40,8 +69,8 @@ def _build_pinyin_index(kb: KnowledgeBase) -> dict[str, list[str]]:
         index: dict[str, list[str]] = {}
         for item in kb.items:
             texts = [item.title]
-            if item.aliases:
-                texts.extend(item.aliases)
+            if item.family:
+                texts.append(item.family)
             for text in texts:
                 py = "".join(lazy_pinyin(text))
                 py_compact = py.replace(" ", "")
@@ -63,7 +92,7 @@ def search_items_pinyin(
     """Try pinyin-based homophone matching as a fallback.
 
     Converts the query characters to pinyin and looks for items whose
-    title/alias pinyin matches.  Returns [] when pypinyin is unavailable
+    title/family pinyin matches.  Returns [] when pypinyin is unavailable
     or no matches are found.
     """
     if not query or len(query) < _PINYIN_MIN_QUERY_LEN:
@@ -108,7 +137,7 @@ def search_items_pinyin(
 
 
 def tokenize(query: str) -> list[str]:
-    query = normalize_text(query).lower()
+    query = normalize_search_query(query)
     if not query:
         return []
     tokens = re.findall(r"[\w\u4e00-\u9fff]+", query)
@@ -119,6 +148,18 @@ def tokenize(query: str) -> list[str]:
         elif len(text) == 2:
             tokens.extend(ch for ch in text if "\u4e00" <= ch <= "\u9fff")
     return list(dict.fromkeys(tokens))
+
+
+def normalize_search_query(query: str) -> str:
+    """Reduce natural-language questions to the searchable subject terms."""
+    text = normalize_text(query).lower().strip(_SEARCH_TRAILING_PUNCTUATION)
+    if not text:
+        return ""
+
+    for filler in _SEARCH_QUERY_FILLERS:
+        text = text.replace(filler, " ")
+    text = re.sub(r"\s+", " ", text).strip(_SEARCH_TRAILING_PUNCTUATION)
+    return text or normalize_text(query).lower().strip(_SEARCH_TRAILING_PUNCTUATION)
 
 
 def search_items(
@@ -166,8 +207,9 @@ def search_items(
         result = sorted(candidates, key=lambda item: (item.category, item.title))
         return result[offset : offset + limit], len(result)
 
-    tokens = tokenize(query)
-    lowered_query = query.lower()
+    search_query = normalize_search_query(query)
+    tokens = tokenize(search_query)
+    lowered_query = search_query or query.lower()
     ranked = rank_lexical(candidates, lowered_query, tokens)
 
     if config.SEARCH_USE_EMBEDDING:
@@ -177,7 +219,7 @@ def search_items(
             pass
 
     result = [item for _, item in ranked]
-    result = prepend_pinyin_matches(kb, result, query, candidates)
+    result = prepend_pinyin_matches(kb, result, search_query or query, candidates)
     return result[offset : offset + limit], len(result)
 
 
@@ -227,12 +269,13 @@ def search_items_lexical(
         result = sorted(candidates, key=lambda item: (item.category, item.title))
         return result[offset : offset + limit], len(result)
 
-    tokens = tokenize(query)
-    lowered_query = query.lower()
+    search_query = normalize_search_query(query)
+    tokens = tokenize(search_query)
+    lowered_query = search_query or query.lower()
     ranked = rank_lexical(candidates, lowered_query, tokens)
 
     result = [item for _, item in ranked]
-    result = prepend_pinyin_matches(kb, result, query, candidates)
+    result = prepend_pinyin_matches(kb, result, search_query or query, candidates)
 
     return result[offset : offset + limit], len(result)
 
@@ -251,6 +294,8 @@ def prepend_pinyin_matches(
     """
     if not query or len(query) < _PINYIN_MIN_QUERY_LEN:
         return ranked_items
+    if has_title_substring_match(ranked_items, query):
+        return ranked_items
 
     candidate_ids = {item.id for item in candidates}
     pinyin_results = [
@@ -262,6 +307,11 @@ def prepend_pinyin_matches(
 
     pinyin_ids = {item.id for item in pinyin_results}
     return pinyin_results + [item for item in ranked_items if item.id not in pinyin_ids]
+
+
+def has_title_substring_match(items: list[HeritageItem], query: str) -> bool:
+    lowered_query = query.lower()
+    return any(item.title and item.title.lower() in lowered_query for item in items)
 
 
 def rank_lexical(
@@ -345,14 +395,19 @@ def strong_match_bonus(item: HeritageItem, query: str, tokens: list[str]) -> flo
         return 0.0
 
     title = item.title.lower()
+    family = item.family.lower()
     category = item.category.lower()
-    aliases = [alias.lower() for alias in item.aliases]
     bonus = 0.0
 
-    if query == title or query in aliases:
+    if query == title:
         bonus += 0.7
-    elif query in title or any(query in alias for alias in aliases):
+    elif query in title:
         bonus += 0.35
+
+    if query == family:
+        bonus += 0.25
+    elif family and query in family:
+        bonus += 0.08
 
     if query == category:
         bonus += 0.2
@@ -362,10 +417,14 @@ def strong_match_bonus(item: HeritageItem, query: str, tokens: list[str]) -> flo
     for token in tokens:
         if not token:
             continue
-        if token == title or token in aliases:
+        if token == title:
             bonus += 0.06
-        elif token in title or any(token in alias for alias in aliases):
+        elif token in title:
             bonus += 0.004
+        if token == family:
+            bonus += 0.04
+        elif family and token in family:
+            bonus += 0.003
         if token == category:
             bonus += 0.08
         elif token in category:
@@ -382,6 +441,7 @@ def lexical_tiebreak(score: float) -> float:
 
 def score_item(item: HeritageItem, query: str, tokens: list[str]) -> float:
     title = item.title.lower()
+    family = item.family.lower()
     category = item.category.lower()
     summary = item.summary.lower()
     content = item.content.lower()
@@ -392,6 +452,8 @@ def score_item(item: HeritageItem, query: str, tokens: list[str]) -> float:
         score += 100
     if query and query in title:
         score += 40
+    if query and query in family:
+        score += 18
     if query and query in category:
         score += 16
     if query and query in summary:
@@ -402,6 +464,8 @@ def score_item(item: HeritageItem, query: str, tokens: list[str]) -> float:
     for token in tokens:
         if token in title:
             score += 12
+        if token in family:
+            score += 6
         if token in category:
             score += 5
         if token in summary:

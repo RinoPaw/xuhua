@@ -44,6 +44,8 @@ def test_homepage_contains_digital_human_panel():
     assert 'id="querySuggestions"' in html
     assert "猜你想搜" in html
     assert 'id="relatedTitle"' in html
+    assert "vendor/purify.min.js" in html
+    assert "vendor/marked.umd.js" in html
 
 
 def test_digital_human_animation_waits_for_speech_end():
@@ -92,13 +94,34 @@ def test_voice_idle_state_keeps_disabled_support_message():
     assert 'setVoiceState("idle");' in sync_block
 
 
-def test_loading_progress_uses_shared_forward_only_indices():
+def test_tts_text_strips_display_emoji():
     script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "function stripSpeechDecorations(value)" in script
+    assert "stripSpeechDecorations(value)" in script
+    assert "\\u{1F300}-\\u{1FAFF}" in script
+    assert "\\u{2600}-\\u{27BF}" in script
+
+
+def test_loading_progress_uses_fixed_event_driven_steps():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    start_block = script.split("function startLoadingSteps", 1)[1].split("function getLoadingSteps", 1)[0]
+    progress_block = script.split("function applyAskProgress", 1)[1].split("function renderMarkdown", 1)[0]
 
     assert "let loadingStepIndex = 0;" in script
     assert "let loadingTargetIndex = 0;" in script
-    assert "loadingTargetIndex = Math.max(loadingTargetIndex, index);" in script
-    assert "if (index <= loadingStepIndex) {" in script
+    assert "const loadingSteps = [" in script
+    assert '{ title: "理解问题"' in script
+    assert '{ title: "检索资料"' in script
+    assert '{ title: "思考回答"' in script
+    assert '{ title: "润色播报"' in script
+    assert "const LOADING_MIN_STEP_MS = 500;" in script
+    assert "window.setInterval" not in start_block
+    assert "loadingProgressQueue.push(index);" in progress_block
+    assert "scheduleNextLoadingStep();" in progress_block
+    assert "function waitForLoadingSteps()" in script
+    assert "await waitForLoadingSteps();" in script
+    assert "title: event.title" not in progress_block
     assert "let stepIndex = 0;" not in script
 
 
@@ -113,6 +136,10 @@ def test_ask_flow_uses_request_guards_and_single_sse_path():
     assert "await presentAskResponse(session.requestId, session.controller, question, payload, session.thinkingStartedAt);" in script
     assert "presentAskError(session.requestId, session.controller, error);" in script
     assert "voice_enabled: speechSupported" in script
+    assert "lastAskContext: null" in script
+    assert "function buildAskContext(question)" in script
+    assert "requestData.context = context;" in script
+    assert "rememberAskContext(question, payload);" in script
     assert "async function postJson" not in script
     assert 'answerMode.textContent = "正在识别任务";' in script
     assert "setAnswerResult(question, payload);" in script
@@ -132,7 +159,8 @@ def test_digital_human_caption_does_not_show_answer_text():
     assert 'relatedList.innerHTML = `<p class="marginalia-empty is-live">正在思考</p>`' in script
     assert 'askButton.textContent = "提问"' in script
     assert 'const text = withThinkingVoice ? "正在检索" : "语音播报已准备";' in script
-    assert "翻检资料库" in script
+    assert "理解问题" in script
+    assert "思考回答" in script
     assert "进入思考" not in script
     assert "我先想一想。" not in script
     assert "正在为你讲述。" in script
@@ -144,6 +172,42 @@ def test_digital_human_thinking_state_has_mask():
     assert '.hanging-scroll[data-state="thinking"] .scroll-body::after' in styles
     assert "rgba(36, 88, 74, 0.72)" in styles
     assert '.hanging-scroll[data-state="speaking"] .scroll-body::after' in styles
+
+
+def test_result_markdown_lists_keep_visible_markers():
+    styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
+
+    assert ".result-markdown ul," in styles
+    assert ".result-markdown ol {" in styles
+    assert "padding-left: 1.65em;" in styles
+    assert "list-style: decimal;" in styles
+
+
+def test_result_markdown_uses_mature_engine_with_sanitizer():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
+
+    assert "window.marked" in script
+    assert "window.DOMPurify" in script
+    assert "function normalizeMarkdownSource(value)" in script
+    assert 'replace(/\\\\([*_`~])/g, "$1")' in script
+    assert "markedEngine.parse(source" in script
+    assert "sanitizer.sanitize(rawHtml)" in script
+    assert "renderMarkdownFallback(source)" in script
+    assert "gfm: true" in script
+    assert "breaks: true" in script
+    assert ".result-markdown table" in styles
+    assert ".result-markdown blockquote" in styles
+
+
+def test_item_cards_use_title_and_family_fields():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "function itemTitle(item)" in script
+    assert "item?.family" in script
+    assert "官方名称：" not in script
+    assert "detailTitle.textContent = itemTitle(item);" in script
+    assert "escapeHtml(itemTitle(item))" in script
 
 
 def test_all_digital_human_video_states_use_dissolve_scheduler():
@@ -176,6 +240,26 @@ def test_items_api_returns_payload():
     assert "level" in item
     assert "display_forms" in item
     assert "cultural_keywords" in item
+    assert "family" in item
+    assert "aliases" not in item
+    assert "official_title" not in item
+    assert "display_title" not in item
+    assert "title_family" not in item
+
+
+def test_items_api_returns_normalized_title_and_family():
+    app = create_app()
+    client = app.test_client()
+    response = client.get("/api/items?q=滑县木版年画&limit=5")
+    assert response.status_code == 200
+    payload = response.get_json()
+    item = next(item for item in payload["items"] if item["title"] == "滑县木版年画")
+
+    assert item["family"] == "木版年画"
+    assert "aliases" not in item
+    assert "official_title" not in item
+    assert "display_title" not in item
+    assert "title_family" not in item
 
 
 def test_item_detail_returns_enriched_metadata():
@@ -204,6 +288,31 @@ def test_ask_api_returns_grounded_answer(monkeypatch):
     assert "太极拳" in payload["answer"]
     assert payload["speech"]
     assert payload["sources"]
+
+
+def test_ask_api_uses_previous_context_for_short_transform_followup(monkeypatch):
+    monkeypatch.setattr(config, "AI_API_KEY", "")
+    app = create_app()
+    client = app.test_client()
+    response = client.post(
+        "/api/ask",
+        json={
+            "question": "再生成一个更年轻化的版本",
+            "voice_enabled": False,
+            "context": {
+                "question": "给朱仙镇木版年画生成讲解词",
+                "answer": "## 朱仙镇木版年画 · 讲解词\n\n朱仙镇木版年画是开封地区的传统美术项目。",
+                "items": [{"id": "x", "title": "朱仙镇木版年画", "category": "传统美术"}],
+            },
+        },
+    )
+    assert response.status_code == 200
+    payload = _sse_result(response)
+
+    assert payload["task_type"] == "content_transform"
+    assert payload["items"][0]["title"] == "朱仙镇木版年画"
+    assert "朱仙镇木版年画" in payload["answer"]
+    assert "缺少原始文本" not in payload["answer"]
 
 
 def test_ask_api_omits_speech_progress_when_voice_disabled(monkeypatch):

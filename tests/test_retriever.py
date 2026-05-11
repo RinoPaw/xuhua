@@ -132,6 +132,18 @@ def test_query_analyzer_handles_no_entities():
     assert plan.retrieval_count == 5
 
 
+def test_query_analyzer_prioritizes_specific_title_over_family_entity():
+    kb = load_dataset()
+    analyzer = QueryAnalyzer(kb)
+
+    plan = analyzer.analyze("给朱仙镇木版年画生成讲解词", TaskType.CONTENT_TRANSFORM)
+
+    assert plan.entities[0] == "朱仙镇木版年画"
+    assert plan.entities.count("木版年画") <= 1
+    assert plan.rewritten_query == "朱仙镇木版年画"
+    assert plan.transform_type == "讲解词"
+
+
 def test_expansion_terms_are_generated():
     kb = load_dataset()
     analyzer = QueryAnalyzer(kb)
@@ -143,45 +155,19 @@ def test_expansion_terms_are_generated():
 # ── new MVP tests ──
 
 
-def test_classify_task_browse_query():
+def test_primary_task_comes_from_planner_task_type():
     kb = load_dataset()
     analyzer = QueryAnalyzer(kb)
-    plan = analyzer.analyze("河南有哪些传统美术")
-    assert plan.primary_task == "BROWSE_QUERY"
+    plan = analyzer.analyze("太极拳和八卦掌的区别", TaskType.COMPARISON)
 
-
-def test_classify_task_recommendation():
-    kb = load_dataset()
-    analyzer = QueryAnalyzer(kb)
-    plan = analyzer.analyze("校园展示推荐三个")
-    assert plan.primary_task == "RECOMMENDATION"
-
-
-def test_classify_task_exhibition_plan():
-    kb = load_dataset()
-    analyzer = QueryAnalyzer(kb)
-    plan = analyzer.analyze("策划河南非遗校园展")
-    assert plan.primary_task == "EXHIBITION_PLAN"
-
-
-def test_classify_task_comparison():
-    kb = load_dataset()
-    analyzer = QueryAnalyzer(kb)
-    plan = analyzer.analyze("太极拳和八卦掌的区别")
     assert plan.primary_task == "COMPARISON"
 
 
-def test_classify_task_factual_qa_fallback():
+def test_primary_task_defaults_to_fact_qa_without_planner_task_type():
     kb = load_dataset()
     analyzer = QueryAnalyzer(kb)
-    plan = analyzer.analyze("太极拳的哲学基础是什么")
-    assert plan.primary_task == "FACT_QA"
+    plan = analyzer.analyze("校园展示推荐三个")
 
-
-def test_classify_task_empty_query():
-    kb = load_dataset()
-    analyzer = QueryAnalyzer(kb)
-    plan = analyzer.analyze("")
     assert plan.primary_task == "FACT_QA"
 
 

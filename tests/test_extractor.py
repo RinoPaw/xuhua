@@ -39,6 +39,16 @@ def test_rule_extractor_parses_all_items_without_errors():
     assert sum(1 for item in parsed_items if item.city) == len(kb.items)
 
 
+def test_rule_extractor_uses_henan_city_when_later_province_fields_conflict():
+    kb = load_dataset()
+    item = next(item for item in kb.items if item.title == "众度堂中医外科疗法")
+
+    meta = RuleExtractor().extract(item)
+
+    assert meta.province == "河南省"
+    assert meta.city == "开封市"
+
+
 def test_extraction_cache_round_trips_meta_and_labels(tmp_path):
     meta_path = tmp_path / "heritage_meta.json"
     labels_path = tmp_path / "heritage_labels.json"
@@ -100,5 +110,62 @@ def test_dataset_helpers_lazy_load_extraction_cache(monkeypatch, tmp_path):
         province="河南省",
     )
     assert dataset.get_soft_labels("h_cached") == SoftLabels(education_value="高")
+
+    dataset.clear_extraction_cache()
+
+
+def test_dataset_helpers_fill_missing_cached_meta(monkeypatch, tmp_path):
+    meta_path = tmp_path / "heritage_meta.json"
+    labels_path = tmp_path / "heritage_labels.json"
+    cache = ExtractionCache(meta_path=meta_path, labels_path=labels_path)
+    cache.save(
+        {"h_cached": StructuredMeta(level="省级", province="河南省")},
+        {"h_cached": SoftLabels(education_value="高")},
+    )
+    monkeypatch.setattr(extractor, "META_PATH", meta_path)
+    monkeypatch.setattr(extractor, "LABELS_PATH", labels_path)
+
+    kb = load_dataset()
+    item = next(item for item in kb.items if item.title == "罗卷戏（南阳市）")
+
+    dataset.clear_extraction_cache()
+
+    meta = dataset.get_structured_meta(item.id)
+
+    assert meta is not None
+    assert meta.level == "国家级"
+    assert meta.city == "南阳市"
+
+    dataset.clear_extraction_cache()
+
+
+def test_dataset_helpers_refresh_stale_cached_meta(monkeypatch, tmp_path):
+    meta_path = tmp_path / "heritage_meta.json"
+    labels_path = tmp_path / "heritage_labels.json"
+    kb = load_dataset()
+    item = next(item for item in kb.items if item.title == "罗卷戏（安阳市）")
+    cache = ExtractionCache(meta_path=meta_path, labels_path=labels_path)
+    cache.save(
+        {
+            item.id: StructuredMeta(
+                level="国家级",
+                province="河南省",
+                city="南阳市",
+                district="邓州市",
+            )
+        },
+        {},
+    )
+    monkeypatch.setattr(extractor, "META_PATH", meta_path)
+    monkeypatch.setattr(extractor, "LABELS_PATH", labels_path)
+
+    dataset.clear_extraction_cache()
+
+    meta = dataset.get_structured_meta(item.id)
+
+    assert meta is not None
+    assert meta.level == "省级"
+    assert meta.city == "安阳市"
+    assert meta.district == "内黄县"
 
     dataset.clear_extraction_cache()

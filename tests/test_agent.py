@@ -1,16 +1,13 @@
 from heritage_explorer.agent import (
     Agent,
+    AgentDecision,
     AgentResult,
     IntentRouter,
     TaskType,
     _TASK_CONFIGS,
-    build_chitchat_answer,
     decision_from_planner_payload,
-    has_domain_hint,
-    is_chitchat_query,
     normalize_query_with_pinyin_anchor,
     replace_homophone_span,
-    should_answer_out_of_scope,
     task_type_from_str,
     task_type_label,
 )
@@ -19,70 +16,6 @@ from heritage_explorer.agent import (
 def test_all_task_types_have_configs():
     for task_type in TaskType:
         assert task_type in _TASK_CONFIGS
-
-
-def test_intent_router_classifies_factual_qa():
-    router = IntentRouter()
-    task_type, confidence = router.classify("太极拳是什么")
-    assert task_type is TaskType.FACTUAL_QA
-    assert confidence >= 0.5
-
-
-def test_intent_router_classifies_short_greeting_as_chitchat():
-    router = IntentRouter()
-
-    for query in [
-        "你好",
-        "您好！",
-        "hello",
-        "在吗",
-        "你是谁",
-        "你叫什么名字",
-        "你能做什么",
-        "你知道什么",
-        "资料库里有什么",
-    ]:
-        task_type, confidence = router.classify(query)
-        assert task_type is TaskType.CHITCHAT
-        assert confidence >= 0.9
-
-    assert is_chitchat_query("你好。")
-    assert not is_chitchat_query("你好，介绍一下皮影戏")
-    assert not is_chitchat_query("你是谁，介绍一下皮影戏")
-
-
-def test_chitchat_answer_handles_identity_and_capability():
-    identity = build_chitchat_answer("你是谁")
-    capability = build_chitchat_answer("你能做什么")
-
-    assert "我是叙华" in identity
-    assert "河南非遗资料库" in identity
-    assert "历史" in capability
-    assert "筛选" in capability
-
-
-def test_chitchat_answer_uses_kb_for_knowledge_inventory():
-    from heritage_explorer.dataset import load_dataset
-
-    kb = load_dataset()
-    answer = build_chitchat_answer("你知道什么", kb)
-
-    assert str(len(kb.items)) in answer
-    assert "非遗项目" in answer
-    assert "筛选" in answer
-    assert "推荐" in answer
-
-
-def test_fact_qa_scope_gate_skips_unrelated_questions():
-    from heritage_explorer.dataset import load_dataset
-
-    kb = load_dataset()
-
-    assert not has_domain_hint("天气怎么样")
-    assert has_domain_hint("皮影戏有什么特色")
-    assert should_answer_out_of_scope(kb, "天气怎么样")
-    assert not should_answer_out_of_scope(kb, "汴绣")
-    assert not should_answer_out_of_scope(kb, "落山皮影戏")
 
 
 def test_fact_qa_normalizes_homophone_item_name_before_generation():
@@ -156,7 +89,7 @@ def test_model_planner_payload_becomes_agent_decision():
     assert decision.direct_answer
 
 
-def test_model_planner_chitchat_answer_cannot_leak_internal_controller():
+def test_model_planner_direct_answer_is_not_rewritten_offline():
     from heritage_explorer.dataset import load_dataset
 
     kb = load_dataset()
@@ -176,94 +109,7 @@ def test_model_planner_chitchat_answer_cannot_leak_internal_controller():
 
     assert decision.task_type is TaskType.CHITCHAT
     assert decision.mode == "local"
-    assert "控制器" not in decision.direct_answer
-    assert "我是叙华" in decision.direct_answer
-
-
-def test_intent_router_classifies_comparison():
-    router = IntentRouter()
-    queries = [
-        "比较太极拳和少林功夫",
-        "太极拳和少林功夫有什么区别",
-        "对比朱仙镇木版年画与登封木版年画",
-        "罗山皮影戏和南阳烙画哪个更适合校园展览",
-        "太极拳 vs 少林功夫",
-    ]
-    for q in queries:
-        task_type, conf = router.classify(q)
-        assert task_type is TaskType.COMPARISON, f"query={q!r} got {task_type}"
-
-
-def test_intent_router_classifies_recommendation():
-    router = IntentRouter()
-    queries = [
-        "推荐3个适合校园展览的传统美术项目",
-        "哪些非遗项目适合在中小学推广",
-        "帮我找适合社区活动的传统音乐项目",
-    ]
-    for q in queries:
-        task_type, conf = router.classify(q)
-        assert task_type is TaskType.RECOMMENDATION, f"query={q!r} got {task_type}"
-
-
-def test_intent_router_classifies_exhibition_plan():
-    router = IntentRouter()
-    queries = [
-        "设计一个关于中药的校园展览",
-        "为太极拳做一个展板文案",
-        "策划一个传统技艺的展示方案",
-    ]
-    for q in queries:
-        task_type, conf = router.classify(q)
-        assert task_type is TaskType.EXHIBITION_PLAN, f"query={q!r} got {task_type}"
-
-
-def test_intent_router_classifies_curriculum_design():
-    router = IntentRouter()
-    queries = [
-        "为太极拳设计一份研学教案",
-        "给小学生上一堂关于南阳烙画的课",
-        "设计一个非遗手工课程",
-    ]
-    for q in queries:
-        task_type, conf = router.classify(q)
-        assert task_type is TaskType.CURRICULUM_DESIGN, f"query={q!r} got {task_type}"
-
-
-def test_intent_router_classifies_creative_brief():
-    router = IntentRouter()
-    queries = [
-        "基于南阳烙画设计文创产品",
-        "为朱仙镇木版年画设计纹样和包装",
-        "做一个非遗IP联名方案",
-    ]
-    for q in queries:
-        task_type, conf = router.classify(q)
-        assert task_type is TaskType.CREATIVE_BRIEF, f"query={q!r} got {task_type}"
-
-
-def test_intent_router_classifies_data_explore():
-    router = IntentRouter()
-    queries = [
-        "河南有哪些国家级非遗项目",
-        "列出所有的传统技艺",
-        "一共有多少个民俗类项目",
-    ]
-    for q in queries:
-        task_type, conf = router.classify(q)
-        assert task_type is TaskType.DATA_EXPLORE, f"query={q!r} got {task_type}"
-
-
-def test_intent_router_classifies_multi_filter():
-    router = IntentRouter()
-    queries = [
-        "筛选出河南省的国家级传统美术项目",
-        "只看省级的非遗",
-        "只要南阳市的项目",
-    ]
-    for q in queries:
-        task_type, conf = router.classify(q)
-        assert task_type is TaskType.MULTI_FILTER, f"query={q!r} got {task_type}"
+    assert "控制器" in decision.direct_answer
 
 
 def test_agent_dispatch_returns_task_result():
@@ -393,7 +239,7 @@ def test_task_config_retrieval_limits():
     assert _TASK_CONFIGS[TaskType.RECOMMENDATION].handler_name == "_handle_recommend"
     assert _TASK_CONFIGS[TaskType.CONTENT_TRANSFORM].handler_name == "_handle_content_transform"
     assert _TASK_CONFIGS[TaskType.FACT_QA].handler_name is None
-    assert _TASK_CONFIGS[TaskType.CHITCHAT].generate_detail == "正在组织简短回应"
+    assert _TASK_CONFIGS[TaskType.CHITCHAT].generate_detail == "正在整理上下文，生成简短回应"
 
 
 def test_dispatch_stream_uses_task_config_generate_detail_for_rule_handler(monkeypatch):
@@ -449,6 +295,74 @@ def test_content_transform_llm_branch_uses_spoken_answer_rewrite(monkeypatch):
     assert result.speech == "播报版：展示版改写：汴绣适合年轻受众传播。"
 
 
+def test_content_transform_targets_specific_title_in_suggestion_query(monkeypatch):
+    from heritage_explorer import config
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    monkeypatch.setattr(config, "AI_API_KEY", "")
+
+    result = agent.dispatch("给朱仙镇木版年画生成讲解词")
+
+    assert result.task_type is TaskType.CONTENT_TRANSFORM
+    assert result.items[0]["title"] == "朱仙镇木版年画"
+    assert result.sources[0]["title"] == "朱仙镇木版年画"
+    assert "滑县木版年画" not in result.answer.splitlines()[0]
+
+
+def test_router_uses_model_planner_decision_without_offline_repair(monkeypatch):
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    router = IntentRouter()
+    planner_calls = []
+
+    def fake_planner(*_args, **_kwargs):
+        planner_calls.append(True)
+        return AgentDecision(
+            task_type=TaskType.EXHIBITION_PLAN,
+            confidence=0.7,
+            needs_retrieval=True,
+            needs_llm=False,
+            reason="模型误判为展示策划。",
+            planner="model",
+        )
+
+    monkeypatch.setattr("heritage_explorer.agent.call_agent_planner_model", fake_planner)
+
+    decision = router.decide("给朱仙镇木版年画生成讲解词", kb)
+
+    assert planner_calls
+    assert decision.task_type is TaskType.EXHIBITION_PLAN
+    assert decision.needs_llm is False
+    assert decision.planner == "model"
+    assert decision.warnings == []
+
+
+def test_model_planner_keeps_valid_exhibition_plan(monkeypatch):
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    router = IntentRouter()
+    monkeypatch.setattr(
+        "heritage_explorer.agent.call_agent_planner_model",
+        lambda *_args, **_kwargs: AgentDecision(
+            task_type=TaskType.EXHIBITION_PLAN,
+            confidence=0.8,
+            needs_retrieval=True,
+            needs_llm=False,
+            reason="模型判断为展示策划。",
+            planner="model",
+        ),
+    )
+
+    decision = router.decide("帮我策划一个朱仙镇木版年画社区展", kb)
+
+    assert decision.task_type is TaskType.EXHIBITION_PLAN
+    assert decision.planner == "model"
+
+
 # ── MVP handler tests ──
 
 
@@ -465,6 +379,19 @@ def test_browse_query_returns_items():
     assert len(result.items) > 0
     assert len(result.evidence) > 0
     assert "传统美术" in result.answer
+
+
+def test_browse_query_uses_normalized_title_and_family():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("列出木版年画")
+
+    assert result.task_type is TaskType.BROWSE_QUERY
+    assert "滑县木版年画" in result.answer
+    assert "木版年画（滑县木版年画）" not in result.answer
+    assert any(item.get("title") == "滑县木版年画" and item.get("family") == "木版年画" for item in result.items)
 
 
 def test_browse_query_combined_filters():

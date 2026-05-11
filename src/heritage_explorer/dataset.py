@@ -30,10 +30,10 @@ class Category:
 class HeritageItem:
     id: str
     title: str
+    family: str
     category: str
     summary: str
     content: str
-    aliases: tuple[str, ...]
     search_text: str
     source: dict[str, Any]
 
@@ -55,10 +55,10 @@ class KnowledgeBase:
             HeritageItem(
                 id=str(item["id"]),
                 title=str(item["title"]),
+                family=str(item.get("family") or ""),
                 category=str(item.get("category") or "未分类"),
                 summary=str(item.get("summary") or ""),
                 content=str(item.get("content") or ""),
-                aliases=tuple(item.get("aliases") or ()),
                 search_text=str(item.get("search_text") or ""),
                 source=dict(item.get("source") or {}),
             )
@@ -90,9 +90,33 @@ _labels_cache: dict[str, "SoftLabels"] | None = None
 def _load_extraction_cache() -> tuple[dict[str, "StructuredMeta"], dict[str, "SoftLabels"]]:
     global _labels_cache, _meta_cache
     if _meta_cache is None or _labels_cache is None:
-        from .extractor import ExtractionCache
+        from .extractor import ExtractionCache, RuleExtractor, StructuredMeta, infer_soft_labels
 
         _meta_cache, _labels_cache = ExtractionCache().load()
+        kb = get_knowledge_base()
+        extractor = RuleExtractor()
+        for item in kb.items:
+            fresh_meta = extractor.extract(item)
+            cached_meta = _meta_cache.get(item.id)
+            if cached_meta is None or (
+                cached_meta.level,
+                cached_meta.province,
+                cached_meta.city,
+                cached_meta.district,
+            ) != (
+                fresh_meta.level,
+                fresh_meta.province,
+                fresh_meta.city,
+                fresh_meta.district,
+            ):
+                _meta_cache[item.id] = fresh_meta
+
+        missing_label_items = [item for item in kb.items if item.id not in _labels_cache]
+        if missing_label_items:
+            _labels_cache.update({
+                item.id: infer_soft_labels(item, _meta_cache.get(item.id, StructuredMeta()))
+                for item in missing_label_items
+            })
     return _meta_cache, _labels_cache
 
 
@@ -116,9 +140,9 @@ def item_to_dict(item: HeritageItem, include_content: bool = False) -> dict[str,
     data = {
         "id": item.id,
         "title": item.title,
+        "family": item.family,
         "category": item.category,
         "summary": item.summary,
-        "aliases": list(item.aliases),
         "source": item.source,
     }
     if include_content:

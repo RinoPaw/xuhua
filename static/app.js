@@ -2,6 +2,7 @@ const state = {
   query: "",
   selectedId: "",
   currentTaskType: "",
+  lastAskContext: null,
 };
 
 const relatedList = document.querySelector("#relatedList");
@@ -54,8 +55,12 @@ let speechStartGuardTimer = 0;
 let voiceState = "idle"; // idle | speaking | disabled
 let lastSpeechHumanState = "speaking";
 let loadingStepTimer = 0;
+let loadingFlushTimer = 0;
 let loadingStepIndex = 0;
 let loadingTargetIndex = 0;
+let loadingStepStartedAt = 0;
+let loadingProgressQueue = [];
+let loadingFlushResolvers = [];
 let askAbortController = null;
 let askRequestId = 0;
 
@@ -114,20 +119,19 @@ const speechSupported = "speechSynthesis" in window && "SpeechSynthesisUtterance
 const PROGRESS_STEP_INDEX = {
   classify: 0,
   search: 1,
-  generate: 3,
-  speech: 4,
+  generate: 2,
+  speech: 3,
 };
-const baseLoadingSteps = [
-  { title: "翻检资料库", detail: "正在查找最相关的非遗条目" },
-  { title: "比对资料", detail: "正在合并项目、地区和技艺线索" },
-  { title: "组织回答", detail: "正在把资料整理成可阅读的说明" },
-  { title: "生成回答", detail: "正在请模型生成最终文字" },
+const loadingSteps = [
+  { title: "理解问题", detail: "正在判断任务类型，并识别项目名称、地区和输出要求" },
+  { title: "检索资料", detail: "正在检索资料库，优先匹配明确标题和结构化字段" },
+  { title: "思考回答", detail: "正在整理证据、取舍资料，并生成回答文本" },
+  { title: "润色播报", detail: "正在把最终回答压缩成更适合朗读的版本" },
 ];
-const speechLoadingStep = { title: "润色播报", detail: "正在准备更适合朗读的版本" };
-const finalLoadingStep = { title: "收束答案", detail: "正在整理最后的回答文本" };
-let activeLoadingSteps = [...baseLoadingSteps, speechLoadingStep];
+let activeLoadingSteps = [...loadingSteps];
 const HUMAN_MIN_THINKING_MS = 1120;
 const HUMAN_DISSOLVE_LEAD_MS = 1050;
+const LOADING_MIN_STEP_MS = 500;
 
 stopSpeech({ delayed: true, preserveHuman: true });
 window.addEventListener("pagehide", () => stopSpeech({ delayed: true }));
@@ -211,36 +215,33 @@ function setAnswerResult(question, payload) {
 }
 
 function startLoadingSteps() {
+  window.clearTimeout(loadingStepTimer);
+  window.clearTimeout(loadingFlushTimer);
+  loadingStepTimer = 0;
+  loadingFlushTimer = 0;
   activeLoadingSteps = getLoadingSteps();
   loadingStepIndex = 0;
   loadingTargetIndex = 0;
+  loadingStepStartedAt = performance.now();
+  loadingProgressQueue = [];
+  resolveLoadingFlush();
   setAnswerLoading(loadingStepIndex);
-  window.clearInterval(loadingStepTimer);
-  loadingStepTimer = window.setInterval(() => {
-    const maxIndex = activeLoadingSteps.length - 1;
-    if (loadingStepIndex < loadingTargetIndex) {
-      loadingStepIndex += 1;
-      setAnswerLoading(loadingStepIndex);
-      return;
-    }
-    if (loadingTargetIndex < maxIndex) {
-      loadingTargetIndex += 1;
-      loadingStepIndex = Math.min(loadingStepIndex + 1, loadingTargetIndex);
-      setAnswerLoading(loadingStepIndex);
-    }
-  }, 1800);
 }
 
 function getLoadingSteps() {
-  const finalStep = speechSupported ? speechLoadingStep : finalLoadingStep;
-  return [...baseLoadingSteps, finalStep];
+  return loadingSteps.map((step) => ({ ...step }));
 }
 
 function stopLoadingSteps() {
-  window.clearInterval(loadingStepTimer);
+  window.clearTimeout(loadingStepTimer);
+  window.clearTimeout(loadingFlushTimer);
   loadingStepTimer = 0;
+  loadingFlushTimer = 0;
   loadingStepIndex = 0;
   loadingTargetIndex = 0;
+  loadingStepStartedAt = 0;
+  loadingProgressQueue = [];
+  resolveLoadingFlush();
 }
 
 function setAnswerLoading(activeIndex) {
@@ -276,16 +277,97 @@ function applyAskProgress(event) {
   }
   activeLoadingSteps[index] = {
     ...activeLoadingSteps[index],
-    title: event.title || activeLoadingSteps[index].title,
     detail: event.detail || activeLoadingSteps[index].detail,
   };
-  loadingTargetIndex = Math.max(loadingTargetIndex, index);
   if (index <= loadingStepIndex) {
-    setAnswerLoading(loadingStepIndex);
+    if (index === loadingStepIndex) {
+      setAnswerLoading(loadingStepIndex);
+    }
+    return;
   }
+  if (!loadingProgressQueue.includes(index)) {
+    loadingProgressQueue.push(index);
+  }
+  window.clearTimeout(loadingFlushTimer);
+  loadingFlushTimer = 0;
+  scheduleNextLoadingStep();
+}
+
+function scheduleNextLoadingStep() {
+  if (loadingStepTimer || !loadingProgressQueue.length) {
+    scheduleLoadingFlushResolution();
+    return;
+  }
+  const elapsed = performance.now() - loadingStepStartedAt;
+  const delay = Math.max(0, LOADING_MIN_STEP_MS - elapsed);
+  loadingStepTimer = window.setTimeout(() => {
+    loadingStepTimer = 0;
+    const nextIndex = loadingProgressQueue.shift();
+    if (nextIndex !== undefined && nextIndex > loadingStepIndex) {
+      loadingTargetIndex = Math.max(loadingTargetIndex, nextIndex);
+      loadingStepIndex = nextIndex;
+      loadingStepStartedAt = performance.now();
+      setAnswerLoading(loadingStepIndex);
+    }
+    scheduleNextLoadingStep();
+  }, delay);
+}
+
+function waitForLoadingSteps() {
+  scheduleNextLoadingStep();
+  return new Promise((resolve) => {
+    loadingFlushResolvers.push(resolve);
+    scheduleLoadingFlushResolution();
+  });
+}
+
+function scheduleLoadingFlushResolution() {
+  if (!loadingFlushResolvers.length || loadingProgressQueue.length || loadingStepTimer || loadingFlushTimer) {
+    return;
+  }
+  const elapsed = performance.now() - loadingStepStartedAt;
+  const delay = Math.max(0, LOADING_MIN_STEP_MS - elapsed);
+  loadingFlushTimer = window.setTimeout(() => {
+    loadingFlushTimer = 0;
+    if (loadingProgressQueue.length || loadingStepTimer) {
+      scheduleLoadingFlushResolution();
+      return;
+    }
+    resolveLoadingFlush();
+  }, delay);
+}
+
+function resolveLoadingFlush() {
+  window.clearTimeout(loadingFlushTimer);
+  loadingFlushTimer = 0;
+  const resolvers = loadingFlushResolvers;
+  loadingFlushResolvers = [];
+  resolvers.forEach((resolve) => resolve());
+}
+
+function normalizeMarkdownSource(value) {
+  return String(value || "").replace(/\\([*_`~])/g, "$1");
 }
 
 function renderMarkdown(value) {
+  const source = normalizeMarkdownSource(value);
+  const markedEngine = window.marked;
+  const sanitizer = window.DOMPurify;
+  if (markedEngine?.parse && sanitizer?.sanitize) {
+    try {
+      const rawHtml = markedEngine.parse(source, {
+        gfm: true,
+        breaks: true,
+      });
+      return sanitizer.sanitize(rawHtml);
+    } catch (error) {
+      console.warn("Markdown engine failed; falling back to local parser.", error);
+    }
+  }
+  return renderMarkdownFallback(source);
+}
+
+function renderMarkdownFallback(value) {
   const lines = String(value || "").replace(/\r\n/g, "\n").split("\n");
   const html = [];
   let paragraph = [];
@@ -433,7 +515,8 @@ function resultIntroText(question, payload) {
   const taskType = payload?.task_type || "";
   const itemCount = payload?.items?.length || payload?.sources?.length || 0;
   const totalCount = payload?.total_count || itemCount;
-  const sourceTitle = payload?.items?.[0]?.title || payload?.sources?.[0]?.title || "";
+  const sourceItem = payload?.items?.[0] || payload?.sources?.[0] || null;
+  const sourceTitle = sourceItem ? itemTitle(sourceItem) : "";
   const taskLabel = payload?.task_label || "任务";
 
   if (taskType === "browse_query") {
@@ -507,10 +590,15 @@ function renderResultStats(payload) {
   `;
 }
 
+function itemTitle(item) {
+  return item?.title || "未命名项目";
+}
+
 function itemMetaParts(item) {
   const parts = [];
-  if (item?.category) parts.push(item.category);
-  if (item?.level) parts.push(item.level);
+  for (const value of [item?.category, item?.family, item?.level]) {
+    if (value && !parts.includes(value)) parts.push(value);
+  }
   const location = [item?.province, item?.city].filter(Boolean).join(" · ");
   if (location) parts.push(location);
   return parts;
@@ -543,7 +631,7 @@ function renderResultItems(payload) {
           const tags = itemTagList(item, 3);
           return `
             <button class="result-item-link" type="button" data-id="${escapeHtml(item.id)}">
-              <span class="result-item-title">${escapeHtml(item.title || "未命名项目")}</span>
+              <span class="result-item-title">${escapeHtml(itemTitle(item))}</span>
               ${meta ? `<span class="result-item-meta">${escapeHtml(meta)}</span>` : ""}
               ${tags.length ? `<span class="result-item-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</span>` : ""}
             </button>
@@ -622,7 +710,7 @@ function renderResultAnswer(question, payload) {
 
 function detailCardMeta(item) {
   const tags = [];
-  for (const value of [item?.category, item?.level, item?.province, item?.city]) {
+  for (const value of [item?.category, item?.family, item?.level, item?.province, item?.city]) {
     if (value && !tags.includes(value)) {
       tags.push(value);
     }
@@ -770,10 +858,11 @@ function itemButtonHtml(item) {
   const summary = item.summary || "暂无摘要";
   const meta = itemMetaParts(item).join(" · ");
   const tags = itemTagList(item, 4);
+  const title = itemTitle(item);
   return `
     <button class="item-entry" type="button" data-id="${escapeHtml(item.id)}" data-category="${escapeHtml(item.category)}">
       <div class="item-entry-head">
-        <div class="item-entry-title">${escapeHtml(item.title)}</div>
+        <div class="item-entry-title">${escapeHtml(title)}</div>
         <div class="item-entry-action">查看详情</div>
       </div>
       ${meta ? `<div class="item-entry-meta">${escapeHtml(meta)}</div>` : ""}
@@ -794,7 +883,7 @@ async function loadDetail(id, shouldFocus = false) {
   detailContent.hidden = false;
   detailCategory.textContent = item.category;
   detailCategory.setAttribute("data-category", item.category);
-  detailTitle.textContent = item.title;
+  detailTitle.textContent = itemTitle(item);
   detailMeta.innerHTML = detailCardMeta(item);
   const support = detailSupportText(item);
   detailSupport.hidden = !support;
@@ -918,8 +1007,63 @@ function answerRelatedItems(payload) {
   return payload?.items?.length ? payload.items : (payload?.sources || []);
 }
 
+function isContextualFollowup(question) {
+  const text = String(question || "").trim();
+  if (!text) {
+    return false;
+  }
+  const startsLikeFollowup = /^(再|继续|接着|然后|上一|上个|这个|这份|这段|它|把它|把这个|帮我把它|帮我把这个|基于)/u.test(text);
+  const startsLikeTransform = /^(改成|改为|换成|润色|压缩|精简|扩写|翻译|做成|来个|更)/u.test(text);
+  const asksForTransform = /(年轻化|口语化|轻松|双语|英文|翻译|压缩|精简|扩写|改写|润色|换个版本|讲解词|口播稿|文案)/u.test(text);
+  return startsLikeFollowup || (startsLikeTransform && asksForTransform);
+}
+
+function compactAskContextText(value, limit = 3000) {
+  const text = String(value || "").trim();
+  if (text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, limit).trimEnd()}……`;
+}
+
+function contextItemPayload(item) {
+  return {
+    id: item?.id || "",
+    title: itemTitle(item),
+    family: item?.family || "",
+    category: item?.category || "",
+    level: item?.level || "",
+    address: item?.address || "",
+  };
+}
+
+function rememberAskContext(question, payload) {
+  const related = answerRelatedItems(payload).slice(0, 5).map(contextItemPayload);
+  const answer = compactAskContextText(payload?.answer || "");
+  if (!answer && !related.length) {
+    return;
+  }
+  state.lastAskContext = {
+    question,
+    task_type: payload?.task_type || "",
+    answer,
+    items: related,
+  };
+}
+
+function buildAskContext(question) {
+  if (!state.lastAskContext || !isContextualFollowup(question)) {
+    return null;
+  }
+  return state.lastAskContext;
+}
+
 async function presentAskResponse(requestId, controller, question, payload, thinkingStartedAt) {
   await waitForThinkingDissolve(thinkingStartedAt);
+  if (!isActiveAskRequest(requestId, controller)) {
+    return;
+  }
+  await waitForLoadingSteps();
   if (!isActiveAskRequest(requestId, controller)) {
     return;
   }
@@ -927,6 +1071,7 @@ async function presentAskResponse(requestId, controller, question, payload, thin
   const speech = answerSpeechFromPayload(payload);
   state.currentTaskType = payload?.task_type || "";
   setAnswerResult(question, payload);
+  rememberAskContext(question, payload);
   console.info("[xuhua:speech]", {
     mode: payload.mode,
     length: speech.length,
@@ -962,13 +1107,18 @@ async function askQuestion() {
   }
 
   const session = beginAskSession(question);
+  const requestData = {
+    question,
+    category: "",
+    voice_enabled: speechSupported,
+  };
+  const context = buildAskContext(question);
+  if (context) {
+    requestData.context = context;
+  }
 
   try {
-    const payload = await postSseResult("/api/ask", {
-      question,
-      category: "",
-      voice_enabled: speechSupported,
-    }, 65000, session.controller);
+    const payload = await postSseResult("/api/ask", requestData, 65000, session.controller);
     await presentAskResponse(session.requestId, session.controller, question, payload, session.thinkingStartedAt);
   } catch (error) {
     presentAskError(session.requestId, session.controller, error);
@@ -1352,15 +1502,22 @@ function setVoiceState(state) {
 }
 
 function speechText(value) {
-  const text = stripMarkdown(value)
+  const text = stripSpeechDecorations(value)
     .replace(/模型接口暂不可用[\s\S]*$/u, "")
     .replace(/\s+/g, " ")
     .trim();
   return text.length > 720 ? `${text.slice(0, 720)}。` : text;
 }
 
+function stripSpeechDecorations(value) {
+  return stripMarkdown(value)
+    .replace(/[\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function stripMarkdown(value) {
-  return String(value || "")
+  return normalizeMarkdownSource(value)
     .replace(/```[\s\S]*?```/g, " ")
     .replace(/!\[[^\]]*]\([^)]+\)/g, " ")
     .replace(/\[([^\]]+)]\([^)]+\)/g, "$1")

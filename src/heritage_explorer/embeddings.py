@@ -130,11 +130,10 @@ class EmbeddingClient:
 
 def build_embedding_text(item: HeritageItem, max_chars: int | None = None) -> str:
     max_chars = config.EMBEDDING_TEXT_MAX_CHARS if max_chars is None else max_chars
-    aliases = "、".join(item.aliases)
     parts = [
         f"名称：{item.title}",
+        f"系列：{item.family}" if item.family else "",
         f"类别：{item.category}",
-        f"别名：{aliases}" if aliases else "",
         f"摘要：{item.summary}",
         f"正文：{item.content}",
     ]

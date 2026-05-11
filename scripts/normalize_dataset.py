@@ -1,8 +1,9 @@
-"""Normalize heritage_items.json: clean titles and fix category errors."""
+"""Normalize heritage_items.json: clean public titles, families, and categories."""
 
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from copy import deepcopy
@@ -23,28 +24,57 @@ CATEGORY_FIXES: dict[str, str] = {
 SKIP_IDS: set[str] = set()
 
 
-def normalize_title(title: str) -> tuple[str, str]:
-    """Clean bracket-formatted titles.
+TITLE_FAMILY_SUFFIXES = ("木版年画",)
+PLACE_QUALIFIER_RE = re.compile(r"^[\u4e00-\u9fff]{2,8}(?:省|市|县|区|州|旗|盟)$")
 
-    Returns (clean_title, extra_alias).
-    "皮影戏[皮影戏]" → ("皮影戏", "")
+
+def _split_parenthetical_title(title: str) -> tuple[str, str]:
+    match = re.match(r"^(.+?)[（(](.+)[）)]$", title)
+    if not match:
+        return "", ""
+    family = match.group(1).strip()
+    variant = match.group(2).strip()
+    if PLACE_QUALIFIER_RE.match(variant):
+        return "", ""
+    if not family or not variant or family == variant:
+        return "", ""
+    return family, variant
+
+
+def _public_title_parts(title: str) -> tuple[str, str]:
+    family, variant = _split_parenthetical_title(title)
+    if family and variant:
+        return variant, family
+
+    if "木板年画" in title:
+        return title.replace("木板年画", "木版年画"), "木版年画"
+
+    for suffix in TITLE_FAMILY_SUFFIXES:
+        if title.endswith(suffix) and title != suffix:
+            return title, suffix
+
+    return title, ""
+
+
+def normalize_title(title: str) -> tuple[str, str]:
+    """Return (title, family) with no aliases.
+
+    "木版年画（滑县木版年画）" → ("滑县木版年画", "木版年画")
     "泥塑[淮滨泥塑（小叫吹）]" → ("淮滨泥塑（小叫吹）", "泥塑")
     "竹马舞[三家村竹马舞]" → ("三家村竹马舞", "竹马舞")
     """
+    title = title.strip()
     match = re.match(r"^(.+?)\[(.+)\]$", title)
     if not match:
-        return title, ""
+        return _public_title_parts(title)
 
     generic = match.group(1).strip()
     specific = match.group(2).strip()
 
-    # Normalize nested parens in specific part
-    specific = specific.replace("（", "(").replace("）", ")")
+    specific = specific.replace("(", "（").replace(")", "）")
 
     if specific == generic or not specific:
         return generic, ""
-    if specific.endswith(")"):
-        return specific, generic
     return specific, generic
 
 
@@ -59,28 +89,45 @@ def _extract_city_from_content(content: str) -> str:
     return ""
 
 
+def stable_id(seed: str) -> str:
+    digest = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:10]
+    return f"h_{digest}"
+
+
 def normalize_item(item: dict[str, Any]) -> dict[str, Any] | None:
     if item["id"] in SKIP_IDS:
         return None
 
     item = deepcopy(item)
-    new_title, extra_alias = normalize_title(item["title"])
+    new_title, family = normalize_title(item["title"])
     old_title = item["title"]
+    old_family = item.get("family", "")
+    had_aliases = "aliases" in item
+    if not family and old_family:
+        family = old_family
 
     if new_title != old_title:
         item["title"] = new_title
-        aliases = list(item.get("aliases") or [])
-        if extra_alias and extra_alias not in aliases:
-            aliases.append(extra_alias)
-        if old_title not in aliases:
-            aliases.append(old_title)
-        item["aliases"] = aliases
+    item["family"] = family
+    item.pop("aliases", None)
 
-        old_search = item.get("search_text", "")
-        item["search_text"] = old_search.replace(old_title, new_title, 1)
+    search_parts = [
+        item.get("title", ""),
+        item.get("family", ""),
+        item.get("category", ""),
+        item.get("summary", ""),
+        item.get("content", ""),
+    ]
+    item["search_text"] = " ".join(str(part) for part in search_parts if part)
 
     if new_title in CATEGORY_FIXES:
         item["category"] = CATEGORY_FIXES[new_title]
+
+    item["_normalization_changed"] = (
+        new_title != old_title
+        or family != old_family
+        or had_aliases
+    )
 
     return item
 
@@ -101,8 +148,6 @@ def _disambiguate_duplicates(items: list[dict[str, Any]]) -> list[dict]:
             if city and city not in item["title"]:
                 old_title = item["title"]
                 new_title = f"{title}（{city}）"
-                if item.get("aliases"):
-                    item["aliases"] = list(item["aliases"]) + [old_title]
                 item["title"] = new_title
                 changes.append({
                     "id": item["id"],
@@ -113,11 +158,52 @@ def _disambiguate_duplicates(items: list[dict[str, Any]]) -> list[dict]:
     return changes
 
 
+def _disambiguate_duplicate_ids(items: list[dict[str, Any]]) -> list[dict]:
+    """Regenerate ids only for duplicate rows, preserving the first occurrence."""
+    changes: list[dict] = []
+    seen: set[str] = set()
+    used_ids = {str(item.get("id") or "") for item in items}
+
+    for idx, item in enumerate(items):
+        old_id = str(item.get("id") or "")
+        if old_id not in seen:
+            seen.add(old_id)
+            continue
+
+        source = item.get("source") or {}
+        seed_parts = [
+            old_id,
+            str(item.get("title") or ""),
+            _extract_city_from_content(str(item.get("content") or "")),
+            str(source.get("legacy_order") or idx),
+            str(item.get("content") or "")[:160],
+        ]
+        counter = 1
+        while True:
+            new_id = stable_id("|".join(seed_parts + [str(counter)]))
+            if new_id not in used_ids:
+                break
+            counter += 1
+
+        item["id"] = new_id
+        used_ids.add(new_id)
+        seen.add(new_id)
+        changes.append({
+            "old_id": old_id,
+            "new_id": new_id,
+            "title": item.get("title", ""),
+            "action": "deduplicated_id",
+        })
+
+    return changes
+
+
 def normalize_dataset(input_path: Path, output_path: Path, *, dry_run: bool = False) -> dict:
     with input_path.open("r", encoding="utf-8") as f:
         data = json.load(f)
 
     original_count = len(data["items"])
+    data["schema_version"] = 2
     normalized: list[dict[str, Any]] = []
     changes: list[dict] = []
 
@@ -126,13 +212,13 @@ def normalize_dataset(input_path: Path, output_path: Path, *, dry_run: bool = Fa
         if result is None:
             changes.append({"id": item["id"], "title": item["title"], "action": "removed"})
             continue
-        if result["title"] != item["title"]:
+        if result.pop("_normalization_changed", False):
             changes.append({
                 "id": item["id"],
                 "old_title": item["title"],
                 "new_title": result["title"],
-                "new_aliases": result.get("aliases", []),
-                "action": "renamed",
+                "family": result.get("family", ""),
+                "action": "normalized",
             })
         if result["category"] != item["category"]:
             changes.append({
@@ -150,6 +236,11 @@ def normalize_dataset(input_path: Path, output_path: Path, *, dry_run: bool = Fa
     disambiguate_changes = _disambiguate_duplicates(data["items"])
     if disambiguate_changes:
         for dc in disambiguate_changes:
+            changes.append(dc)
+
+    id_changes = _disambiguate_duplicate_ids(data["items"])
+    if id_changes:
+        for dc in id_changes:
             changes.append(dc)
 
     # Update category counts
@@ -197,14 +288,16 @@ def main() -> None:
 
     for change in result["changes"][:30]:
         action = change["action"]
-        if action == "renamed":
-            print(f"  RENAME: {change['old_title'][:50]} -> {change['new_title'][:50]}")
+        if action == "normalized":
+            print(f"  NORMALIZE: {change['old_title'][:50]} -> {change['new_title'][:50]} [{change['family']}]")
         elif action == "recategorized":
             print(f"  CATEGORY: [{change['title'][:40]}] {change['old_category']} -> {change['new_category']}")
         elif action == "removed":
             print(f"  REMOVE: {change['title'][:50]}")
         elif action == "disambiguated":
             print(f"  DUPLICATE: {change['old_title'][:40]} -> {change['new_title'][:50]}")
+        elif action == "deduplicated_id":
+            print(f"  ID: {change['title'][:40]} {change['old_id']} -> {change['new_id']}")
 
     if len(result["changes"]) > 30:
         print(f"  ... and {len(result['changes']) - 30} more")

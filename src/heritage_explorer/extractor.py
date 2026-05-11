@@ -53,6 +53,26 @@ _PROVINCE_PATTERN = re.compile(
     r"[一-鿿]{2,7}省"
     r")"
 )
+_HENAN_CITIES = {
+    "郑州市",
+    "开封市",
+    "洛阳市",
+    "平顶山市",
+    "安阳市",
+    "鹤壁市",
+    "新乡市",
+    "焦作市",
+    "濮阳市",
+    "许昌市",
+    "漯河市",
+    "三门峡市",
+    "南阳市",
+    "商丘市",
+    "信阳市",
+    "周口市",
+    "驻马店市",
+    "济源市",
+}
 
 
 @dataclass(frozen=True)
@@ -221,9 +241,11 @@ class RuleExtractor:
 
     def extract(self, item: HeritageItem) -> StructuredMeta:
         fields = _extract_all_fields(item.content)
-        province = _province_from_region(_first_value(fields, "报道地区")) or _first_value(
+        raw_province = _province_from_region(_first_value(fields, "报道地区")) or _first_value(
             fields, "省份"
         )
+        city_val = _first_value(fields, "城市")
+        province, province_method = _normalize_province(raw_province, city_val)
 
         evidence: dict[str, dict[str, Any]] = {}
 
@@ -231,13 +253,12 @@ class RuleExtractor:
         evidence["level"] = level_ev
 
         prov_ev = _evidence_dict(
-            source_text=province,
-            method="rule",
+            source_text=raw_province or city_val,
+            method=province_method,
             confidence=0.95 if province else 0.0,
         )
         evidence["province"] = prov_ev
 
-        city_val = _first_value(fields, "城市")
         evidence["city"] = _evidence_dict(
             source_text=city_val,
             method="rule",
@@ -607,9 +628,9 @@ def build_rule_soft_labels(
 
 def _extract_all_fields(content: str) -> dict[str, tuple[str, ...]]:
     fields: dict[str, list[str]] = {}
-    for field in _FIELD_NAMES:
+    for field_name in _FIELD_NAMES:
         pattern = re.compile(
-            rf"(?:^|[,，]\s*){re.escape(field)}\s*[:：]\s*"
+            rf"(?:^|[,，]\s*){re.escape(field_name)}\s*[:：]\s*"
             rf"(.*?)(?=(?:[,，]\s*(?:{_FIELD_STOP_PATTERN})\s*[:：])|$)",
             re.S,
         )
@@ -619,7 +640,7 @@ def _extract_all_fields(content: str) -> dict[str, tuple[str, ...]]:
             if _clean_value(match.group(1))
         ]
         if values:
-            fields[field] = values
+            fields[field_name] = values
     return {key: tuple(value) for key, value in fields.items()}
 
 
@@ -635,6 +656,12 @@ def _first_value(fields: dict[str, tuple[str, ...]], name: str) -> str:
 def _province_from_region(region: str) -> str:
     match = _PROVINCE_PATTERN.search(region)
     return match.group(1) if match else ""
+
+
+def _normalize_province(province: str, city: str) -> tuple[str, str]:
+    if city in _HENAN_CITIES and province != "河南省":
+        return "河南省", "rule_infer"
+    return province, "rule"
 
 
 def _split_people(value: str) -> tuple[str, ...]:

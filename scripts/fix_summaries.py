@@ -9,7 +9,6 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_INPUT = ROOT / "data" / "processed" / "heritage_items.json"
@@ -156,7 +155,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
-    import io, sys
+    import io
+    import sys
+
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
     args = parse_args()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .agent import TaskType
+from .agent_models import TaskType
 from .dataset import HeritageItem, KnowledgeBase, get_structured_meta
 
 
@@ -65,15 +65,6 @@ _SHORT_PROVINCE_MAP: dict[str, str] = {
     "辽宁": "辽宁省", "吉林": "吉林省", "黑龙江": "黑龙江省",
 }
 
-_TASK_CLASSIFICATION_RULES: list[tuple[list[str], str]] = [
-    (["对比", "比较", "区别", "差异", "有什么不同", "哪个更"], "COMPARISON"),
-    (["推荐", "适合", "选什么", "哪个好", "帮我挑", "帮我选"], "RECOMMENDATION"),
-    (["策划", "展示方案", "展览", "校园展", "展馆", "社区活动", "展示策划"], "EXHIBITION_PLAN"),
-    (["研学", "教案", "课程设计", "学习任务", "教学活动", "教案设计"], "STUDY_TASK"),
-    (["翻译", "英文", "双语", "年轻化", "朋友圈", "文创文案", "改写"], "CONTENT_TRANSFORM"),
-    (["列举", "有哪些", "多少项", "找几个", "筛选", "查找", "搜一下"], "BROWSE_QUERY"),
-]
-
 _CONSTRAINT_KEYWORDS: dict[str, str] = {
     "展示难度低": "展示难度低",
     "容易展示": "展示难度低",
@@ -119,6 +110,10 @@ _TRANSFORM_TYPE_KEYWORDS: dict[str, str] = {
     "英文": "翻译",
     "英语": "翻译",
     "双语": "双语",
+    "讲解词": "讲解词",
+    "讲解稿": "讲解词",
+    "口播稿": "讲解词",
+    "解说词": "讲解词",
     "年轻化": "年轻化",
     "朋友圈": "朋友圈",
     "文创": "文创文案",
@@ -209,8 +204,8 @@ class QueryAnalyzer:
         self._category_names = [c.name for c in kb.categories]
 
     def analyze(self, query: str, task_type: TaskType | None = None) -> QueryAnalysis:
-        # ── task classification ──
-        primary_task = self._classify_task(query)
+        # ── task identity supplied by the model planner ──
+        primary_task = task_type.name if task_type else TaskType.FACT_QA.name
 
         # ── entity & location extraction ──
         entities = self._extract_entities(query)
@@ -343,40 +338,28 @@ class QueryAnalyzer:
                 names.append(candidate)
         return names or parts
 
-    # ── new MVP extraction methods ──
-
-    def _classify_task(self, query: str) -> str:
-        """Keyword-rule task classification matching the design doc rules."""
-        if not query:
-            return "FACT_QA"
-        hits: list[str] = []
-        for keywords, task_name in _TASK_CLASSIFICATION_RULES:
-            if any(kw in query for kw in keywords):
-                hits.append(task_name)
-        if not hits:
-            return "FACT_QA"
-        return hits[0]  # first match wins
+    # ── extraction methods ──
 
     def _extract_entities(self, query: str) -> list[str]:
-        """Link query substrings to HeritageItem titles and aliases."""
+        """Link query substrings to HeritageItem titles and families."""
         if not query:
             return []
-        found: list[str] = []
+        title_matches: list[str] = []
+        base_matches: list[str] = []
+        family_matches: list[str] = []
         for item in self.kb.items:
             title = item.title
             if title in query:
-                found.append(title)
+                title_matches.append(title)
                 continue
             # Try base title without parenthetical annotation
             base_title = title.split("（")[0].split("(")[0].strip()
             if len(base_title) >= 2 and base_title in query:
-                found.append(base_title)
+                base_matches.append(base_title)
                 continue
-            for alias in item.aliases:
-                if len(alias) >= 2 and alias in query:
-                    found.append(alias)
-                    break
-        return found
+            if len(item.family) >= 2 and item.family in query:
+                family_matches.append(item.family)
+        return list(dict.fromkeys(title_matches + base_matches + family_matches))
 
     def _extract_categories(self, query: str) -> list[str]:
         """Extract all matching ICH categories from query."""
@@ -520,7 +503,7 @@ class QueryAnalyzer:
             cleaned = cleaned.replace(k, "")
         cleaned = _COUNT_PATTERN.sub("", cleaned)
         cleaned = re.sub(
-            r"推荐|适合|哪些|帮我找|比较|对比|有哪些|列出|筛选|过滤|限定|只看|只要",
+            r"推荐|适合|哪些|帮我找|比较|对比|有哪些|列出|筛选|过滤|限定|只看|只要|生成讲解词|生成讲解稿|生成口播稿|生成文案|生成词|讲解词|讲解稿|口播稿|解说词|生成|给",
             "",
             cleaned,
         )

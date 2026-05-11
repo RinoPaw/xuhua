@@ -1004,6 +1004,104 @@ textarea:focus {
   line-height: 1.4;
 }
 
+.result-markdown p {
+  margin: 0 0 14px;
+  line-height: 1.95;
+}
+
+.result-markdown ul,
+.result-markdown ol {
+  margin: 0 0 14px;
+  padding-left: 1.65em;
+  line-height: 1.9;
+}
+
+.result-markdown ul {
+  list-style: disc;
+}
+
+.result-markdown ol {
+  list-style: decimal;
+}
+
+.result-markdown li {
+  margin: 5px 0;
+  padding-left: 0.2em;
+}
+
+.result-markdown strong {
+  font-weight: 900;
+}
+
+.result-markdown code {
+  padding: 1px 5px;
+  border: 1px solid rgba(107, 144, 128, 0.18);
+  background: rgba(107, 144, 128, 0.08);
+  color: var(--celadon-dark);
+  font-family: "Consolas", "SFMono-Regular", monospace;
+  font-size: 0.92em;
+}
+
+.result-markdown pre {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  overflow: auto;
+  border-left: 2px solid rgba(107, 144, 128, 0.42);
+  background: rgba(255, 252, 244, 0.68);
+  line-height: 1.65;
+}
+
+.result-markdown pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.result-markdown blockquote {
+  margin: 0 0 14px;
+  padding: 8px 0 8px 14px;
+  border-left: 3px solid rgba(107, 144, 128, 0.45);
+  color: rgba(26, 22, 20, 0.76);
+}
+
+.result-markdown table {
+  width: 100%;
+  margin: 0 0 14px;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.result-markdown th,
+.result-markdown td {
+  padding: 8px 10px;
+  border: 1px solid rgba(58, 47, 40, 0.12);
+  vertical-align: top;
+}
+
+.result-markdown th {
+  background: rgba(107, 144, 128, 0.1);
+  color: var(--celadon-dark);
+  font-weight: 900;
+}
+
+.result-markdown a {
+  color: var(--celadon-dark);
+  text-underline-offset: 3px;
+}
+
+.result-markdown hr {
+  height: 1px;
+  margin: 16px 0;
+  border: 0;
+  background: rgba(58, 47, 40, 0.12);
+}
+
+.result-markdown input[type="checkbox"] {
+  margin-right: 6px;
+  transform: translateY(1px);
+}
+
 .result-markdown p:last-child,
 .result-markdown ul:last-child,
 .result-markdown ol:last-child {

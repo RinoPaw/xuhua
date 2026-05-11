@@ -21,6 +21,38 @@ def normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value.replace("\u00a0", " ")).strip()
 
 
+TITLE_FAMILY_SUFFIXES = ("木版年画",)
+PLACE_QUALIFIER_RE = re.compile(r"^[\u4e00-\u9fff]{2,8}(?:省|市|县|区|州|旗|盟)$")
+
+
+def split_parenthetical_title(title: str) -> tuple[str, str]:
+    match = re.match(r"^(.+?)[（(](.+)[）)]$", normalize_text(title))
+    if not match:
+        return "", ""
+    family = normalize_text(match.group(1))
+    variant = normalize_text(match.group(2))
+    if PLACE_QUALIFIER_RE.match(variant):
+        return "", ""
+    if not family or not variant or family == variant:
+        return "", ""
+    return family, variant
+
+
+def public_title_parts(title: str) -> tuple[str, str]:
+    family, variant = split_parenthetical_title(title)
+    if family and variant:
+        return variant, family
+
+    if "木板年画" in title:
+        return title.replace("木板年画", "木版年画"), "木版年画"
+
+    for suffix in TITLE_FAMILY_SUFFIXES:
+        if title.endswith(suffix) and title != suffix:
+            return title, suffix
+
+    return title, ""
+
+
 def load_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         data = json.load(f)
@@ -54,6 +86,32 @@ def stable_id(title: str) -> str:
     return f"h_{digest}"
 
 
+def make_unique_ids(items: list[dict[str, Any]]) -> None:
+    """Keep title-based ids stable unless an old source title collides."""
+    seen: set[str] = set()
+    for item in items:
+        item_id = str(item["id"])
+        if item_id not in seen:
+            seen.add(item_id)
+            continue
+
+        source = item.get("source") or {}
+        seed_parts = [
+            item_id,
+            str(item.get("title") or ""),
+            str(source.get("legacy_order") or ""),
+            str(item.get("content") or "")[:160],
+        ]
+        counter = 1
+        while True:
+            candidate = stable_id("|".join(seed_parts + [str(counter)]))
+            if candidate not in seen:
+                item["id"] = candidate
+                seen.add(candidate)
+                break
+            counter += 1
+
+
 def build_dataset(source_root: Path) -> dict[str, Any]:
     faiss_data_path = source_root / "data" / "faiss_data" / "faiss_data.json"
     summary_path = source_root / "data" / "faiss_data" / "summary" / "summary_final.json"
@@ -67,28 +125,24 @@ def build_dataset(source_root: Path) -> dict[str, Any]:
     category_counter: Counter[str] = Counter()
 
     for order, (title, content) in enumerate(faiss_data.items(), start=1):
-        clean_title = normalize_text(title)
-        normalized_title = normalize_title(clean_title)
+        raw_title = normalize_text(title)
+        clean_title, family = public_title_parts(raw_title)
+        normalized_title = normalize_title(raw_title)
         category_candidates = sorted(category_lookup.get(normalized_title, []))
         category = category_candidates[0] if category_candidates else "未分类"
-        summary = normalize_text(str(summaries.get(title) or summaries.get(clean_title) or ""))
+        summary = normalize_text(str(summaries.get(title) or summaries.get(raw_title) or ""))
         clean_content = normalize_text(str(content))
-        aliases = sorted({
-            normalize_text(alias)
-            for alias in category_items.get(category, [])
-            if normalize_title(alias) == normalized_title and normalize_text(alias) != clean_title
-        })
 
         category_counter[category] += 1
-        search_parts = [clean_title, category, summary, clean_content, *aliases]
+        search_parts = [clean_title, family, category, summary, clean_content]
 
         items.append({
-            "id": stable_id(clean_title),
+            "id": stable_id(raw_title),
             "title": clean_title,
+            "family": family,
             "category": category,
             "summary": summary,
             "content": clean_content,
-            "aliases": aliases,
             "search_text": " ".join(part for part in search_parts if part),
             "source": {
                 "legacy_order": order,
@@ -100,6 +154,8 @@ def build_dataset(source_root: Path) -> dict[str, Any]:
                 "category_candidates": category_candidates,
             },
         })
+
+    make_unique_ids(items)
 
     categories = [
         {
@@ -117,7 +173,7 @@ def build_dataset(source_root: Path) -> dict[str, Any]:
         })
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "source": {
             "project": "panda_mudan",

@@ -23,8 +23,6 @@ from .agent_models import (
 from .agent_task_config import TASK_CONFIGS, _TASK_CONFIGS
 from .dataset import (
     KnowledgeBase,
-    get_soft_labels,
-    get_structured_meta,
     normalize_text,
 )
 from .item_cards import _enriched_item_card, _source_payload, _title_with_family
@@ -252,14 +250,12 @@ class Agent:
         from .search import search_items_lexical
 
         target_item = None
-        target_meta = None
         # Try to resolve a specific target entity
         if analysis.entities:
             entity = analysis.entities[0]
             result, _ = search_items_lexical(self.kb, query=entity, limit=1)
             if result:
                 target_item = result[0]
-                target_meta = get_structured_meta(target_item.id)
 
         # If no specific entity found, fall back to recommendation
         if target_item is None:
@@ -267,8 +263,6 @@ class Agent:
             if rec_result.items:
                 # Use the first recommended item
                 target_item = self.kb.get(rec_result.items[0]["id"])
-                if target_item:
-                    target_meta = get_structured_meta(target_item.id)
 
         if target_item is None:
             # Nothing to work with — fall through to LLM
@@ -310,9 +304,9 @@ class Agent:
         category = target_item.category
         summary = target_item.summary[:200]
 
-        features = target_meta.features[:200] if target_meta and target_meta.features else summary
-        history = target_meta.history[:200] if target_meta and target_meta.history else ""
-        display = "、".join(target_meta.display_forms) if target_meta and target_meta.display_forms else "展板 + 讲解"
+        features = target_item.features[:200] if target_item.features else summary
+        history = target_item.history[:200] if target_item.history else ""
+        display = "、".join(target_item.display_forms) if target_item.display_forms else "展板 + 讲解"
 
         lines = [
             f"## 非遗研学教案：{title}",
@@ -358,8 +352,8 @@ class Agent:
         lines.append(f"**技艺特点：**{features}")
         lines.append("")
 
-        if target_meta and target_meta.cultural_value:
-            lines.append(f"**文化价值：**{target_meta.cultural_value[:200]}")
+        if target_item.cultural_value:
+            lines.append(f"**文化价值：**{target_item.cultural_value[:200]}")
             lines.append("")
 
         lines.extend([
@@ -467,24 +461,22 @@ class Agent:
                 transform_type = "改写"
 
         # Build context from the item
-        meta = get_structured_meta(target_item.id)
         context_lines = [
             f"标题：{target_item.title}",
             f"类别：{target_item.category}",
         ]
-        if meta:
-            if meta.province:
-                context_lines.append(f"省份：{meta.province}")
-            if meta.city:
-                context_lines.append(f"城市：{meta.city}")
-            if meta.level:
-                context_lines.append(f"级别：{meta.level}")
-            if meta.features:
-                context_lines.append(f"主要特色：{meta.features}")
-            if meta.history:
-                context_lines.append(f"历史背景：{meta.history}")
-            if meta.cultural_value:
-                context_lines.append(f"重要价值：{meta.cultural_value}")
+        if target_item.province:
+            context_lines.append(f"省份：{target_item.province}")
+        if target_item.city:
+            context_lines.append(f"城市：{target_item.city}")
+        if target_item.level:
+            context_lines.append(f"级别：{target_item.level}")
+        if target_item.features:
+            context_lines.append(f"主要特色：{target_item.features}")
+        if target_item.history:
+            context_lines.append(f"历史背景：{target_item.history}")
+        if target_item.cultural_value:
+            context_lines.append(f"重要价值：{target_item.cultural_value}")
         context_lines.append(f"简介：{target_item.summary}")
         context_lines.append(f"正文片段：{target_item.content[:800]}")
         context = "\n".join(context_lines)
@@ -544,9 +536,8 @@ class Agent:
         header = f"找到 {total} 项{filter_desc}非遗：\n" if total else f"未找到匹配的{filter_desc}非遗。"
         lines = [header]
         for i, item in enumerate(result, 1):
-            meta = get_structured_meta(item.id)
-            level_str = f" | {meta.level}" if meta else ""
-            city_str = f" | {meta.city}" if meta and meta.city else ""
+            level_str = f" | {item.level}" if item.level else ""
+            city_str = f" | {item.city}" if item.city else ""
             lines.append(f"{i}. {_title_with_family(item)} — {item.category}{level_str}{city_str}")
 
         evidence: list[dict[str, Any]] = []
@@ -583,20 +574,16 @@ class Agent:
         constraints = analysis.constraints
         limit = analysis.retrieval_count
 
-        scored: list[tuple[int, Any, Any, Any]] = []
+        scored: list[tuple[int, Any]] = []
         for item in self.kb.items:
-            labels = get_soft_labels(item.id)
-            meta = get_structured_meta(item.id)
-            if labels is None or meta is None:
-                continue
             # Scenario filter (soft — skip if scenario specified and not matched)
-            if scenario and scenario not in labels.suitable_scenarios:
+            if scenario and scenario not in item.suitable_scenarios:
                 continue
             # Audience filter (soft)
-            if audience and audience not in labels.target_audience:
+            if audience and audience not in item.target_audience:
                 continue
-            score = _score_for_recommendation(meta, labels, constraints)
-            scored.append((score, item, meta, labels))
+            score = _score_for_recommendation(item, constraints)
+            scored.append((score, item))
 
         scored.sort(key=lambda x: -x[0])
         top = scored[:limit]
@@ -606,30 +593,30 @@ class Agent:
         scene_desc = scenario or "通用"
         parts.append(f"为您推荐 {len(top)} 个适合「{scene_desc}」的非遗项目：\n")
 
-        for i, (score, item, meta, labels) in enumerate(top, 1):
+        for i, (score, item) in enumerate(top, 1):
             parts.append(f"**{i}. {_title_with_family(item)}**")
-            parts.append(f"  - 类别：{item.category} | 级别：{meta.level}")
-            if meta.display_forms:
-                parts.append(f"  - 展示形式：{'、'.join(meta.display_forms)}")
-            parts.append(f"  - 教育价值：{labels.education_value} | 互动潜力：{labels.interaction_potential}")
+            parts.append(f"  - 类别：{item.category} | 级别：{item.level}")
+            if item.display_forms:
+                parts.append(f"  - 展示形式：{'、'.join(item.display_forms)}")
+            parts.append(f"  - 教育价值：{item.education_value} | 互动潜力：{item.interaction_potential}")
             parts.append(f"  - 简介：{item.summary[:120]}")
             parts.append("")
 
         selection_reason = _build_selection_reason(scenario, audience, constraints, len(top))
 
         evidence: list[dict[str, Any]] = []
-        for _, item, _, labels in top:
+        for _, item in top:
             evidence.append({
                 "type": "inferred",
                 "claim": "推荐排序",
-                "basis": f"scenario={scenario}, education={labels.education_value}",
+                "basis": f"scenario={scenario}, education={item.education_value}",
                 "item_id": item.id,
             })
 
         return AgentResult(
             task_type=TaskType.RECOMMENDATION,
             answer="\n".join(parts),
-            items=[_enriched_item_card(item) for _, item, _, _ in top],
+            items=[_enriched_item_card(item) for _, item in top],
             evidence=evidence,
             selection_reason=selection_reason,
             mode="fallback",
@@ -871,26 +858,26 @@ def _describe_filters(category: str, province: str, level: str) -> str:
     return "".join(parts) if parts else ""
 
 
-def _score_for_recommendation(meta, labels, constraints: list[str]) -> int:
+def _score_for_recommendation(item, constraints: list[str]) -> int:
     """Score an item for recommendation. Higher = better fit."""
     score = 0
 
     # Education value
-    edu = labels.education_value
+    edu = item.education_value
     if edu == "高":
         score += 4
     elif edu == "中":
         score += 2
 
     # Interaction potential
-    inter = labels.interaction_potential
+    inter = item.interaction_potential
     if inter == "高":
         score += 3
     elif inter == "中":
         score += 1
 
     # Level bonus
-    lvl = meta.level
+    lvl = item.level
     if lvl == "人类":
         score += 5
     elif lvl == "国家级":
@@ -899,9 +886,9 @@ def _score_for_recommendation(meta, labels, constraints: list[str]) -> int:
         score += 1
 
     # Constraint matching
-    if "展示难度低" in constraints and labels.display_difficulty == "低":
+    if "展示难度低" in constraints and item.display_difficulty == "低":
         score += 3
-    if "互动性强" in constraints and labels.interaction_potential == "高":
+    if "互动性强" in constraints and item.interaction_potential == "高":
         score += 3
 
     return score

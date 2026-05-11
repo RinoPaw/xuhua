@@ -9,7 +9,7 @@ from flask import Flask, Response, abort, jsonify, render_template, request
 
 from .agent import Agent, AgentResult, task_type_label
 from .config import DEBUG, HOST, PORT
-from .dataset import get_knowledge_base, get_soft_labels, get_structured_meta, item_to_dict
+from .dataset import get_knowledge_base, item_to_dict
 from .search import search_items, search_items_lexical
 
 
@@ -251,20 +251,11 @@ def _sse_event(data: dict) -> str:
 
 def _item_payload(item, include_content: bool = False) -> dict:
     data = item_to_dict(item, include_content=include_content)
-    meta = get_structured_meta(item.id)
-    if meta:
-        data["level"] = meta.level
-        data["province"] = meta.province
-        data["city"] = meta.city
-        data["district"] = meta.district
-        data["display_forms"] = list(meta.display_forms)
-    labels = get_soft_labels(item.id)
-    if labels:
-        data["suitable_scenarios"] = list(labels.suitable_scenarios[:4])
-        data["target_audience"] = list(labels.target_audience[:4])
-        data["interaction_potential"] = labels.interaction_potential
-        data["education_value"] = labels.education_value
-        data["cultural_keywords"] = list(labels.cultural_keywords[:6])
+    data["suitable_scenarios"] = list(item.suitable_scenarios[:4])
+    data["target_audience"] = list(item.target_audience[:4])
+    data["interaction_potential"] = item.interaction_potential
+    data["education_value"] = item.education_value
+    data["cultural_keywords"] = list(item.cultural_keywords[:6])
     return data
 
 

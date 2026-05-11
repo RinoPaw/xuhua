@@ -1,12 +1,9 @@
-from heritage_explorer import dataset, extractor
-from heritage_explorer.dataset import load_dataset
-from heritage_explorer.extractor import (
-    ExtractionCache,
-    RuleExtractor,
-    SoftLabels,
-    StructuredMeta,
-)
+from heritage_explorer import dataset
+from heritage_explorer.dataset import get_knowledge_base, get_soft_labels, get_structured_meta, load_dataset
+from heritage_explorer.extractor import RuleExtractor, SoftLabels, StructuredMeta
 
+
+# ── RuleExtractor tests (extraction engine remains for build-time use) ──
 
 def test_rule_extractor_extracts_known_sample_fields():
     kb = load_dataset()
@@ -49,123 +46,58 @@ def test_rule_extractor_uses_henan_city_when_later_province_fields_conflict():
     assert meta.city == "开封市"
 
 
-def test_extraction_cache_round_trips_meta_and_labels(tmp_path):
-    meta_path = tmp_path / "heritage_meta.json"
-    labels_path = tmp_path / "heritage_labels.json"
-    cache = ExtractionCache(meta_path=meta_path, labels_path=labels_path)
+# ── Unified dataset format tests ──
 
-    meta = {
-        "h_test": StructuredMeta(
-            level="国家级",
-            province="河南省",
-            city="洛阳市",
-            district="洛宁县",
-            inheritors=("张三",),
-            coordinates=(111.1, 34.2),
-            display_forms=("展示馆传习所",),
-            organization="洛宁县文化馆",
-        )
-    }
-    labels = {
-        "h_test": SoftLabels(
-            suitable_scenarios=("校园展览",),
-            target_audience=("青少年",),
-            interaction_potential="高",
-            cultural_keywords=("民俗", "教育"),
-        )
-    }
+def test_heritage_item_has_baked_structured_fields():
+    kb = get_knowledge_base()
+    item = kb.items[0]
+    assert item.level != ""
+    assert item.province != ""
+    assert item.city != ""
+    assert isinstance(item.display_forms, tuple)
+    assert isinstance(item.suitable_scenarios, tuple)
+    assert isinstance(item.cultural_keywords, tuple)
 
-    cache.save(
-        meta,
-        labels,
-        dataset_generated_at="2026-05-03T00:00:00",
-        dataset_schema_version=1,
-    )
-    loaded_meta, loaded_labels = cache.load()
-
-    assert loaded_meta == meta
-    assert loaded_labels == labels
-    assert not cache.is_stale(
-        dataset_generated_at="2026-05-03T00:00:00",
-        dataset_schema_version=1,
-    )
-    assert cache.is_stale(dataset_generated_at="2026-05-04T00:00:00")
+    # All 805 items should have level filled
+    filled = sum(1 for i in kb.items if i.level)
+    assert filled == len(kb.items)
 
 
-def test_dataset_helpers_lazy_load_extraction_cache(monkeypatch, tmp_path):
-    meta_path = tmp_path / "heritage_meta.json"
-    labels_path = tmp_path / "heritage_labels.json"
-    cache = ExtractionCache(meta_path=meta_path, labels_path=labels_path)
-    cache.save(
-        {"h_cached": StructuredMeta(level="省级", province="河南省")},
-        {"h_cached": SoftLabels(education_value="高")},
-    )
-    monkeypatch.setattr(extractor, "META_PATH", meta_path)
-    monkeypatch.setattr(extractor, "LABELS_PATH", labels_path)
+def test_get_structured_meta_from_item_fields():
+    kb = get_knowledge_base()
+    item = kb.get("h_dfc42ccd7c")
+    assert item is not None
 
-    dataset.clear_extraction_cache()
-
-    assert dataset.get_structured_meta("h_cached") == StructuredMeta(
-        level="省级",
-        province="河南省",
-    )
-    assert dataset.get_soft_labels("h_cached") == SoftLabels(education_value="高")
-
-    dataset.clear_extraction_cache()
-
-
-def test_dataset_helpers_fill_missing_cached_meta(monkeypatch, tmp_path):
-    meta_path = tmp_path / "heritage_meta.json"
-    labels_path = tmp_path / "heritage_labels.json"
-    cache = ExtractionCache(meta_path=meta_path, labels_path=labels_path)
-    cache.save(
-        {"h_cached": StructuredMeta(level="省级", province="河南省")},
-        {"h_cached": SoftLabels(education_value="高")},
-    )
-    monkeypatch.setattr(extractor, "META_PATH", meta_path)
-    monkeypatch.setattr(extractor, "LABELS_PATH", labels_path)
-
-    kb = load_dataset()
-    item = next(item for item in kb.items if item.title == "罗卷戏（南阳市）")
-
-    dataset.clear_extraction_cache()
-
-    meta = dataset.get_structured_meta(item.id)
-
+    meta = get_structured_meta(item.id)
     assert meta is not None
-    assert meta.level == "国家级"
-    assert meta.city == "南阳市"
+    assert meta.level == item.level
+    assert meta.province == item.province
+    assert meta.city == item.city
+    assert meta.district == item.district
+    assert meta.display_forms == item.display_forms
+    assert meta.features == item.features
+    assert meta.history == item.history
+    assert meta.cultural_value == item.cultural_value
 
-    dataset.clear_extraction_cache()
+
+def test_get_soft_labels_from_item_fields():
+    kb = get_knowledge_base()
+    item = kb.get("h_dfc42ccd7c")
+    assert item is not None
+
+    labels = get_soft_labels(item.id)
+    assert labels is not None
+    assert labels.suitable_scenarios == item.suitable_scenarios
+    assert labels.target_audience == item.target_audience
+    assert labels.display_difficulty == item.display_difficulty
+    assert labels.interaction_potential == item.interaction_potential
+    assert labels.education_value == item.education_value
+    assert labels.cultural_keywords == item.cultural_keywords
 
 
-def test_dataset_helpers_refresh_stale_cached_meta(monkeypatch, tmp_path):
-    meta_path = tmp_path / "heritage_meta.json"
-    labels_path = tmp_path / "heritage_labels.json"
-    kb = load_dataset()
-    item = next(item for item in kb.items if item.title == "罗卷戏（安阳市）")
-    cache = ExtractionCache(meta_path=meta_path, labels_path=labels_path)
-    cache.save(
-        {
-            item.id: StructuredMeta(
-                level="国家级",
-                province="河南省",
-                city="南阳市",
-                district="邓州市",
-            )
-        },
-        {},
-    )
-    monkeypatch.setattr(extractor, "META_PATH", meta_path)
-    monkeypatch.setattr(extractor, "LABELS_PATH", labels_path)
+def test_get_structured_meta_returns_none_for_unknown_id():
+    assert get_structured_meta("nonexistent") is None
 
-    dataset.clear_extraction_cache()
 
-    meta = dataset.get_structured_meta(item.id)
-
-    assert meta is not None
-    assert meta.level == "省级"
-    assert meta.city == "安阳市"
-    assert meta.district == "内黄县"
-
-    dataset.clear_extraction_cache()
+def test_get_soft_labels_returns_none_for_unknown_id():
+    assert get_soft_labels("nonexistent") is None

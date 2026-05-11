@@ -26,6 +26,12 @@ class Category:
     item_count: int
 
 
+def _parse_tuple(value: Any) -> tuple[str, ...]:
+    if isinstance(value, (list, tuple)):
+        return tuple(str(v) for v in value)
+    return ()
+
+
 @dataclass(frozen=True)
 class HeritageItem:
     id: str
@@ -36,6 +42,22 @@ class HeritageItem:
     content: str
     search_text: str
     source: dict[str, Any]
+    # ── structured metadata ──
+    level: str = ""
+    province: str = ""
+    city: str = ""
+    district: str = ""
+    display_forms: tuple[str, ...] = ()
+    history: str = ""
+    features: str = ""
+    cultural_value: str = ""
+    # ── soft labels ──
+    suitable_scenarios: tuple[str, ...] = ()
+    target_audience: tuple[str, ...] = ()
+    display_difficulty: str = ""
+    interaction_potential: str = ""
+    education_value: str = ""
+    cultural_keywords: tuple[str, ...] = ()
 
 
 class KnowledgeBase:
@@ -61,6 +83,20 @@ class KnowledgeBase:
                 content=str(item.get("content") or ""),
                 search_text=str(item.get("search_text") or ""),
                 source=dict(item.get("source") or {}),
+                level=str(item.get("level") or ""),
+                province=str(item.get("province") or ""),
+                city=str(item.get("city") or ""),
+                district=str(item.get("district") or ""),
+                display_forms=_parse_tuple(item.get("display_forms")),
+                history=str(item.get("history") or ""),
+                features=str(item.get("features") or ""),
+                cultural_value=str(item.get("cultural_value") or ""),
+                suitable_scenarios=_parse_tuple(item.get("suitable_scenarios")),
+                target_audience=_parse_tuple(item.get("target_audience")),
+                display_difficulty=str(item.get("display_difficulty") or ""),
+                interaction_potential=str(item.get("interaction_potential") or ""),
+                education_value=str(item.get("education_value") or ""),
+                cultural_keywords=_parse_tuple(item.get("cultural_keywords")),
             )
             for item in payload.get("items", [])
         ]
@@ -83,57 +119,42 @@ def get_knowledge_base() -> KnowledgeBase:
     return load_dataset()
 
 
-_meta_cache: dict[str, "StructuredMeta"] | None = None
-_labels_cache: dict[str, "SoftLabels"] | None = None
-
-
-def _load_extraction_cache() -> tuple[dict[str, "StructuredMeta"], dict[str, "SoftLabels"]]:
-    global _labels_cache, _meta_cache
-    if _meta_cache is None or _labels_cache is None:
-        from .extractor import ExtractionCache, RuleExtractor, StructuredMeta, infer_soft_labels
-
-        _meta_cache, _labels_cache = ExtractionCache().load()
-        kb = get_knowledge_base()
-        extractor = RuleExtractor()
-        for item in kb.items:
-            fresh_meta = extractor.extract(item)
-            cached_meta = _meta_cache.get(item.id)
-            if cached_meta is None or (
-                cached_meta.level,
-                cached_meta.province,
-                cached_meta.city,
-                cached_meta.district,
-            ) != (
-                fresh_meta.level,
-                fresh_meta.province,
-                fresh_meta.city,
-                fresh_meta.district,
-            ):
-                _meta_cache[item.id] = fresh_meta
-
-        missing_label_items = [item for item in kb.items if item.id not in _labels_cache]
-        if missing_label_items:
-            _labels_cache.update({
-                item.id: infer_soft_labels(item, _meta_cache.get(item.id, StructuredMeta()))
-                for item in missing_label_items
-            })
-    return _meta_cache, _labels_cache
-
-
-def clear_extraction_cache() -> None:
-    global _labels_cache, _meta_cache
-    _meta_cache = None
-    _labels_cache = None
-
-
 def get_structured_meta(item_id: str) -> "StructuredMeta | None":
-    meta, _ = _load_extraction_cache()
-    return meta.get(item_id)
+    """Backward-compatible adapter: build StructuredMeta from HeritageItem fields."""
+    from .extractor import StructuredMeta
+
+    kb = get_knowledge_base()
+    item = kb.get(item_id)
+    if item is None:
+        return None
+    return StructuredMeta(
+        level=item.level,
+        province=item.province,
+        city=item.city,
+        district=item.district,
+        display_forms=item.display_forms,
+        history=item.history,
+        features=item.features,
+        cultural_value=item.cultural_value,
+    )
 
 
 def get_soft_labels(item_id: str) -> "SoftLabels | None":
-    _, labels = _load_extraction_cache()
-    return labels.get(item_id)
+    """Backward-compatible adapter: build SoftLabels from HeritageItem fields."""
+    from .extractor import SoftLabels
+
+    kb = get_knowledge_base()
+    item = kb.get(item_id)
+    if item is None:
+        return None
+    return SoftLabels(
+        suitable_scenarios=item.suitable_scenarios,
+        target_audience=item.target_audience,
+        display_difficulty=item.display_difficulty,
+        interaction_potential=item.interaction_potential,
+        education_value=item.education_value,
+        cultural_keywords=item.cultural_keywords,
+    )
 
 
 def item_to_dict(item: HeritageItem, include_content: bool = False) -> dict[str, Any]:
@@ -144,6 +165,14 @@ def item_to_dict(item: HeritageItem, include_content: bool = False) -> dict[str,
         "category": item.category,
         "summary": item.summary,
         "source": item.source,
+        "level": item.level,
+        "province": item.province,
+        "city": item.city,
+        "district": item.district,
+        "display_forms": list(item.display_forms),
+        "history": item.history,
+        "features": item.features,
+        "cultural_value": item.cultural_value,
     }
     if include_content:
         data["content"] = item.content

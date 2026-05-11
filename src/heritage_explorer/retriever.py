@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 
 from .agent_models import TaskType
-from .dataset import HeritageItem, KnowledgeBase, get_structured_meta
+from .dataset import HeritageItem, KnowledgeBase
 
 
 _PROVINCE_PATTERN = re.compile(
@@ -402,9 +402,8 @@ class QueryAnalyzer:
         # Also check against known cities from extraction cache
         known: set[str] = set()
         for item in self.kb.items:
-            meta = get_structured_meta(item.id)
-            if meta and meta.city:
-                known.add(meta.city)
+            if item.city:
+                known.add(item.city)
         for city in sorted(known, key=len, reverse=True):
             if city not in found and city in query:
                 found.append(city)

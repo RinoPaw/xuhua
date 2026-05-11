@@ -2,20 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-from .config import PROJECT_ROOT
 from .dataset import HeritageItem, KnowledgeBase
-
-
-META_PATH = PROJECT_ROOT / "data/processed/heritage_meta.json"
-LABELS_PATH = PROJECT_ROOT / "data/processed/heritage_labels.json"
-SCHEMA_VERSION = 2
 
 _FIELD_NAMES = (
     "序号",
@@ -96,11 +87,6 @@ def _evidence_dict(
     }
 
 
-def _maybe_evidence(fields: dict[str, tuple[str, ...]], name: str, confidence: float = 0.8) -> dict[str, Any]:
-    values = fields.get(name) or ()
-    source_text = values[0] if values else ""
-    return _evidence_dict(source_text=source_text, method="rule", confidence=confidence if source_text else 0.0)
-
 
 # ---------------------------------------------------------------------------
 # Stable structured metadata (rule-based extraction)
@@ -142,93 +128,6 @@ class SoftLabels:
     education_value: str = ""
     cultural_keywords: tuple[str, ...] = ()
     _evidence: dict[str, dict[str, Any]] = field(default_factory=dict)
-
-
-# ---------------------------------------------------------------------------
-# Serialization
-# ---------------------------------------------------------------------------
-
-
-def structured_meta_to_dict(meta: StructuredMeta) -> dict[str, Any]:
-    return {
-        "level": meta.level,
-        "province": meta.province,
-        "city": meta.city,
-        "district": meta.district,
-        "inheritors": list(meta.inheritors),
-        "coordinates": list(meta.coordinates) if meta.coordinates else None,
-        "display_forms": list(meta.display_forms),
-        "organization": meta.organization,
-        "history": meta.history,
-        "features": meta.features,
-        "cultural_value": meta.cultural_value,
-        "_evidence": meta._evidence,
-    }
-
-
-def structured_meta_from_dict(data: dict[str, Any]) -> StructuredMeta:
-    coordinates = data.get("coordinates")
-    parsed_coordinates = None
-    if isinstance(coordinates, (list, tuple)) and len(coordinates) == 2:
-        try:
-            parsed_coordinates = (float(coordinates[0]), float(coordinates[1]))
-        except (TypeError, ValueError):
-            parsed_coordinates = None
-
-    return StructuredMeta(
-        level=str(data.get("level") or ""),
-        province=str(data.get("province") or ""),
-        city=str(data.get("city") or ""),
-        district=str(data.get("district") or ""),
-        inheritors=tuple(str(v) for v in data.get("inheritors") or ()),
-        coordinates=parsed_coordinates,
-        display_forms=tuple(str(v) for v in data.get("display_forms") or ()),
-        organization=str(data.get("organization") or ""),
-        history=str(data.get("history") or ""),
-        features=str(data.get("features") or ""),
-        cultural_value=str(data.get("cultural_value") or ""),
-        _evidence=_unpack_evidence(data.get("_evidence")),
-    )
-
-
-def soft_labels_to_dict(labels: SoftLabels) -> dict[str, Any]:
-    return {
-        "suitable_scenarios": list(labels.suitable_scenarios),
-        "target_audience": list(labels.target_audience),
-        "display_difficulty": labels.display_difficulty,
-        "interaction_potential": labels.interaction_potential,
-        "creative_product_potential": labels.creative_product_potential,
-        "education_value": labels.education_value,
-        "cultural_keywords": list(labels.cultural_keywords),
-        "_evidence": labels._evidence,
-    }
-
-
-def soft_labels_from_dict(data: dict[str, Any]) -> SoftLabels:
-    return SoftLabels(
-        suitable_scenarios=tuple(str(v) for v in data.get("suitable_scenarios") or ()),
-        target_audience=tuple(str(v) for v in data.get("target_audience") or ()),
-        display_difficulty=str(data.get("display_difficulty") or ""),
-        interaction_potential=str(data.get("interaction_potential") or ""),
-        creative_product_potential=str(data.get("creative_product_potential") or ""),
-        education_value=str(data.get("education_value") or ""),
-        cultural_keywords=tuple(str(v) for v in data.get("cultural_keywords") or ()),
-        _evidence=_unpack_evidence(data.get("_evidence")),
-    )
-
-
-def _unpack_evidence(raw: Any) -> dict[str, dict[str, Any]]:
-    if not isinstance(raw, dict):
-        return {}
-    evidence: dict[str, dict[str, Any]] = {}
-    for key, value in raw.items():
-        if isinstance(value, dict):
-            evidence[str(key)] = {
-                "source_text": str(value.get("source_text") or ""),
-                "method": str(value.get("method") or ""),
-                "confidence": float(value.get("confidence") or 0.0),
-            }
-    return evidence
 
 
 # ---------------------------------------------------------------------------
@@ -448,177 +347,6 @@ def infer_soft_labels(item: HeritageItem, meta: StructuredMeta) -> SoftLabels:
         cultural_keywords=keywords,
         _evidence=evidence,
     )
-
-
-# ---------------------------------------------------------------------------
-# LLM labeler (skeleton — future phase)
-# ---------------------------------------------------------------------------
-
-
-class LLMLabeler:
-    """Batch labeler skeleton; actual API use is intentionally deferred."""
-
-    def label_batch(
-        self,
-        items: list[HeritageItem],
-        client: Any | None = None,
-        batch_size: int = 20,
-    ) -> dict[str, SoftLabels]:
-        _ = client, batch_size
-        return {item.id: SoftLabels() for item in items}
-
-    def _build_labeling_prompt(self, items: list[HeritageItem]) -> str:
-        blocks = [
-            f"{index}. {item.title} / {item.category}\n{item.summary or item.content[:300]}"
-            for index, item in enumerate(items, start=1)
-        ]
-        return "\n\n".join(blocks)
-
-    def _parse_labeling_response(self, text: str) -> dict[str, SoftLabels]:
-        _ = text
-        return {}
-
-
-# ---------------------------------------------------------------------------
-# Extraction cache
-# ---------------------------------------------------------------------------
-
-
-class ExtractionCache:
-    """JSON cache for rule metadata and optional soft labels."""
-
-    def __init__(
-        self,
-        meta_path: Path | None = None,
-        labels_path: Path | None = None,
-    ) -> None:
-        self.meta_path = META_PATH if meta_path is None else meta_path
-        self.labels_path = LABELS_PATH if labels_path is None else labels_path
-
-    def load(self) -> tuple[dict[str, StructuredMeta], dict[str, SoftLabels]]:
-        meta_payload = self._read_payload(self.meta_path)
-        labels_payload = self._read_payload(self.labels_path)
-
-        meta = {
-            item_id: structured_meta_from_dict(item)
-            for item_id, item in dict(meta_payload.get("items") or {}).items()
-            if isinstance(item, dict)
-        }
-        labels = {
-            item_id: soft_labels_from_dict(item)
-            for item_id, item in dict(labels_payload.get("items") or {}).items()
-            if isinstance(item, dict)
-        }
-        return meta, labels
-
-    def save(
-        self,
-        meta: dict[str, StructuredMeta],
-        labels: dict[str, SoftLabels] | None = None,
-        *,
-        dataset_generated_at: str = "",
-        dataset_schema_version: int | None = None,
-    ) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        self.meta_path.parent.mkdir(parents=True, exist_ok=True)
-        self.labels_path.parent.mkdir(parents=True, exist_ok=True)
-
-        meta_payload = {
-            "schema_version": SCHEMA_VERSION,
-            "dataset_generated_at": dataset_generated_at,
-            "dataset_schema_version": dataset_schema_version,
-            "extracted_at": now,
-            "items": {
-                item_id: structured_meta_to_dict(item)
-                for item_id, item in sorted(meta.items())
-            },
-        }
-        self._write_payload(self.meta_path, meta_payload)
-
-        if labels is not None:
-            labels_payload = {
-                "schema_version": SCHEMA_VERSION,
-                "labeled_at": now,
-                "model": "",
-                "items": {
-                    item_id: soft_labels_to_dict(item)
-                    for item_id, item in sorted(labels.items())
-                },
-            }
-            self._write_payload(self.labels_path, labels_payload)
-
-    def is_stale(
-        self,
-        *,
-        dataset_generated_at: str = "",
-        dataset_schema_version: int | None = None,
-    ) -> bool:
-        if not self.meta_path.exists():
-            return True
-
-        payload = self._read_payload(self.meta_path)
-        if payload.get("schema_version") != SCHEMA_VERSION:
-            return True
-        if dataset_generated_at and payload.get("dataset_generated_at") != dataset_generated_at:
-            return True
-        if (
-            dataset_schema_version is not None
-            and payload.get("dataset_schema_version") != dataset_schema_version
-        ):
-            return True
-        return False
-
-    @staticmethod
-    def _read_payload(path: Path) -> dict[str, Any]:
-        if not path.exists():
-            return {}
-        with path.open("r", encoding="utf-8") as f:
-            payload = json.load(f)
-        return payload if isinstance(payload, dict) else {}
-
-    @staticmethod
-    def _write_payload(path: Path, payload: dict[str, Any]) -> None:
-        with path.open("w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-            f.write("\n")
-
-
-# ---------------------------------------------------------------------------
-# Build entry points
-# ---------------------------------------------------------------------------
-
-
-def build_rule_meta(
-    kb: KnowledgeBase,
-    cache: ExtractionCache | None = None,
-) -> dict[str, StructuredMeta]:
-    meta = RuleExtractor().extract_batch(kb.items)
-    target_cache = cache or ExtractionCache()
-    target_cache.save(
-        meta,
-        dataset_generated_at=kb.generated_at,
-        dataset_schema_version=kb.schema_version,
-    )
-    return meta
-
-
-def build_rule_soft_labels(
-    kb: KnowledgeBase,
-    meta: dict[str, StructuredMeta],
-    cache: ExtractionCache | None = None,
-) -> dict[str, SoftLabels]:
-    labels = {
-        item.id: infer_soft_labels(item, meta.get(item.id, StructuredMeta()))
-        for item in kb.items
-    }
-    target_cache = cache or ExtractionCache()
-    target_cache.save(
-        meta,
-        labels=labels,
-        dataset_generated_at=kb.generated_at,
-        dataset_schema_version=kb.schema_version,
-    )
-    return labels
 
 
 # ---------------------------------------------------------------------------

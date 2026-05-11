@@ -6,12 +6,7 @@ import re
 from typing import Any
 
 from .agent_models import AgentResult, TaskType
-from .dataset import (
-    KnowledgeBase,
-    get_soft_labels,
-    get_structured_meta,
-    normalize_text,
-)
+from .dataset import KnowledgeBase, normalize_text
 from .item_cards import _enriched_item_card, _source_payload, _title_with_family
 
 
@@ -86,8 +81,7 @@ def handle_comparison(kb: KnowledgeBase, analysis) -> AgentResult:
                 "",
             ])
             for index, item in enumerate(suggestions, 1):
-                meta = get_structured_meta(item.id)
-                location = " · ".join(part for part in [meta.province if meta else "", meta.city if meta else ""] if part)
+                location = " · ".join(part for part in [item.province, item.city] if part)
                 category = item.category
                 desc = " · ".join(part for part in [category, location] if part)
                 answer_lines.append(f"{index}. {_title_with_family(item)}" + (f"（{desc}）" if desc else ""))
@@ -293,11 +287,9 @@ def _resolve_comparison_target(kb: KnowledgeBase, target: str, used_item_ids: se
     best = None
     best_score = 0
     for item in candidates:
-        meta = get_structured_meta(item.id)
-        if province and (meta is None or meta.province != province):
+        if province and item.province != province:
             continue
 
-        labels = get_soft_labels(item.id)
         names = [
             item.title,
             item.family,
@@ -313,7 +305,7 @@ def _resolve_comparison_target(kb: KnowledgeBase, target: str, used_item_ids: se
             score += 70
         if core and core in item.summary:
             score += 30
-        if province and meta and meta.province == province:
+        if province and item.province == province:
             score += 25
 
         if score > best_score:

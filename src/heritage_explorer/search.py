@@ -7,7 +7,7 @@ import re
 from collections.abc import Iterable
 
 from . import config
-from .dataset import HeritageItem, KnowledgeBase, get_structured_meta, normalize_text
+from .dataset import HeritageItem, KnowledgeBase, normalize_text
 
 
 LOGGER = logging.getLogger(__name__)
@@ -186,17 +186,17 @@ def search_items(
     if province:
         candidates = (
             item for item in candidates
-            if (meta := get_structured_meta(item.id)) and meta.province == province
+            if item.province == province
         )
     if level:
         candidates = (
             item for item in candidates
-            if (meta := get_structured_meta(item.id)) and meta.level == level
+            if item.level == level
         )
     if district:
         candidates = (
             item for item in candidates
-            if (meta := get_structured_meta(item.id)) and district in meta.district
+            if district in item.district
         )
     if keywords:
         query = f"{keywords} {query}".strip()
@@ -248,17 +248,17 @@ def search_items_lexical(
     if province:
         candidates = (
             item for item in candidates
-            if (meta := get_structured_meta(item.id)) and meta.province == province
+            if item.province == province
         )
     if level:
         candidates = (
             item for item in candidates
-            if (meta := get_structured_meta(item.id)) and meta.level == level
+            if item.level == level
         )
     if district:
         candidates = (
             item for item in candidates
-            if (meta := get_structured_meta(item.id)) and district in meta.district
+            if district in item.district
         )
     if keywords:
         query = f"{keywords} {query}".strip()

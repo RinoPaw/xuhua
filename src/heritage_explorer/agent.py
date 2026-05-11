@@ -27,7 +27,7 @@ from .dataset import (
     get_structured_meta,
     normalize_text,
 )
-from .item_cards import enriched_item_card as _enriched_item_card
+from .item_cards import _enriched_item_card, _source_payload, _title_with_family
 
 __all__ = [
     "Agent",
@@ -858,22 +858,6 @@ def with_agent_decision(
         result = replace(result, speech="")
     return result
 
-
-def _title_with_family(item: Any) -> str:
-    title = item.title
-    family = item.family
-    if family and family not in title:
-        return f"{title}（{family}）"
-    return title
-
-
-def _source_payload(item: Any) -> dict[str, str]:
-    return {
-        "id": item.id,
-        "title": item.title,
-        "family": item.family,
-        "category": item.category,
-    }
 
 
 def _describe_filters(category: str, province: str, level: str) -> str:

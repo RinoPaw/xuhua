@@ -12,29 +12,13 @@ from .dataset import (
     get_structured_meta,
     normalize_text,
 )
-from .item_cards import enriched_item_card as _enriched_item_card
+from .item_cards import _enriched_item_card, _source_payload, _title_with_family
 
 
 _COMPARISON_TARGET_TRAILING_RE = re.compile(
     r"(?:有什么区别|有什么不同|有何区别|有何不同|的区别|的差异|哪个更受欢迎|哪个更适合|哪个更|哪个好|的比较|的对比|对比一下|比较一下)$"
 )
 
-
-def _title_with_family(item: Any) -> str:
-    title = item.title
-    family = item.family
-    if family and family not in title:
-        return f"{title}（{family}）"
-    return title
-
-
-def _source_payload(item: Any) -> dict[str, str]:
-    return {
-        "id": item.id,
-        "title": item.title,
-        "family": item.family,
-        "category": item.category,
-    }
 
 
 def handle_comparison(kb: KnowledgeBase, analysis) -> AgentResult:

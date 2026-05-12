@@ -58,7 +58,7 @@ def test_direct_item_matches_prioritize_specific_title_in_long_request():
 def test_fallback_answer_hides_provider_error(monkeypatch):
     monkeypatch.setattr(config, "AI_API_KEY", "test-key")
     monkeypatch.setattr(
-        "heritage_explorer.ai.call_chat_model",
+        "heritage_explorer.ai.client.call_chat_model",
         lambda _question, _sources: (_ for _ in ()).throw(
             RuntimeError('APIReachLimitError: {"message":"该模型当前访问量过大"}')
         ),
@@ -86,8 +86,8 @@ def test_llm_answer_uses_second_model_for_speech(monkeypatch):
         calls["speech"] = (answer_text, question, [item.title for item in sources or []], max_chars)
         return "播报版回答：罗山皮影戏历史悠久，表演生动。"
 
-    monkeypatch.setattr("heritage_explorer.ai.call_chat_model", fake_chat)
-    monkeypatch.setattr("heritage_explorer.ai.call_speech_model", fake_speech)
+    monkeypatch.setattr("heritage_explorer.ai.client.call_chat_model", fake_chat)
+    monkeypatch.setattr("heritage_explorer.ai.client.call_speech_model", fake_speech)
 
     kb = load_dataset()
     answer = answer_question(kb, "罗山皮影戏")
@@ -105,7 +105,7 @@ def test_llm_answer_uses_second_model_for_speech(monkeypatch):
 def test_spoken_answer_sanitizes_model_emoji_and_markdown(monkeypatch):
     monkeypatch.setattr(config, "AI_API_KEY", "test-key")
     monkeypatch.setattr(
-        "heritage_explorer.ai.call_speech_model",
+        "heritage_explorer.ai.client.call_speech_model",
         lambda *_args, **_kwargs: "🎤 **朱仙镇木版年画**，今天带你认识这个千年项目！👋",
     )
 
@@ -163,11 +163,11 @@ def test_spoken_output_removes_model_decision_label():
 def test_speech_rewrite_failure_falls_back_without_downgrading_answer(monkeypatch):
     monkeypatch.setattr(config, "AI_API_KEY", "test-key")
     monkeypatch.setattr(
-        "heritage_explorer.ai.call_chat_model",
+        "heritage_explorer.ai.client.call_chat_model",
         lambda _question, _sources: "## 汴绣\n\n历史：汴绣起源于北宋时期。",
     )
     monkeypatch.setattr(
-        "heritage_explorer.ai.call_speech_model",
+        "heritage_explorer.ai.client.call_speech_model",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("speech model timeout")),
     )
 
@@ -275,7 +275,7 @@ def test_context_omits_backend_coordinate_fields():
 
 
 def test_zhipu_reasoning_models_disable_thinking(monkeypatch):
-    from heritage_explorer.ai import call_zhipu_sdk
+    from heritage_explorer.ai.client import call_zhipu_sdk
 
     captured = {}
 

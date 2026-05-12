@@ -113,9 +113,14 @@ class Agent:
     ) -> AgentResult:
         """Backward-compat wrapper: consume stream and return final result."""
         result = None
+        speech_text = ""
         for event in self.dispatch_stream(query, category, include_speech=include_speech, context=context):
             if isinstance(event, AgentResult):
                 result = event
+            elif isinstance(event, dict) and event.get("type") == "speech":
+                speech_text = str(event.get("text") or "")
+        if result and speech_text and not result.speech:
+            result = replace(result, speech=speech_text)
         return result
 
     def dispatch_stream(
@@ -240,10 +245,16 @@ class Agent:
         include_speech: bool,
         query: str = "",
     ):
-        if include_speech and result.answer:
-            yield self._progress_event("speech", "润色播报", "正在清理为更适合朗读的同稿版本")
+        # If handler already filled speech, yield result as-is
+        if not include_speech or result.speech:
+            yield with_agent_decision(result, decision, include_speech)
+            return
+
+        # No speech yet — yield answer immediately, speech event follows
+        yield with_agent_decision(replace(result, speech=""), decision, include_speech)
+        if result.answer:
             result = self._ensure_speech(result, query=query)
-        yield with_agent_decision(result, decision, include_speech)
+            yield {"type": "speech", "text": result.speech}
 
     def _ensure_speech(self, result: AgentResult, query: str = "") -> AgentResult:
         if result.speech:

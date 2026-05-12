@@ -139,6 +139,15 @@ def create_app() -> Flask:
                         'decision': event.decision,
                     }
                     yield f"data: {json.dumps(result_payload, ensure_ascii=False)}\n\n"
+                elif isinstance(event, dict) and event.get("type") == "speech":
+                    speech_text = str(event.get("text") or "")
+                    speech_audio = _speech_audio_hint(speech_text) if include_speech else {}
+                    speech_payload = {
+                        'type': 'speech',
+                        'text': speech_text,
+                        **speech_audio,
+                    }
+                    yield f"data: {json.dumps(speech_payload, ensure_ascii=False)}\n\n"
                 else:
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 

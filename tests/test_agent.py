@@ -297,7 +297,6 @@ def test_dispatch_stream_uses_task_config_generate_detail_for_rule_handler(monke
         and event.get("detail") == _TASK_CONFIGS[TaskType.RECOMMENDATION].generate_detail
         for event in progress_events
     )
-    assert any(event.get("step") == "speech" for event in progress_events)
     assert result.answer == "推荐结果"
     assert result.speech == "推荐播报"
 

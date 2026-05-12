@@ -64,13 +64,11 @@ export const PROGRESS_STEP_INDEX = {
   classify: 0,
   search: 1,
   generate: 2,
-  speech: 3,
 };
 export const loadingSteps = [
   { title: "理解问题", detail: "正在判断任务类型，并识别项目名称、地区和输出要求" },
   { title: "检索资料", detail: "正在检索资料库，优先匹配明确标题和结构化字段" },
   { title: "思考回答", detail: "正在整理证据、取舍资料，并生成回答文本" },
-  { title: "润色播报", detail: "正在清理为更适合朗读的同稿版本" },
 ];
 export const HUMAN_MIN_THINKING_MS = 1120;
 export const HUMAN_DISSOLVE_LEAD_MS = 1050;

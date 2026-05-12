@@ -420,10 +420,6 @@ function finishAskSession(requestId, controller) {
   askAbortController = null;
 }
 
-function answerSpeechFromPayload(payload) {
-  return payload?.speech || payload?.answer || "";
-}
-
 function answerRelatedItems(payload) {
   return payload?.items?.length ? payload.items : (payload?.sources || []);
 }
@@ -479,7 +475,7 @@ function buildAskContext(question) {
   return state.lastAskContext;
 }
 
-async function presentAskResponse(requestId, controller, question, payload, thinkingStartedAt) {
+async function presentAskResult(requestId, controller, question, payload, thinkingStartedAt) {
   await waitForThinkingDissolve(thinkingStartedAt);
   if (!isActiveAskRequest(requestId, controller)) {
     return;
@@ -489,26 +485,31 @@ async function presentAskResponse(requestId, controller, question, payload, thin
     return;
   }
 
-  const speech = answerSpeechFromPayload(payload);
-  const speechAudioUrl = payload?.speech_audio_url || "";
-  const speechAudioPending = Boolean(payload?.speech_audio_pending);
   state.currentTaskType = payload?.task_type || "";
   setAnswerResult(question, payload);
   rememberAskContext(question, payload);
-  console.info("[xuhua:speech]", {
-    mode: payload.mode,
-    engine: payload?.speech_engine || "browser",
-    length: speech.length,
-    text: speech,
-  });
   els.answerMode.textContent = taskModeLabel(payload);
-  lastSpeechHumanState = responseHumanState(question);
-  setDigitalHumanState(lastSpeechHumanState, "正在回答", speech);
-  if (!speakAnswer(speech, speechAudioUrl, { serverTts: speechAudioPending })) {
-    scheduleHumanReturnToIdle(visualAnswerDuration(speech));
-  }
   const related = answerRelatedItems(payload);
   renderRelatedItems(related, payload?.total_count || related.length);
+}
+
+function applyAnswerSpeech(event) {
+  const text = event?.text || "";
+  if (!text) return;
+
+  const speechAudioUrl = event?.speech_audio_url || "";
+  const speechAudioPending = Boolean(event?.speech_audio_pending);
+
+  console.info("[xuhua:speech]", {
+    engine: event?.speech_engine || "browser",
+    length: text.length,
+    text,
+  });
+  lastSpeechHumanState = responseHumanState(state.query || "");
+  setDigitalHumanState(lastSpeechHumanState, "正在回答", text);
+  if (!speakAnswer(text, speechAudioUrl, { serverTts: speechAudioPending })) {
+    scheduleHumanReturnToIdle(visualAnswerDuration(text));
+  }
 }
 
 function presentAskError(requestId, controller, error) {
@@ -541,9 +542,23 @@ export async function askQuestion() {
     requestData.context = context;
   }
 
+  let speechArrived = false;
+
   try {
-    const payload = await postSseResult("/api/ask", requestData, 65000, session.controller);
-    await presentAskResponse(session.requestId, session.controller, question, payload, session.thinkingStartedAt);
+    const payload = await postSseResult("/api/ask", requestData, 65000, session.controller, {
+      onResult(p) {
+        presentAskResult(session.requestId, session.controller, question, p, session.thinkingStartedAt);
+      },
+      onSpeech(e) {
+        speechArrived = true;
+        applyAnswerSpeech(e);
+      },
+    });
+    // If speech arrived before stream ended, it was already handled by onSpeech
+    // Otherwise, speech may be in the result payload (non-streaming fallback)
+    if (!speechArrived && payload?.speech) {
+      applyAnswerSpeech({ text: payload.speech, speech_engine: "browser" });
+    }
   } catch (error) {
     presentAskError(session.requestId, session.controller, error);
   } finally {
@@ -551,7 +566,7 @@ export async function askQuestion() {
   }
 }
 
-async function postSseResult(url, data, timeoutMs = 65000, controller = null) {
+async function postSseResult(url, data, timeoutMs = 65000, controller = null, callbacks = {}) {
   const requestController = controller || new AbortController();
   const signal = requestController.signal;
   const timer = window.setTimeout(() => requestController.abort(), timeoutMs);
@@ -591,6 +606,9 @@ async function postSseResult(url, data, timeoutMs = 65000, controller = null) {
           applyAskProgress(event);
         } else if (event.type === "result") {
           payload = event;
+          callbacks.onResult?.(event);
+        } else if (event.type === "speech") {
+          callbacks.onSpeech?.(event);
         }
       }
     }

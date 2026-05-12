@@ -46,7 +46,7 @@ def test_homepage_contains_digital_human_panel():
     assert 'id="relatedTitle"' in html
     assert "vendor/purify.min.js" in html
     assert "vendor/marked.umd.js" in html
-    assert "20260512-visifix" in html
+    assert "20260512-asyncspeech" in html
     assert response.headers["Cache-Control"] == "no-store, max-age=0"
 
 
@@ -127,7 +127,7 @@ def test_frontend_prefers_server_tts_audio():
     assert "browserSpeechSupported" in consts_script
     assert "audioSpeechSupported" in consts_script
     assert "payload?.speech_audio_url" in speech_script
-    assert "payload?.speech_audio_pending" in ask_script
+    assert "event?.speech_audio_pending" in ask_script
     assert "function requestServerSpeech(text" in speech_script
     assert "function requestServerSpeechFile(text" in speech_script
     assert "function playSpeechSegment(index, playbackSeq)" in speech_script
@@ -140,7 +140,7 @@ def test_frontend_prefers_server_tts_audio():
     assert "onEnd: () => playSpeechSegment(index + 1, playbackSeq)" in speech_script
     assert "onError: () => requestServerSpeechFile(currentSpeechSegments.slice(index).join(\"\"), playbackSeq)" in speech_script
     assert "new Audio(audioUrl)" in speech_script
-    assert "speakAnswer(speech, speechAudioUrl, { serverTts: speechAudioPending })" in ask_script
+    assert "speakAnswer(text, speechAudioUrl, { serverTts: speechAudioPending })" in ask_script
     assert "speakText(fallbackText, playbackSeq)" in speech_script
 
 
@@ -156,7 +156,7 @@ def test_loading_progress_uses_fixed_event_driven_steps():
     assert '{ title: "理解问题"' in consts_script
     assert '{ title: "检索资料"' in consts_script
     assert '{ title: "思考回答"' in consts_script
-    assert '{ title: "润色播报"' in consts_script
+    assert 'HUMAN_MIN_THINKING_MS' in consts_script
     assert "const LOADING_MIN_STEP_MS = 500;" in consts_script
     assert "window.setInterval" not in start_block
     assert "loadingProgressQueue.push(index);" in progress_block
@@ -178,7 +178,7 @@ def test_ask_flow_uses_request_guards_and_single_sse_path():
     assert "askAbortController?.abort();" in ask_script
     assert "stopSpeech({ preserveHuman: true });" in ask_script
     assert "function isActiveAskRequest(requestId, controller = askAbortController)" in ask_script
-    assert "await presentAskResponse(session.requestId, session.controller, question, payload, session.thinkingStartedAt);" in ask_script
+    assert "presentAskResult(session.requestId, session.controller, question, p, session.thinkingStartedAt);" in ask_script
     assert "presentAskError(session.requestId, session.controller, error);" in ask_script
     assert "voice_enabled: speechSupported" in ask_script
     assert "lastAskContext: null" in state_script
@@ -352,11 +352,13 @@ def test_ask_api_returns_grounded_answer(monkeypatch):
     client = app.test_client()
     response = client.post("/api/ask", json={"question": "陈氏太极拳是什么"})
     assert response.status_code == 200
-    payload = _sse_result(response)
-    assert payload["mode"] == "local"
-    assert "太极拳" in payload["answer"]
-    assert payload["speech"]
-    assert payload["sources"]
+    events = _sse_events(response)
+    result = next(e for e in events if e["type"] == "result")
+    speech_event = next((e for e in events if e["type"] == "speech"), {})
+    assert result["mode"] == "local"
+    assert "太极拳" in result["answer"]
+    assert speech_event.get("text")
+    assert result["sources"]
 
 
 def test_ask_api_marks_server_tts_without_blocking_result(monkeypatch):
@@ -369,11 +371,12 @@ def test_ask_api_marks_server_tts_without_blocking_result(monkeypatch):
     app = create_app()
     client = app.test_client()
     response = client.post("/api/ask", json={"question": "陈氏太极拳是什么"})
-    payload = _sse_result(response)
+    events = _sse_events(response)
+    speech_event = next((e for e in events if e["type"] == "speech"), {})
 
-    assert payload["speech_engine"] == "volcengine"
-    assert payload["speech_audio_pending"] is True
-    assert "speech_audio_url" not in payload
+    assert speech_event.get("speech_engine") == "volcengine"
+    assert speech_event.get("speech_audio_pending") is True
+    assert "speech_audio_url" not in speech_event
 
 
 def test_tts_create_route_returns_audio_url(monkeypatch, tmp_path):

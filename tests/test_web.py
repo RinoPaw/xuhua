@@ -46,47 +46,50 @@ def test_homepage_contains_digital_human_panel():
     assert 'id="relatedTitle"' in html
     assert "vendor/purify.min.js" in html
     assert "vendor/marked.umd.js" in html
-    assert "20260512-all-result-items" in html
+    assert "20260512-videofix" in html
     assert response.headers["Cache-Control"] == "no-store, max-age=0"
 
 
 def test_static_assets_are_not_cached_during_local_development():
     app = create_app()
     client = app.test_client()
-    response = client.get("/static/app.js")
+    response = client.get("/static/js/main.js")
 
     assert response.status_code == 200
     assert response.headers["Cache-Control"] == "no-store, max-age=0"
 
 
 def test_digital_human_animation_waits_for_speech_end():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    consts = (ROOT / "static" / "js" / "consts.js").read_text(encoding="utf-8")
+    ask_script = (ROOT / "static" / "js" / "ask.js").read_text(encoding="utf-8")
+    speech_script = (ROOT / "static" / "js" / "speech.js").read_text(encoding="utf-8")
 
-    assert "HUMAN_MIN_THINKING_MS" in script
-    assert "waitForThinkingDissolve(thinkingStartedAt)" in script
-    assert "finishSpeechPlayback" in script
-    assert "stopSpeech({ preserveHuman: true })" in script
-    assert "currentUtterance !== utterance" in script
-    assert "}, 7000)" not in script
-    finish_block = script.split("function finishSpeechPlayback", 1)[1].split("function stopSpeech", 1)[0]
+    assert "HUMAN_MIN_THINKING_MS" in consts
+    assert "waitForThinkingDissolve(thinkingStartedAt)" in ask_script
+    assert "finishSpeechPlayback" in speech_script
+    assert "stopSpeech({ preserveHuman: true })" in ask_script
+    assert "currentUtterance !== utterance" in speech_script
+    assert "}, 7000)" not in speech_script + ask_script
+    finish_block = speech_script.split("function finishSpeechPlayback", 1)[1].split("function stopSpeech", 1)[0]
     assert "options." not in finish_block
 
 
 def test_voice_button_uses_play_stop_without_pause():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    speech_script = (ROOT / "static" / "js" / "speech.js").read_text(encoding="utf-8")
+    main_script = (ROOT / "static" / "js" / "main.js").read_text(encoding="utf-8")
     styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
 
-    assert 'label.textContent = { speaking: "停止", idle: "播放", disabled: "播放" }[state] || "播放";' in script
-    assert 'setVoiceStatus("已停止")' in script
-    assert "window.speechSynthesis?.pause()" not in script
-    assert '"paused"' not in script
+    assert 'label.textContent = { speaking: "停止", idle: "播放", disabled: "播放" }[state] || "播放";' in speech_script
+    assert 'setVoiceStatus("已停止")' in main_script
+    assert "window.speechSynthesis?.pause()" not in main_script
+    assert '"paused"' not in main_script
     assert ".voice-button" in styles
     assert ".voice-toggle" not in styles
     assert ".voice-wave" not in styles
 
 
 def test_voice_status_guard_does_not_overwrite_manual_stop():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "js" / "speech.js").read_text(encoding="utf-8")
 
     assert "let speechStartGuardTimer = 0;" in script
     assert "function clearSpeechStartGuard()" in script
@@ -96,7 +99,7 @@ def test_voice_status_guard_does_not_overwrite_manual_stop():
 
 
 def test_voice_idle_state_keeps_disabled_support_message():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "js" / "speech.js").read_text(encoding="utf-8")
 
     assert "function syncVoiceIdleState(status = \"\")" in script
     sync_block = script.split("function syncVoiceIdleState", 1)[1].split("function speakAnswer", 1)[0]
@@ -106,7 +109,7 @@ def test_voice_idle_state_keeps_disabled_support_message():
 
 
 def test_tts_text_strips_display_emoji():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "js" / "speech.js").read_text(encoding="utf-8")
 
     assert "function stripSpeechDecorations(value)" in script
     assert "stripSpeechDecorations(value)" in script
@@ -117,89 +120,101 @@ def test_tts_text_strips_display_emoji():
 
 
 def test_frontend_prefers_server_tts_audio():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    speech_script = (ROOT / "static" / "js" / "speech.js").read_text(encoding="utf-8")
+    ask_script = (ROOT / "static" / "js" / "ask.js").read_text(encoding="utf-8")
+    consts_script = (ROOT / "static" / "js" / "consts.js").read_text(encoding="utf-8")
 
-    assert "const browserSpeechSupported" in script
-    assert "const audioSpeechSupported" in script
-    assert "payload?.speech_audio_url" in script
-    assert "payload?.speech_audio_pending" in script
-    assert "function requestServerSpeech(text" in script
-    assert "function requestServerSpeechFile(text" in script
-    assert "function playSpeechSegment(index, playbackSeq)" in script
-    assert "function speechPlaybackSegments(text)" in script
-    assert "function utf8ByteLength(value)" in script
-    assert "function ttsStreamUrl(text)" in script
-    assert 'return `/api/tts/stream?${params.toString()}`;' in script
-    assert 'fetch("/api/tts"' in script
-    assert "function playAudioAnswer(audioUrl" in script
-    assert "onEnd: () => playSpeechSegment(index + 1, playbackSeq)" in script
-    assert "onError: () => requestServerSpeechFile(currentSpeechSegments.slice(index).join(\"\"), playbackSeq)" in script
-    assert "new Audio(audioUrl)" in script
-    assert "speakAnswer(speech, speechAudioUrl, { serverTts: speechAudioPending })" in script
-    assert "speakText(fallbackText, playbackSeq)" in script
+    assert "browserSpeechSupported" in consts_script
+    assert "audioSpeechSupported" in consts_script
+    assert "payload?.speech_audio_url" in speech_script
+    assert "payload?.speech_audio_pending" in ask_script
+    assert "function requestServerSpeech(text" in speech_script
+    assert "function requestServerSpeechFile(text" in speech_script
+    assert "function playSpeechSegment(index, playbackSeq)" in speech_script
+    assert "function speechPlaybackSegments(text)" in speech_script
+    assert "function utf8ByteLength(value)" in speech_script
+    assert "function ttsStreamUrl(text)" in speech_script
+    assert 'return `/api/tts/stream?${params.toString()}`;' in speech_script
+    assert 'fetch("/api/tts"' in speech_script
+    assert "function playAudioAnswer(audioUrl" in speech_script
+    assert "onEnd: () => playSpeechSegment(index + 1, playbackSeq)" in speech_script
+    assert "onError: () => requestServerSpeechFile(currentSpeechSegments.slice(index).join(\"\"), playbackSeq)" in speech_script
+    assert "new Audio(audioUrl)" in speech_script
+    assert "speakAnswer(speech, speechAudioUrl, { serverTts: speechAudioPending })" in ask_script
+    assert "speakText(fallbackText, playbackSeq)" in speech_script
 
 
 def test_loading_progress_uses_fixed_event_driven_steps():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
-    start_block = script.split("function startLoadingSteps", 1)[1].split("function getLoadingSteps", 1)[0]
-    progress_block = script.split("function applyAskProgress", 1)[1].split("function renderMarkdown", 1)[0]
+    ask_script = (ROOT / "static" / "js" / "ask.js").read_text(encoding="utf-8")
+    consts_script = (ROOT / "static" / "js" / "consts.js").read_text(encoding="utf-8")
+    start_block = ask_script.split("function startLoadingSteps", 1)[1].split("function getLoadingSteps", 1)[0]
+    progress_block = ask_script.split("function applyAskProgress", 1)[1].split("function renderSuggestionStrip", 1)[0]
 
-    assert "let loadingStepIndex = 0;" in script
-    assert "let loadingTargetIndex = 0;" in script
-    assert "const loadingSteps = [" in script
-    assert '{ title: "理解问题"' in script
-    assert '{ title: "检索资料"' in script
-    assert '{ title: "思考回答"' in script
-    assert '{ title: "润色播报"' in script
-    assert "const LOADING_MIN_STEP_MS = 500;" in script
+    assert "let loadingStepIndex = 0;" in ask_script
+    assert "let loadingTargetIndex = 0;" in ask_script
+    assert "const loadingSteps = [" in consts_script
+    assert '{ title: "理解问题"' in consts_script
+    assert '{ title: "检索资料"' in consts_script
+    assert '{ title: "思考回答"' in consts_script
+    assert '{ title: "润色播报"' in consts_script
+    assert "const LOADING_MIN_STEP_MS = 500;" in consts_script
     assert "window.setInterval" not in start_block
     assert "loadingProgressQueue.push(index);" in progress_block
     assert "scheduleNextLoadingStep();" in progress_block
-    assert "function waitForLoadingSteps()" in script
-    assert "await waitForLoadingSteps();" in script
+    assert "function waitForLoadingSteps()" in ask_script
+    assert "await waitForLoadingSteps();" in ask_script
     assert "title: event.title" not in progress_block
-    assert "let stepIndex = 0;" not in script
+    assert "let stepIndex = 0;" not in ask_script
 
 
 def test_ask_flow_uses_request_guards_and_single_sse_path():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    ask_script = (ROOT / "static" / "js" / "ask.js").read_text(encoding="utf-8")
+    state_script = (ROOT / "static" / "js" / "state.js").read_text(encoding="utf-8")
+    main_script = (ROOT / "static" / "js" / "main.js").read_text(encoding="utf-8")
+    search_script = (ROOT / "static" / "js" / "search.js").read_text(encoding="utf-8")
 
-    assert "let askRequestId = 0;" in script
-    assert "function beginAskSession(question)" in script
-    assert "askAbortController?.abort();" in script
-    assert "stopSpeech({ preserveHuman: true });" in script
-    assert "function isActiveAskRequest(requestId, controller = askAbortController)" in script
-    assert "await presentAskResponse(session.requestId, session.controller, question, payload, session.thinkingStartedAt);" in script
-    assert "presentAskError(session.requestId, session.controller, error);" in script
-    assert "voice_enabled: speechSupported" in script
-    assert "lastAskContext: null" in script
-    assert "function buildAskContext(question)" in script
-    assert "requestData.context = context;" in script
-    assert "rememberAskContext(question, payload);" in script
-    assert "async function postJson" not in script
-    assert 'answerMode.textContent = "正在识别任务";' in script
-    assert "setAnswerResult(question, payload);" in script
-    assert "renderQuerySuggestions();" in script
-    assert 'relatedRequestKey = `ask:${requestId}`;' in script
+    assert "let askRequestId = 0;" in ask_script
+    assert "function beginAskSession(question)" in ask_script
+    assert "askAbortController?.abort();" in ask_script
+    assert "stopSpeech({ preserveHuman: true });" in ask_script
+    assert "function isActiveAskRequest(requestId, controller = askAbortController)" in ask_script
+    assert "await presentAskResponse(session.requestId, session.controller, question, payload, session.thinkingStartedAt);" in ask_script
+    assert "presentAskError(session.requestId, session.controller, error);" in ask_script
+    assert "voice_enabled: speechSupported" in ask_script
+    assert "lastAskContext: null" in state_script
+    assert "function buildAskContext(question)" in ask_script
+    assert "requestData.context = context;" in ask_script
+    assert "rememberAskContext(question, payload);" in ask_script
+    assert "async function postJson" not in ask_script
+    assert 'answerMode.textContent = "正在识别任务";' in ask_script
+    assert "setAnswerResult(question, payload);" in ask_script
+    assert "renderQuerySuggestions();" in main_script
+    assert "beginAskSessionRelated(requestId);" in ask_script
+    assert "beginAskSessionRelated" in search_script
 
 
 def test_digital_human_caption_does_not_show_answer_text():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
-    state_block = script.split("function setDigitalHumanState", 1)[1].split("function transitionHumanVideo", 1)[0]
+    human_script = (ROOT / "static" / "js" / "human.js").read_text(encoding="utf-8")
+    ask_script = (ROOT / "static" / "js" / "ask.js").read_text(encoding="utf-8")
+    speech_script = (ROOT / "static" / "js" / "speech.js").read_text(encoding="utf-8")
+    search_script = (ROOT / "static" / "js" / "search.js").read_text(encoding="utf-8")
+    consts_script = (ROOT / "static" / "js" / "consts.js").read_text(encoding="utf-8")
+    joined = ask_script + human_script + speech_script + search_script + consts_script
+    state_block = human_script.split("function setDigitalHumanState", 1)[1].split("function transitionHumanVideo", 1)[0]
 
     assert "digitalHumanCaption" in state_block
-    assert "compactSpeech" not in script
-    assert "我先从资料库里找和问题最相关的内容。" in script
-    assert 'setDigitalHumanState("thinking", "正在思考"' in script
-    assert 'relatedCount.textContent = "思考中"' in script
-    assert 'relatedList.innerHTML = `<p class="marginalia-empty is-live">正在思考</p>`' in script
-    assert 'askButton.textContent = "提问"' in script
-    assert 'const text = withThinkingVoice ? "正在检索" : "语音播报已准备";' in script
-    assert "理解问题" in script
-    assert "思考回答" in script
-    assert "进入思考" not in script
-    assert "我先想一想。" not in script
-    assert "正在为你讲述。" in script
+    assert "compactSpeech" not in joined
+    assert "我先从资料库里找和问题最相关的内容。" in human_script + ask_script
+    assert 'setDigitalHumanState("thinking", "正在思考"' in ask_script
+    assert 'relatedCount.textContent = "思考中"' in search_script
+    assert 'relatedList.innerHTML = `<p class="marginalia-empty is-live">正在思考</p>`' in search_script
+    assert 'askButton.textContent = "提问"' in ask_script
+    assert 'const text = withThinkingVoice ? "正在检索" : "语音播报已准备";' in speech_script
+    assert "理解问题" in consts_script + ask_script
+    assert "思考回答" in consts_script + ask_script
+    assert "进入思考" not in joined
+    assert "我先想一想。" not in joined
+    assert "正在为你讲述。" in human_script
 
 
 def test_digital_human_thinking_state_has_mask():
@@ -220,7 +235,7 @@ def test_result_markdown_lists_keep_visible_markers():
 
 
 def test_result_markdown_uses_mature_engine_with_sanitizer():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "js" / "markdown.js").read_text(encoding="utf-8")
     styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
 
     assert "window.marked" in script
@@ -237,17 +252,18 @@ def test_result_markdown_uses_mature_engine_with_sanitizer():
 
 
 def test_item_cards_use_title_and_family_fields():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    search_script = (ROOT / "static" / "js" / "search.js").read_text(encoding="utf-8")
+    ask_script = (ROOT / "static" / "js" / "ask.js").read_text(encoding="utf-8")
 
-    assert "function itemTitle(item)" in script
-    assert "item?.family" in script
-    assert "官方名称：" not in script
-    assert "detailTitle.textContent = itemTitle(item);" in script
-    assert "escapeHtml(itemTitle(item))" in script
+    assert "function itemTitle(item)" in search_script
+    assert "item?.family" in search_script
+    assert "官方名称：" not in search_script + ask_script
+    assert "detailTitle.textContent = itemTitle(item);" in search_script
+    assert "escapeHtml(itemTitle(item))" in ask_script
 
 
 def test_result_items_render_all_returned_items():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "js" / "ask.js").read_text(encoding="utf-8")
     render_block = script.split("function renderResultItems", 1)[1].split("function renderSelectionReason", 1)[0]
 
     assert "items.map((item)" in render_block
@@ -264,7 +280,7 @@ def test_answer_result_area_remains_scrollable():
 
 
 def test_all_digital_human_video_states_use_dissolve_scheduler():
-    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    script = (ROOT / "static" / "js" / "human.js").read_text(encoding="utf-8")
 
     assert "video.loop = false" in script
     assert "scheduleHumanVideoAdvance" in script

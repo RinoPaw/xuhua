@@ -49,6 +49,18 @@ __all__ = [
 
 LOGGER = logging.getLogger(__name__)
 
+from pathlib import Path
+from jinja2 import Environment, FileSystemLoader
+
+_TEMPLATE_DIR = Path(__file__).resolve().parents[3] / "templates"
+_JINJA_ENV = Environment(
+    loader=FileSystemLoader(str(_TEMPLATE_DIR)),
+    autoescape=False,
+)
+
+def _render_template(name, **kwargs):
+    return _JINJA_ENV.get_template(name).render(**kwargs)
+
 class IntentRouter:
     """Plan user input with the model planner."""
 
@@ -313,92 +325,20 @@ class Agent:
         features = target_item.features[:200] if target_item.features else summary
         history = target_item.history[:200] if target_item.history else ""
         display = "、".join(target_item.display_forms) if target_item.display_forms else "展板 + 讲解"
+        cultural_value = target_item.cultural_value[:200] if target_item.cultural_value else ""
 
-        lines = [
-            f"## 非遗研学教案：{title}",
-            "",
-            f"**适用对象：**{audience_label}",
-            f"**课时安排：**{time_budget}",
-            f"**研学场景：**{scenario}",
-            f"**所属类别：**{category}",
-            f"**展示形式：**{display}",
-            "",
-            "### 一、教学目标",
-            "",
-            f"1. **知识目标：**了解{title}的历史渊源、技艺特点和代表性作品。",
-            f"2. **能力目标：**通过观察、讨论和实践体验，培养学生对传统{category}项目的感知和分析能力。",
-            "3. **情感目标：**激发对非遗文化的兴趣和认同感，理解保护传承的意义。",
-            "",
-            "### 二、教学重点与难点",
-            "",
-            f"- **重点：**{title}的核心技艺特点和历史文化价值。",
-            "- **难点：**引导学生理解非遗传承与当代生活的关联。",
-            "",
-            "### 三、教学准备",
-            "",
-            "- 多媒体课件（含项目图片或视频资料）",
-            "- 实物展示或模型（如条件允许）",
-            "- 学习任务单 / 观察记录表",
-            "- 互动体验材料（根据项目特点准备）",
-            "",
-            "### 四、教学过程",
-            "",
-            "#### 环节一：情境导入（5分钟）",
-            "",
-            f"展示{title}的图片或短视频，提问：「你们见过这种技艺/艺术形式吗？它来自哪个地方？」",
-            "引导学生分享已有认知，引出课题。",
-            "",
-            "#### 环节二：知识讲解（15分钟）",
-            "",
-        ]
-
-        if history:
-            lines.append(f"**历史背景：**{history}")
-            lines.append("")
-        lines.append(f"**技艺特点：**{features}")
-        lines.append("")
-
-        if target_item.cultural_value:
-            lines.append(f"**文化价值：**{target_item.cultural_value[:200]}")
-            lines.append("")
-
-        lines.extend([
-            "#### 环节三：小组探究（15分钟）",
-            "",
-            "将学生分为 3-4 组，每组领取一个探究任务：",
-            f"- **第1组：**研究{title}的历史发展脉络，画出时间轴。",
-            f"- **第2组：**分析{title}的主要技艺特点，用思维导图整理。",
-            f"- **第3组：**讨论{title}在当代社会的价值和面临的挑战。",
-            "各组派代表汇报，教师点评补充。",
-            "",
-            "#### 环节四：实践体验（8分钟）",
-            "",
-            "根据项目特点选择以下一种或多种方式：",
-            "- 动手模仿：让学生尝试简单的技艺操作步骤。",
-            "- 创意设计：基于项目元素进行简单的文创设计。",
-            "- 角色扮演：模拟传承人向观众介绍项目。",
-            "",
-            "#### 环节五：总结评价（2分钟）",
-            "",
-            "- 回顾本节课的核心知识点。",
-            "- 请学生分享「今天印象最深的一个发现」。",
-            "- 布置课后拓展任务（如：向家人介绍一项非遗）。",
-            "",
-            "### 五、评价方式",
-            "",
-            "- 课堂参与度：小组讨论和汇报表现。",
-            "- 探究任务成果：时间轴 / 思维导图完成质量。",
-            "- 实践体验：动手环节的投入程度。",
-            "",
-            "### 六、拓展建议",
-            "",
-            f"- 组织实地参观{title}传习所或传承人工作室。",
-            "- 与美术课、历史课、语文课进行跨学科联动。",
-            "- 鼓励学生制作非遗主题手抄报或短视频介绍。",
-            "",
-            "---",
-            "*本教案由 Xuhua AI 基于非遗数据自动生成，建议教师根据实际学情调整。*",
-        ])
+        answer = _render_template(
+            "study_task.md.j2",
+            title=title,
+            audience_label=audience_label,
+            time_budget=time_budget,
+            scenario=scenario,
+            category=category,
+            display=display,
+            features=features,
+            history=history,
+            cultural_value=cultural_value,
+        ).strip()
 
         sources = [_source_payload(target_item)]
         items = [_enriched_item_card(target_item)]
@@ -411,7 +351,7 @@ class Agent:
 
         return AgentResult(
             task_type=TaskType.STUDY_TASK,
-            answer="\n".join(lines),
+            answer=answer,
             items=items,
             sources=sources,
             evidence=evidence,
@@ -646,34 +586,28 @@ class Agent:
         audience = analysis.audience or "公众"
         time_budget = analysis.time_budget or "待定"
 
-        lines = [
-            "## 非遗展示策划方案",
-            "",
-            f"- **场景：**{scene}",
-            f"- **受众：**{audience}",
-            f"- **时长：**{time_budget}",
-            "",
-            "### 推荐展项",
-            "",
-        ]
-
-        for i, item_data in enumerate(rec.items, 1):
-            display = "、".join(item_data.get("display_forms", ["展板"]))
-            title = item_data["title"]
+        template_items = []
+        for item_data in rec.items:
+            display_str = "、".join(item_data.get("display_forms", ["展板"]))
+            item_title = item_data["title"]
             family = item_data.get("family") or ""
-            if family and family not in title:
-                title = f"{title}（{family}）"
-            lines.append(f"#### {i}. {title}")
-            lines.append(f"- **展示形式：**{display}")
-            lines.append(f"- **核心讲解：**{item_data['summary'][:100]}......")
-            lines.append("- **互动环节：**[建议：知识问答 / 手工体验 / VR 展示]")
-            lines.append("- **所需物料：**[建议：展板×2 / 实物×1 / 多媒体设备]")
-            lines.append("")
+            if family and family not in item_title:
+                display_title = f"{item_title}（{family}）"
+            else:
+                display_title = item_title
+            template_items.append({
+                "display_title": display_title,
+                "display_str": display_str,
+                "summary": item_data["summary"],
+            })
 
-        lines.append("---")
-        lines.append("*本方案由 Xuhua AI 基于非遗数据自动生成，互动环节与物料建议仅供参考。*")
-
-        rec.answer = "\n".join(lines)
+        rec.answer = _render_template(
+            "exhibition_plan.md.j2",
+            scene=scene,
+            audience=audience,
+            time_budget=time_budget,
+            items=template_items,
+        ).strip()
         rec.warnings.append("展示方案为模板生成，互动环节与物料建议待人工补充。")
         return rec
 
@@ -836,55 +770,14 @@ def _build_transform_local(transform_type: str, target_item, meta) -> str:
     category = target_item.category
     summary = target_item.summary
     features = meta.features if meta and meta.features else summary
+    level = meta.level if meta else ""
 
-    if transform_type == "翻译":
-        return (
-            f"## English Translation: {title}\n\n"
-            f"**Category:** {category}\n\n"
-            f"{summary}\n\n"
-            "*This is a local template. Configure an LLM API key for a full translation.*"
-        )
-    if transform_type in ("年轻化", "朋友圈"):
-        return (
-            f"## {title} . 轻松版介绍\n\n"
-            f"\U0001f3a8 你知道吗？{title}可是{meta.level if meta else ''}非遗项目！\n\n"
-            f"{features[:200]}......\n\n"
-            f"想了解更多？来看看这个传承了数百年的技艺吧！\n\n"
-            "*本地模板生成，配置 API Key 可获得更生动的改写。*"
-        )
-    if transform_type == "文创文案":
-        return (
-            f"## 文创设计概要：{title}\n\n"
-            f"### 灵感来源\n"
-            f"从 {title} 的核心技艺和视觉元素中提取设计语言。\n\n"
-            f"### 可提取元素\n"
-            f"- 技艺特点：{features[:100]}......\n"
-            f"- 色彩与纹样：[建议：从项目中提取代表性图案和配色方案]\n"
-            f"- 文化符号：[建议：整理项目的标志性视觉元素]\n\n"
-            f"### 产品类型建议\n"
-            f"- 文具类：笔记本封面、书签、明信片\n"
-            f"- 家居类：装饰画、杯垫、抱枕\n"
-            f"- 数字类：表情包、手机壁纸、H5互动\n\n"
-            f"### 目标受众\n"
-            f"- 对传统文化感兴趣的年轻人（18-35岁）\n"
-            f"- 旅游纪念品消费者\n"
-            f"- 文化教育产品用户\n\n"
-            "*本地模板生成，配置 API Key 可获得更详细的创意方案。*"
-        )
-    if transform_type == "讲解词":
-        return (
-            f"## {title} . 讲解词\n\n"
-            f"各位朋友，大家好。今天我们认识的项目是{title}，它属于{category}。"
-            f"{summary}\n\n"
-            f"它最值得关注的地方，是这些经过长期传承留下来的技艺和审美：{features[:220]}......\n\n"
-            "如果把它放到展览或课堂里，可以从历史来源、制作流程、视觉特色和当代传承四个角度展开，"
-            "让观众既能看到作品，也能理解作品背后的生活记忆。\n\n"
-            "*本地模板生成，配置 API Key 可获得更完整的讲解词。*"
-        )
-    # Generic rewrite
-    return (
-        f"## {title} . 内容改写\n\n"
-        f"{summary}\n\n"
-        f"**核心特色：**{features[:200]}\n\n"
-        "*本地模板生成，配置 API Key 可获得更优化的改写内容。*"
-    )
+    return _render_template(
+        "transform_local.md.j2",
+        transform_type=transform_type,
+        title=title,
+        category=category,
+        summary=summary,
+        features=features,
+        level=level,
+    ).strip()

@@ -217,18 +217,31 @@ def _tts_extension() -> str:
 
 _CONTEXT_LEAD_RE = re.compile(r"^\s*(再|继续|接着|然后|上一|上个|这个|这份|这段|它|把它|把这个|帮我把它|帮我把这个|基于)")
 _CONTEXT_TRANSFORM_RE = re.compile(r"(年轻化|口语化|轻松|双语|英文|翻译|压缩|精简|扩写|改写|润色|换个版本|讲解词|口播稿|文案)")
+_PRNOUN_RE = re.compile(r"^(它|这个|这段|这份|把它|把这个|帮我把它|帮我把这个)")
 
 
 def _question_with_context(question: str, context) -> str:
-    """Attach previous answer context for short follow-up transformations."""
+    """Resolve pronouns from previous context; only attach full answer for content transforms."""
     question = str(question or "").strip()
     if not question or not isinstance(context, dict) or not _needs_previous_context(question):
         return question
 
+    item_titles = _context_item_titles(context.get("items"))
+    is_transform = _CONTEXT_TRANSFORM_RE.search(question)
+
+    # Resolve pronoun references: "它和同类非遗有什么区别？" → "汴绣和同类非遗有什么区别？"
+    if item_titles and _PRNOUN_RE.search(question):
+        resolved = _PRNOUN_RE.sub(item_titles[0], question, count=1)
+        if resolved != question:
+            question = resolved
+
+    # Only attach full answer context for content transform operations
+    if not is_transform:
+        return question
+
     previous_question = _compact_context_text(context.get("question"), 240)
     previous_answer = _compact_context_text(context.get("answer"), 2400)
-    item_titles = _context_item_titles(context.get("items"))
-    if not previous_question and not previous_answer and not item_titles:
+    if not previous_question and not previous_answer:
         return question
 
     parts = [

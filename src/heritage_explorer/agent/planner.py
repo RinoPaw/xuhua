@@ -21,7 +21,7 @@ def call_agent_planner_model(
 
     content = chat_completion(
         build_agent_planner_messages(query, kb, category, context),
-        temperature=0,
+        temperature=0.3,
         extra_options=agent_planner_extra_options(),
     )
     plan = json.loads(extract_json_object(content))
@@ -102,10 +102,11 @@ def _context_item_titles(items) -> list[str]:
 
 
 def agent_planner_extra_options() -> dict[str, Any]:
+    opts: dict[str, Any] = {"response_format": {"type": "json_object"}}
     model = config.AI_MODEL.lower()
     if any(name in model for name in ("glm-4.5", "glm-4.6", "glm-4.7", "glm-5")):
-        return {"thinking": {"type": "disabled"}}
-    return {}
+        opts["thinking"] = {"type": "disabled"}
+    return opts
 
 
 def extract_json_object(text: str) -> str:

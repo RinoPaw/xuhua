@@ -59,6 +59,19 @@ def test_common_woodblock_typo_is_corrected_in_public_title():
     assert payload["family"] == "木版年画"
 
 
+def test_ihchina_parenthetical_titles_are_normalized_to_title_and_family():
+    kb = load_dataset()
+
+    sichuan_items = [item for item in kb.items if item.title == "四川皮影戏"]
+    assert sichuan_items
+    assert all(item.family == "皮影戏" for item in sichuan_items)
+    assert all(item.category == "传统戏剧" for item in sichuan_items)
+    assert all(item.level == "国家级" for item in sichuan_items)
+
+    hubei_titles = {item.title for item in kb.items if item.province == "湖北省" and item.family == "皮影戏"}
+    assert {"江汉平原皮影戏", "云梦皮影戏"} <= hubei_titles
+
+
 def test_search_finds_known_item():
     kb = load_dataset()
     results, total = search_items(kb, query="陈氏太极拳", limit=5)
@@ -80,6 +93,18 @@ def test_lexical_search_matches_partial_homophone_query_with_pinyin():
 
     assert total > 0
     assert results[0].title == "罗山皮影戏"
+
+
+def test_search_prioritizes_region_plus_family_over_pinyin_noise():
+    kb = load_dataset()
+    for query in ("湖北皮影", "湖北皮影戏"):
+        results, total = search_items_lexical(kb, query=query, limit=5)
+
+        assert total > 0
+        assert results[0].province == "湖北省"
+        assert results[0].family == "皮影戏"
+        assert results[0].title in {"江汉平原皮影戏", "云梦皮影戏"}
+        assert results[0].title != "蒙古族皮艺"
 
 
 def test_lexical_rank_weight_keeps_pinyin_visible_in_hybrid_results():

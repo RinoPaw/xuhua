@@ -5,12 +5,18 @@ from __future__ import annotations
 import json
 import re
 
-from flask import Flask, Response, abort, jsonify, render_template, request
+from flask import Flask, Response, abort, jsonify, render_template, request, send_file, stream_with_context
 
 from .agent import Agent, AgentResult, task_type_label
-from .config import DEBUG, HOST, PORT
+from .config import DEBUG, HOST, PORT, TTS_CACHE_DIR
 from .dataset import get_knowledge_base, item_to_dict
 from .search import search_items, search_items_lexical
+from .volc_tts import (
+    stream_speech_audio,
+    synthesize_speech_to_file,
+    valid_tts_filename,
+    volc_tts_available,
+)
 
 
 def create_app() -> Flask:
@@ -19,6 +25,13 @@ def create_app() -> Flask:
         template_folder="../../templates",
         static_folder="../../static",
     )
+
+    @app.after_request
+    def prevent_dev_cache(response):
+        if request.path == "/" or request.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-store, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+        return response
 
     @app.get("/")
     def index():
@@ -107,10 +120,12 @@ def create_app() -> Flask:
                 include_speech=include_speech,
             ):
                 if isinstance(event, AgentResult):
+                    speech_audio = _speech_audio_hint(event.speech) if include_speech else {}
                     result_payload = {
                         'type': 'result',
                         'answer': event.answer,
                         'speech': event.speech,
+                        **speech_audio,
                         'mode': event.mode,
                         'task_type': event.task_type.value,
                         'task_label': task_type_label(event.task_type),
@@ -129,7 +144,75 @@ def create_app() -> Flask:
 
         return Response(generate(), mimetype="text/event-stream")
 
+    @app.post("/api/tts")
+    def create_tts_audio():
+        payload = request.get_json(silent=True) or {}
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            return jsonify({"speech_engine": "browser", "error": "empty_text"})
+        return jsonify(_speech_audio_payload(text))
+
+    @app.get("/api/tts/stream")
+    def stream_tts_audio():
+        text = str(request.args.get("text") or "").strip()
+        audio_stream = stream_speech_audio(text)
+        if audio_stream is None:
+            abort(503)
+        return Response(
+            stream_with_context(audio_stream),
+            mimetype=_tts_mime_type(f"audio.{_tts_extension()}"),
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.get("/api/tts/<filename>")
+    def tts_audio(filename: str):
+        if not valid_tts_filename(filename):
+            abort(404)
+        path = TTS_CACHE_DIR / filename
+        if not path.is_file():
+            abort(404)
+        return send_file(path, mimetype=_tts_mime_type(filename), conditional=True, max_age=3600)
+
     return app
+
+
+def _speech_audio_hint(speech: str) -> dict:
+    if speech and volc_tts_available():
+        return {"speech_engine": "volcengine", "speech_audio_pending": True}
+    return {"speech_engine": "browser"}
+
+
+def _speech_audio_payload(speech: str) -> dict:
+    try:
+        audio = synthesize_speech_to_file(speech)
+    except Exception:
+        return {"speech_engine": "browser"}
+    if audio is None:
+        return {"speech_engine": "browser"}
+    return {
+        "speech_audio_url": f"/api/tts/{audio.path.name}",
+        "speech_mime_type": audio.mime_type,
+        "speech_engine": audio.engine,
+    }
+
+
+def _tts_mime_type(filename: str) -> str:
+    if filename.endswith(".mp3"):
+        return "audio/mpeg"
+    if filename.endswith(".ogg") or filename.endswith(".opus"):
+        return "audio/ogg"
+    if filename.endswith(".wav"):
+        return "audio/wav"
+    return "application/octet-stream"
+
+
+def _tts_extension() -> str:
+    from . import config as cfg
+
+    return cfg.VOLC_TTS_ENCODING.lower()
 
 
 _CONTEXT_LEAD_RE = re.compile(r"^\s*(再|继续|接着|然后|上一|上个|这个|这份|这段|它|把它|把这个|帮我把它|帮我把这个|基于)")

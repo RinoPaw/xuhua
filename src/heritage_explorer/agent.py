@@ -22,6 +22,7 @@ from .agent_models import (
 )
 from .agent_task_config import TASK_CONFIGS, _TASK_CONFIGS
 from .dataset import (
+    get_structured_meta,
     KnowledgeBase,
     normalize_text,
 )
@@ -207,7 +208,7 @@ class Agent:
         query: str = "",
     ):
         if include_speech and result.answer:
-            yield self._progress_event("speech", "润色播报", "正在把最终回答压缩成更适合朗读的版本")
+            yield self._progress_event("speech", "润色播报", "正在清理为更适合朗读的同稿版本")
             result = self._ensure_speech(result, query=query)
         yield with_agent_decision(result, decision, include_speech)
 
@@ -444,6 +445,7 @@ class Agent:
                 warnings=["未识别到具体非遗项目，已退回通用问答"],
             )
 
+        meta = get_structured_meta(target_item.id)
         transform_type = analysis.transform_type
 
         # Determine transform type if not detected by QueryAnalyzer
@@ -711,6 +713,12 @@ def build_agent_planner_messages(query: str, kb: KnowledgeBase, category: str = 
                 "exhibition_plan, study_task, content_transform。"
                 "可选动作：direct_answer（身份/能力/寒暄/越界说明）、retrieval_tool（查资料库）、"
                 "rule_handler（筛选/对比/推荐/策划/教案）、llm_generation（基于检索资料生成）。"
+                "任务边界：content_transform 用于把一个或多个非遗项目资料改写成讲解词、解说词、"
+                "口播稿、传播文案、双语文案、年轻化版本、文创/纹样/包装/IP创意等成稿内容；"
+                "study_task 用于课程、教案、研学任务、学习单、课堂活动、教学问题等教学设计；"
+                "exhibition_plan 用于展览策划、展陈方案、展区动线、互动环节、物料配置等展示方案。"
+                "如果用户要求为单个项目生成讲解词或解说词，优先选择 content_transform，"
+                "不要因为出现“讲解”就归为 study_task，也不要因为用于展馆就归为 exhibition_plan。"
                 "请根据用户最终意图自主选择最合适的任务类型和动作。"
                 "direct_answer 必须使用用户可见角色“叙华”的口吻回答。"
                 "不要在 direct_answer 中提到内部规划器、后台、决策层、路由、JSON、工具选择等实现细节。"
@@ -912,10 +920,12 @@ _TRANSFORM_PROMPTS: dict[str, str] = {
     "年轻化": (
         "你是一个面向年轻受众的非遗科普写手。请将以下非遗项目用轻松、"
         "口语化的语言重新介绍，适合发在社交媒体上，保留关键信息但语气活泼。"
+        "结尾要落到生活场景、参观体验或文化传承上，让读者知道这项非遗和当下生活有关。"
     ),
     "朋友圈": (
         "你是一个非遗文化传播者。请将以下非遗项目用适合发朋友圈的风格改写，"
         "200字以内，带 emoji，有趣有料，结尾可以加话题标签。"
+        "结尾要有轻量的体验邀请或文化推广意味。"
     ),
     "文创文案": (
         "你是一个非遗文创设计师。基于以下非遗项目的核心元素，"
@@ -925,10 +935,12 @@ _TRANSFORM_PROMPTS: dict[str, str] = {
     "讲解词": (
         "你是一个非遗展馆讲解员。请基于以下非遗项目资料生成面向公众的讲解词，"
         "语言清楚、有画面感，适合现场或视频口播，避免编造资料外事实。"
+        "结尾可以引导观众把非遗带回生活，或鼓励参观、体验、关注传承。"
     ),
     "改写": (
         "你是一个非遗内容编辑。请将以下非遗项目的介绍进行改写优化，"
         "使内容更适合一般公众阅读，语言流畅有感染力，突出文化价值。"
+        "保留或补足一个自然的文化推广结尾。"
     ),
 }
 

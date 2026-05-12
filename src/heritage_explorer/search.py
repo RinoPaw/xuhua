@@ -119,7 +119,7 @@ def search_items_pinyin(
     for py, ids in index.items():
         if py == query_py:
             continue
-        if query_py in py or py in query_py:
+        if query_py in py or _is_substantial_pinyin_part(py, query_py):
             matched_ids.extend(ids)
 
     # Deduplicate and resolve
@@ -134,6 +134,15 @@ def search_items_pinyin(
             result.append(item)
 
     return result
+
+
+def _is_substantial_pinyin_part(candidate_py: str, query_py: str) -> bool:
+    """Allow contained pinyin only when it covers a real chunk of the query."""
+    if candidate_py not in query_py:
+        return False
+    if len(candidate_py) < 6:
+        return False
+    return len(candidate_py) >= len(query_py) * 0.45
 
 
 def tokenize(query: str) -> list[str]:
@@ -296,6 +305,8 @@ def prepend_pinyin_matches(
         return ranked_items
     if has_title_substring_match(ranked_items, query):
         return ranked_items
+    if has_location_token_match(ranked_items, query):
+        return ranked_items
 
     candidate_ids = {item.id for item in candidates}
     pinyin_results = [
@@ -312,6 +323,17 @@ def prepend_pinyin_matches(
 def has_title_substring_match(items: list[HeritageItem], query: str) -> bool:
     lowered_query = query.lower()
     return any(item.title and item.title.lower() in lowered_query for item in items)
+
+
+def has_location_token_match(items: list[HeritageItem], query: str) -> bool:
+    tokens = [token for token in tokenize(query) if len(token) >= 2]
+    if not tokens:
+        return False
+    for item in items[:8]:
+        location = f"{item.province} {item.city} {item.district}".lower()
+        if any(token.lower() in location for token in tokens):
+            return True
+    return False
 
 
 def rank_lexical(
@@ -443,6 +465,10 @@ def score_item(item: HeritageItem, query: str, tokens: list[str]) -> float:
     title = item.title.lower()
     family = item.family.lower()
     category = item.category.lower()
+    province = item.province.lower()
+    city = item.city.lower()
+    district = item.district.lower()
+    location = " ".join(part for part in (province, city, district) if part)
     summary = item.summary.lower()
     content = item.content.lower()
     search_text = item.search_text.lower()
@@ -456,6 +482,8 @@ def score_item(item: HeritageItem, query: str, tokens: list[str]) -> float:
         score += 18
     if query and query in category:
         score += 16
+    if query and query in location:
+        score += 18
     if query and query in summary:
         score += 10
     if query and query in content:
@@ -468,6 +496,10 @@ def score_item(item: HeritageItem, query: str, tokens: list[str]) -> float:
             score += 6
         if token in category:
             score += 5
+        if token in province:
+            score += 10
+        elif token in city or token in district:
+            score += 8
         if token in summary:
             score += 3
         if token in search_text:

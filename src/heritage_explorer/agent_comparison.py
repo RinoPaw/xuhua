@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from .agent_models import AgentResult, TaskType
-from .dataset import KnowledgeBase, normalize_text
+from .dataset import KnowledgeBase, get_soft_labels, get_structured_meta, normalize_text
 from .item_cards import _enriched_item_card, _source_payload, _title_with_family
 
 
@@ -64,7 +64,7 @@ def handle_comparison(kb: KnowledgeBase, analysis) -> AgentResult:
     if len(resolved) < 2:
         suggestion_query = _comparison_suggestion_query(targets)
         suggestions: list[Any] = []
-        if suggestion_query:
+        if suggestion_query and not _has_explicit_region_targets(targets):
             suggestions, _ = search_items_lexical(kb, query=suggestion_query, limit=4)
         suggestion_cards = [_enriched_item_card(item) for item in suggestions]
         suggestion_sources = [_source_payload(item) for item in suggestions]
@@ -88,6 +88,11 @@ def handle_comparison(kb: KnowledgeBase, analysis) -> AgentResult:
             answer_lines.extend([
                 "",
                 "你可以继续追问这些已收录项目之间的区别，或改问资料库中实际存在的地区化项目。",
+            ])
+        elif _has_explicit_region_targets(targets):
+            answer_lines.extend([
+                "",
+                "这类问题带有明确地域约束，系统不会用其他省份的同类项目替代，以免把参考资料误当成对比对象。",
             ])
 
         speech = (
@@ -309,6 +314,8 @@ def _resolve_comparison_target(kb: KnowledgeBase, target: str, used_item_ids: se
             score += 25
 
         if score > best_score:
+            meta = get_structured_meta(item.id)
+            labels = get_soft_labels(item.id)
             best = (_title_with_family(item), item, meta, labels)
             best_score = score
 
@@ -330,3 +337,7 @@ def _comparison_suggestion_query(targets: list[str]) -> str:
         if all(candidate in core for core in unique):
             return candidate
     return unique[0] if unique else ""
+
+
+def _has_explicit_region_targets(targets: list[str]) -> bool:
+    return any(_comparison_target_parts(target)[0] for target in targets)

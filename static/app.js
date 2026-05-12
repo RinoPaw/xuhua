@@ -48,7 +48,11 @@ let currentHumanState = "idle";
 let activeHumanVideo = digitalHumanVideo;
 let standbyHumanVideo = digitalHumanVideoNext;
 let currentUtterance = null;
+let currentSpeechAudio = null;
+let currentSpeechSegments = [];
 let lastSpeechText = "";
+let lastSpeechAudioUrl = "";
+let speechPlaybackSeq = 0;
 let speechUnlocked = false;
 let speechCancelTimer = 0;
 let speechStartGuardTimer = 0;
@@ -115,7 +119,9 @@ const followupQueriesByTask = {
   ],
 };
 
-const speechSupported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+const browserSpeechSupported = "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+const audioSpeechSupported = typeof Audio !== "undefined";
+const speechSupported = browserSpeechSupported || audioSpeechSupported;
 const PROGRESS_STEP_INDEX = {
   classify: 0,
   search: 1,
@@ -126,7 +132,7 @@ const loadingSteps = [
   { title: "理解问题", detail: "正在判断任务类型，并识别项目名称、地区和输出要求" },
   { title: "检索资料", detail: "正在检索资料库，优先匹配明确标题和结构化字段" },
   { title: "思考回答", detail: "正在整理证据、取舍资料，并生成回答文本" },
-  { title: "润色播报", detail: "正在把最终回答压缩成更适合朗读的版本" },
+  { title: "润色播报", detail: "正在清理为更适合朗读的同稿版本" },
 ];
 let activeLoadingSteps = [...loadingSteps];
 const HUMAN_MIN_THINKING_MS = 1120;
@@ -160,7 +166,11 @@ voiceToggle?.addEventListener("click", () => {
     setDigitalHumanState(lastSpeechHumanState, "正在回答", lastSpeechText);
   }
   unlockSpeech();
-  speakText(lastSpeechText);
+  if (lastSpeechAudioUrl) {
+    playAudioAnswer(lastSpeechAudioUrl, lastSpeechText);
+  } else {
+    speakText(lastSpeechText);
+  }
 });
 window.speechSynthesis?.addEventListener?.("voiceschanged", () => {
   window.speechSynthesis.getVoices();
@@ -622,11 +632,12 @@ function renderResultItems(payload) {
   if (!items.length) {
     return "";
   }
+  const itemCountLabel = items.length > 1 ? `（${items.length}项）` : "";
   return `
     <section class="result-section">
-      <h3>重点项目</h3>
+      <h3>重点项目${itemCountLabel}</h3>
       <div class="result-items">
-        ${items.slice(0, 6).map((item) => {
+        ${items.map((item) => {
           const meta = itemMetaParts(item).join(" · ");
           const tags = itemTagList(item, 3);
           return `
@@ -1069,18 +1080,21 @@ async function presentAskResponse(requestId, controller, question, payload, thin
   }
 
   const speech = answerSpeechFromPayload(payload);
+  const speechAudioUrl = payload?.speech_audio_url || "";
+  const speechAudioPending = Boolean(payload?.speech_audio_pending);
   state.currentTaskType = payload?.task_type || "";
   setAnswerResult(question, payload);
   rememberAskContext(question, payload);
   console.info("[xuhua:speech]", {
     mode: payload.mode,
+    engine: payload?.speech_engine || "browser",
     length: speech.length,
     text: speech,
   });
   answerMode.textContent = taskModeLabel(payload);
   lastSpeechHumanState = responseHumanState(question);
   setDigitalHumanState(lastSpeechHumanState, "正在回答", speech);
-  if (!speakAnswer(speech)) {
+  if (!speakAnswer(speech, speechAudioUrl, { serverTts: speechAudioPending })) {
     scheduleHumanReturnToIdle(visualAnswerDuration(speech));
   }
   const related = answerRelatedItems(payload);
@@ -1369,20 +1383,185 @@ function syncVoiceIdleState(status = "") {
   setVoiceStatus(status);
 }
 
-function speakAnswer(value) {
+function speakAnswer(value, audioUrl = "", options = {}) {
   lastSpeechText = speechText(value);
+  lastSpeechAudioUrl = audioUrl || "";
   if (!speechSupported || !lastSpeechText) {
     return false;
   }
-  return speakText(lastSpeechText);
+  const playbackSeq = ++speechPlaybackSeq;
+  if (lastSpeechAudioUrl) {
+    return playAudioAnswer(lastSpeechAudioUrl, lastSpeechText, playbackSeq);
+  }
+  if (options.serverTts) {
+    return requestServerSpeech(lastSpeechText, playbackSeq);
+  }
+  return speakText(lastSpeechText, playbackSeq);
 }
 
-function speakText(text) {
-  if (!speechSupported) {
+function requestServerSpeech(text, playbackSeq) {
+  if (!audioSpeechSupported) {
+    return speakText(text, playbackSeq);
+  }
+  stopSpeech({ preserveHuman: true, keepPlaybackSeq: true });
+  setVoiceState("speaking");
+  setVoiceStatus("正在连接语音");
+  currentSpeechSegments = speechPlaybackSegments(text);
+  if (currentSpeechSegments.length) {
+    return playSpeechSegment(0, playbackSeq);
+  }
+  return requestServerSpeechFile(text, playbackSeq);
+}
+
+function requestServerSpeechFile(text, playbackSeq) {
+  if (speechPlaybackSeq !== playbackSeq || lastSpeechText !== text) {
+    return true;
+  }
+  setVoiceState("speaking");
+  setVoiceStatus("正在生成语音");
+  fetch("/api/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text }),
+  })
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`${response.status} ${response.statusText}`);
+      }
+      return response.json();
+    })
+    .then((payload) => {
+      if (speechPlaybackSeq !== playbackSeq || lastSpeechText !== text) return;
+      const audioUrl = payload?.speech_audio_url || "";
+      lastSpeechAudioUrl = audioUrl;
+      if (audioUrl) {
+        playAudioAnswer(audioUrl, text, playbackSeq);
+      } else if (!speakText(text, playbackSeq)) {
+        finishSpeechPlayback("语音暂不可用");
+      }
+    })
+    .catch(() => {
+      if (speechPlaybackSeq !== playbackSeq || lastSpeechText !== text) return;
+      if (!speakText(text, playbackSeq)) {
+        finishSpeechPlayback("语音生成失败");
+      }
+    });
+  return true;
+}
+
+function playSpeechSegment(index, playbackSeq) {
+  if (speechPlaybackSeq !== playbackSeq) {
+    return true;
+  }
+  const text = currentSpeechSegments[index] || "";
+  if (!text) {
+    finishSpeechPlayback("");
+    return true;
+  }
+  const streamUrl = ttsStreamUrl(text);
+  if (streamUrl.length >= 7600) {
+    return requestServerSpeechFile(currentSpeechSegments.slice(index).join(""), playbackSeq);
+  }
+  return playAudioAnswer(streamUrl, text, playbackSeq, {
+    onEnd: () => playSpeechSegment(index + 1, playbackSeq),
+    onError: () => requestServerSpeechFile(currentSpeechSegments.slice(index).join(""), playbackSeq),
+  });
+}
+
+function speechPlaybackSegments(text) {
+  const source = String(text || "").trim();
+  if (!source) return [];
+  const pieces = source.match(/[^。！？!?；;]+[。！？!?；;]?/gu) || [source];
+  const segments = [];
+  let current = "";
+  for (const piece of pieces) {
+    const candidate = current + piece;
+    if (current && utf8ByteLength(candidate) > 720) {
+      segments.push(current);
+      current = piece;
+    } else {
+      current = candidate;
+    }
+    while (utf8ByteLength(current) > 720) {
+      segments.push(sliceUtf8Bytes(current, 720));
+      current = current.slice(segments[segments.length - 1].length);
+    }
+  }
+  if (current) {
+    segments.push(current);
+  }
+  return segments;
+}
+
+function utf8ByteLength(value) {
+  return new TextEncoder().encode(String(value || "")).length;
+}
+
+function sliceUtf8Bytes(value, maxBytes) {
+  let bytes = 0;
+  let index = 0;
+  const text = String(value || "");
+  for (const char of text) {
+    const size = utf8ByteLength(char);
+    if (bytes + size > maxBytes) break;
+    bytes += size;
+    index += char.length;
+  }
+  return text.slice(0, Math.max(index, 1));
+}
+
+function ttsStreamUrl(text) {
+  const params = new URLSearchParams({ text });
+  return `/api/tts/stream?${params.toString()}`;
+}
+
+function playAudioAnswer(audioUrl, fallbackText = "", playbackSeq = ++speechPlaybackSeq, options = {}) {
+  if (!audioSpeechSupported || !audioUrl) {
+    return speakText(fallbackText, playbackSeq);
+  }
+  stopSpeech({ preserveHuman: true, keepPlaybackSeq: true });
+  clearSpeechStartGuard();
+  const audio = new Audio(audioUrl);
+  currentSpeechAudio = audio;
+  audio.preload = "auto";
+  audio.onplay = () => {
+    if (currentSpeechAudio !== audio || speechPlaybackSeq !== playbackSeq) return;
+    setVoiceState("speaking");
+    setVoiceStatus("正在播报");
+  };
+  audio.onended = () => {
+    if (currentSpeechAudio !== audio || speechPlaybackSeq !== playbackSeq) return;
+    if (options.onEnd?.()) return;
+    finishSpeechPlayback("");
+  };
+  audio.onerror = () => {
+    if (currentSpeechAudio !== audio || speechPlaybackSeq !== playbackSeq) return;
+    currentSpeechAudio = null;
+    if (options.onError?.()) return;
+    if (!speakText(fallbackText, playbackSeq)) {
+      finishSpeechPlayback("音频播报失败");
+    }
+  };
+  const playPromise = audio.play();
+  if (playPromise?.catch) {
+    playPromise.catch(() => {
+      if (currentSpeechAudio !== audio || speechPlaybackSeq !== playbackSeq) return;
+      currentSpeechAudio = null;
+      if (options.onError?.()) return;
+      if (!speakText(fallbackText, playbackSeq)) {
+        finishSpeechPlayback("自动播报被浏览器拦截");
+      }
+    });
+  }
+  return true;
+}
+
+function speakText(text, playbackSeq = ++speechPlaybackSeq) {
+  if (!browserSpeechSupported) {
     setVoiceStatus("浏览器不支持语音");
     return false;
   }
-  stopSpeech({ preserveHuman: true });
+  stopSpeech({ preserveHuman: true, keepPlaybackSeq: true });
   clearSpeechStartGuard();
   window.speechSynthesis.resume();
   const utterance = new SpeechSynthesisUtterance(text);
@@ -1398,25 +1577,25 @@ function speakText(text) {
   }
 
   utterance.onstart = () => {
-    if (currentUtterance !== utterance) return;
+    if (currentUtterance !== utterance || speechPlaybackSeq !== playbackSeq) return;
     clearSpeechStartGuard();
     setVoiceState("speaking");
     setVoiceStatus("正在播报");
   };
   utterance.onend = () => {
-    if (currentUtterance !== utterance) return;
+    if (currentUtterance !== utterance || speechPlaybackSeq !== playbackSeq) return;
     clearSpeechStartGuard();
     finishSpeechPlayback("");
   };
   utterance.onerror = () => {
-    if (currentUtterance !== utterance) return;
+    if (currentUtterance !== utterance || speechPlaybackSeq !== playbackSeq) return;
     clearSpeechStartGuard();
     finishSpeechPlayback("自动播报被浏览器拦截");
   };
 
   window.speechSynthesis.speak(utterance);
   speechStartGuardTimer = window.setTimeout(() => {
-    if (currentUtterance !== utterance) return;
+    if (currentUtterance !== utterance || speechPlaybackSeq !== playbackSeq) return;
     if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
       finishSpeechPlayback("播报未启动");
     }
@@ -1432,6 +1611,8 @@ function clearSpeechStartGuard() {
 function finishSpeechPlayback(status = "") {
   clearSpeechStartGuard();
   currentUtterance = null;
+  currentSpeechAudio = null;
+  currentSpeechSegments = [];
   syncVoiceIdleState(status);
   if (currentHumanState === "speaking" || currentHumanState === "farewell") {
     setDigitalHumanState("idle", "待机", "我在这里，可以继续问我。");
@@ -1439,8 +1620,21 @@ function finishSpeechPlayback(status = "") {
 }
 
 function stopSpeech(options = {}) {
+  if (!options.keepPlaybackSeq) {
+    speechPlaybackSeq += 1;
+  }
   clearSpeechStartGuard();
-  if (speechSupported) {
+  if (currentSpeechAudio) {
+    currentSpeechAudio.pause();
+    currentSpeechAudio.currentTime = 0;
+    currentSpeechAudio.removeAttribute("src");
+    currentSpeechAudio.load();
+    currentSpeechAudio = null;
+  }
+  if (!options.keepPlaybackSeq) {
+    currentSpeechSegments = [];
+  }
+  if (browserSpeechSupported) {
     window.clearTimeout(speechCancelTimer);
     window.speechSynthesis.cancel();
     if (options.delayed) {
@@ -1455,7 +1649,7 @@ function stopSpeech(options = {}) {
 }
 
 function unlockSpeech(withThinkingVoice = false) {
-  if (!speechSupported || speechUnlocked) {
+  if (!browserSpeechSupported || speechUnlocked) {
     return;
   }
   speechUnlocked = true;
@@ -1506,7 +1700,7 @@ function speechText(value) {
     .replace(/模型接口暂不可用[\s\S]*$/u, "")
     .replace(/\s+/g, " ")
     .trim();
-  return text.length > 720 ? `${text.slice(0, 720)}。` : text;
+  return text;
 }
 
 function stripSpeechDecorations(value) {

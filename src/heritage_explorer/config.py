@@ -63,3 +63,30 @@ EMBEDDING_INDEX_PATH = env_path(
 EMBEDDING_TEXT_MAX_CHARS = int(os.getenv("EMBEDDING_TEXT_MAX_CHARS", "1400"))
 EMBEDDING_MIN_SCORE = float(os.getenv("EMBEDDING_MIN_SCORE", "0.15"))
 SEARCH_USE_EMBEDDING = os.getenv("SEARCH_USE_EMBEDDING", "0") == "1"
+
+VOLC_TTS_ENABLED = os.getenv("VOLC_TTS_ENABLED", "1") == "1"
+VOLC_TTS_API_VERSION = os.getenv("VOLC_TTS_API_VERSION", "auto")
+VOLC_TTS_ENDPOINT = os.getenv("VOLC_TTS_ENDPOINT", "https://openspeech.bytedance.com/api/v1/tts")
+VOLC_TTS_V3_ENDPOINT = os.getenv(
+    "VOLC_TTS_V3_ENDPOINT",
+    "https://openspeech.bytedance.com/api/v3/tts/unidirectional",
+)
+VOLC_TTS_API_KEY = os.getenv("VOLC_TTS_API_KEY", "")
+VOLC_TTS_APP_ID = os.getenv("VOLC_TTS_APP_ID", "")
+VOLC_TTS_ACCESS_TOKEN = os.getenv("VOLC_TTS_ACCESS_TOKEN", "")
+VOLC_TTS_CLUSTER = os.getenv("VOLC_TTS_CLUSTER", "volcano_tts")
+VOLC_TTS_RESOURCE_ID = os.getenv("VOLC_TTS_RESOURCE_ID", "volc.service_type.10029")
+VOLC_TTS_VOICE_TYPE = os.getenv(
+    "VOLC_TTS_VOICE_TYPE",
+    "zh_female_gaolengyujie_emo_v2_mars_bigtts",
+)
+VOLC_TTS_EMOTION = os.getenv("VOLC_TTS_EMOTION", "coldness")
+VOLC_TTS_EMOTION_SCALE = int(os.getenv("VOLC_TTS_EMOTION_SCALE", "4"))
+VOLC_TTS_ENCODING = os.getenv("VOLC_TTS_ENCODING", "mp3")
+VOLC_TTS_RATE = int(os.getenv("VOLC_TTS_RATE", "24000"))
+VOLC_TTS_SPEED_RATIO = float(os.getenv("VOLC_TTS_SPEED_RATIO", "1.0"))
+VOLC_TTS_VOLUME_RATIO = float(os.getenv("VOLC_TTS_VOLUME_RATIO", "1.0"))
+VOLC_TTS_PITCH_RATIO = float(os.getenv("VOLC_TTS_PITCH_RATIO", "1.0"))
+VOLC_TTS_TIMEOUT = float(os.getenv("VOLC_TTS_TIMEOUT", "20"))
+VOLC_TTS_MAX_CHUNK_BYTES = int(os.getenv("VOLC_TTS_MAX_CHUNK_BYTES", "900"))
+TTS_CACHE_DIR = env_path("TTS_CACHE_DIR", "tmp/tts")

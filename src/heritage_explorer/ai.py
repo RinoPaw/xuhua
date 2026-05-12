@@ -169,16 +169,26 @@ def direct_item_matches(
         elif family and (search_query in family or family in search_query):
             family_contains.append(item)
 
-    return exact_title or _dedupe_items(title_contains + exact_family + family_contains)
+    return _dedupe_items(exact_title) or _dedupe_items(title_contains + exact_family + family_contains)
 
 
 def _dedupe_items(items: list[HeritageItem]) -> list[HeritageItem]:
     seen: set[str] = set()
     result: list[HeritageItem] = []
     for item in items:
-        if item.id in seen:
+        key = "|".join(
+            normalize_text(part)
+            for part in (
+                item.title,
+                item.family,
+                item.category,
+                item.province,
+                item.city or item.district,
+            )
+        )
+        if key in seen:
             continue
-        seen.add(item.id)
+        seen.add(key)
         result.append(item)
     return result
 
@@ -187,12 +197,12 @@ def call_speech_model(
     answer: str,
     question: str = "",
     sources: list[HeritageItem] | None = None,
-    max_chars: int = 520,
+    max_chars: int = 1800,
 ) -> str:
     return call_model_with_messages(
         build_speech_messages(answer, question=question, sources=sources or [], max_chars=max_chars),
-        temperature=0.3,
-        max_tokens=700,
+        temperature=0.1,
+        max_tokens=max(900, min(2400, max_chars + 300)),
     )
 
 
@@ -318,7 +328,7 @@ def build_speech_messages(
     answer: str,
     question: str = "",
     sources: list[HeritageItem] | None = None,
-    max_chars: int = 520,
+    max_chars: int = 1800,
 ) -> list[dict[str, str]]:
     source_titles = "、".join(item.title for item in (sources or [])[:3]) or "无"
     return [
@@ -326,12 +336,19 @@ def build_speech_messages(
             "role": "system",
             "content": (
                 "你是一个中文语音播报编辑。"
+                "你的任务是把展示版回答整理成“忠实朗读版”，不是另写一篇播报稿。"
+                "演讲稿、讲解词、口播稿和播报稿之间的内容差别必须很小。"
                 "请先判断给定的展示版回答是否已经适合 TTS 直接朗读。"
-                "只允许依据展示版回答和给出的资料标题改写，不要补充新事实。"
+                "只允许依据展示版回答和给出的资料标题做朗读清理，不要补充新事实。"
+                "必须保留原文的主体内容、信息顺序、专有名词、关键句和语气。"
+                "不要新增开场白、金句、网感表达、比喻、互动口号或总结升华。"
+                "如果原文已有面向公众的文化推广结尾，例如生活场景、体验邀请、参观建议或传承呼吁，"
+                "必须保留其核心意思，只清理不适合朗读的符号。"
                 "如果原文已经是自然连贯的口语纯文本，且没有 markdown、emoji、列表、表格感或明显提纲腔，"
                 "请直接输出原文内容。"
                 "如果不适合直接朗读，请去掉 markdown、标题、项目符号、emoji、表格感和书面提纲腔，"
-                "保留专有名词和关键信息，润色成自然连贯、适合口播的文本。"
+                "只做必要的标点和连接词调整，让它自然连贯、适合口播。"
+                "除非原文超过长度限制，不要压缩、删段、改写成另一种文风。"
                 "不要输出“以下是”“第一点”“基本信息”“根据数据集”等提示语。"
                 "只输出最终可播报文本，不要解释判断过程，不要写“无需修改”或“需要修改”。"
             ),
@@ -343,7 +360,7 @@ def build_speech_messages(
                 f"相关资料标题：{source_titles}\n"
                 f"展示版回答：\n{answer}\n\n"
                 f"如果它无需修改，请直接输出原文；如果需要修改，请输出润色后的文本。"
-                f"最终文本尽量控制在 {max_chars} 字以内。"
+                f"最终文本应尽量接近展示版回答的内容和长度；只有超过 {max_chars} 字时才适度压缩。"
             ),
         },
     ]
@@ -395,11 +412,11 @@ def build_spoken_answer(
     question: str = "",
     sources: list[HeritageItem] | None = None,
     prefer_model: bool = True,
-    max_chars: int = 760,
+    max_chars: int = 1800,
 ) -> str:
     if prefer_model and config.AI_API_KEY:
         try:
-            spoken = call_speech_model(answer, question=question, sources=sources or [], max_chars=min(max_chars, 520))
+            spoken = call_speech_model(answer, question=question, sources=sources or [], max_chars=max_chars)
             spoken = clean_spoken_output(spoken, max_chars=max_chars)
             if spoken:
                 return spoken
@@ -491,7 +508,7 @@ def build_speech_text(
     answer: str,
     question: str = "",
     sources: list[HeritageItem] | None = None,
-    max_chars: int = 760,
+    max_chars: int = 1800,
 ) -> str:
     spoken = build_answer_speech(answer, max_chars=max_chars)
     if spoken:
@@ -500,7 +517,7 @@ def build_speech_text(
     return build_source_speech(question, sources or [], max_chars=max_chars)
 
 
-def build_answer_speech(answer: str, max_chars: int = 760) -> str:
+def build_answer_speech(answer: str, max_chars: int = 1800) -> str:
     text = str(answer or "")
     text = remove_speech_symbols(text)
     text = re.sub(r"```[\s\S]*?```", " ", text)
@@ -545,7 +562,7 @@ def build_answer_speech(answer: str, max_chars: int = 760) -> str:
     return text
 
 
-def clean_spoken_output(text: str, max_chars: int = 760) -> str:
+def clean_spoken_output(text: str, max_chars: int = 1800) -> str:
     text = remove_speech_symbols(text)
     text = re.sub(r"^\s*(?:无需修改|需要修改|润色后|播报稿|最终播报文本)\s*[:：]\s*", "", text)
     text = re.sub(r"```[\s\S]*?```", " ", text)

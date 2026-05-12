@@ -112,6 +112,20 @@ def test_model_planner_direct_answer_is_not_rewritten_offline():
     assert "控制器" in decision.direct_answer
 
 
+def test_model_planner_prompt_disambiguates_lecture_copy_from_study_task():
+    from heritage_explorer.agent import build_agent_planner_messages
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    messages = build_agent_planner_messages("给朱仙镇木版年画生成讲解词", kb)
+    prompt = "\n".join(message["content"] for message in messages)
+
+    assert "讲解词" in prompt
+    assert "content_transform" in prompt
+    assert "不要因为出现“讲解”就归为 study_task" in prompt
+    assert "不要因为用于展馆就归为 exhibition_plan" in prompt
+
+
 def test_agent_dispatch_returns_task_result():
     from heritage_explorer.dataset import load_dataset
 
@@ -153,8 +167,25 @@ def test_comparison_with_region_only_terms_does_not_fabricate_duplicate_items():
     assert result.mode == "local"
     assert len(item_ids) == len(set(item_ids))
     assert len(source_ids) == len(set(source_ids))
-    assert "暂未找到可直接对应" in result.answer
-    assert any("四川皮影" in warning or "湖北皮影" in warning for warning in result.warnings)
+    assert any(item["title"] == "四川皮影戏" for item in result.items)
+    assert any(item["province"] == "湖北省" and item["family"] == "皮影戏" for item in result.items)
+    assert "暂未找到可直接对应" not in result.answer
+    assert result.warnings == []
+
+
+def test_comparison_with_missing_region_targets_does_not_show_unrelated_candidates():
+    from heritage_explorer.dataset import load_dataset
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    result = agent.dispatch("海南皮影和宁夏皮影有什么区别？", include_speech=False)
+
+    assert result.task_type is TaskType.COMPARISON
+    assert result.items == []
+    assert result.sources == []
+    assert "资料库中暂未找到可直接对应「海南皮影、宁夏皮影」" in result.answer
+    assert "罗山皮影戏" not in result.answer
+    assert "桐柏皮影戏" not in result.answer
 
 
 def test_agent_dispatch_handles_empty_query():
@@ -293,6 +324,14 @@ def test_content_transform_llm_branch_uses_spoken_answer_rewrite(monkeypatch):
     assert result.mode == "llm"
     assert result.answer == "展示版改写：汴绣适合年轻受众传播。"
     assert result.speech == "播报版：展示版改写：汴绣适合年轻受众传播。"
+
+
+def test_content_transform_prompts_keep_cultural_promotion_closing():
+    from heritage_explorer.agent import _TRANSFORM_PROMPTS
+
+    assert "生活场景、参观体验或文化传承" in _TRANSFORM_PROMPTS["年轻化"]
+    assert "体验邀请或文化推广" in _TRANSFORM_PROMPTS["朋友圈"]
+    assert "鼓励参观、体验、关注传承" in _TRANSFORM_PROMPTS["讲解词"]
 
 
 def test_content_transform_targets_specific_title_in_suggestion_query(monkeypatch):

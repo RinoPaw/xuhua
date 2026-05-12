@@ -1,6 +1,5 @@
-from heritage_explorer import dataset
 from heritage_explorer.dataset import get_knowledge_base, get_soft_labels, get_structured_meta, load_dataset
-from heritage_explorer.extractor import RuleExtractor, SoftLabels, StructuredMeta
+from heritage_explorer.extractor import RuleExtractor
 
 
 # ── RuleExtractor tests (extraction engine remains for build-time use) ──

@@ -46,6 +46,17 @@ def test_homepage_contains_digital_human_panel():
     assert 'id="relatedTitle"' in html
     assert "vendor/purify.min.js" in html
     assert "vendor/marked.umd.js" in html
+    assert "20260512-all-result-items" in html
+    assert response.headers["Cache-Control"] == "no-store, max-age=0"
+
+
+def test_static_assets_are_not_cached_during_local_development():
+    app = create_app()
+    client = app.test_client()
+    response = client.get("/static/app.js")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store, max-age=0"
 
 
 def test_digital_human_animation_waits_for_speech_end():
@@ -101,6 +112,31 @@ def test_tts_text_strips_display_emoji():
     assert "stripSpeechDecorations(value)" in script
     assert "\\u{1F300}-\\u{1FAFF}" in script
     assert "\\u{2600}-\\u{27BF}" in script
+    speech_text_block = script.split("function speechText", 1)[1].split("function stripSpeechDecorations", 1)[0]
+    assert "text.length > 720" not in speech_text_block
+
+
+def test_frontend_prefers_server_tts_audio():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+
+    assert "const browserSpeechSupported" in script
+    assert "const audioSpeechSupported" in script
+    assert "payload?.speech_audio_url" in script
+    assert "payload?.speech_audio_pending" in script
+    assert "function requestServerSpeech(text" in script
+    assert "function requestServerSpeechFile(text" in script
+    assert "function playSpeechSegment(index, playbackSeq)" in script
+    assert "function speechPlaybackSegments(text)" in script
+    assert "function utf8ByteLength(value)" in script
+    assert "function ttsStreamUrl(text)" in script
+    assert 'return `/api/tts/stream?${params.toString()}`;' in script
+    assert 'fetch("/api/tts"' in script
+    assert "function playAudioAnswer(audioUrl" in script
+    assert "onEnd: () => playSpeechSegment(index + 1, playbackSeq)" in script
+    assert "onError: () => requestServerSpeechFile(currentSpeechSegments.slice(index).join(\"\"), playbackSeq)" in script
+    assert "new Audio(audioUrl)" in script
+    assert "speakAnswer(speech, speechAudioUrl, { serverTts: speechAudioPending })" in script
+    assert "speakText(fallbackText, playbackSeq)" in script
 
 
 def test_loading_progress_uses_fixed_event_driven_steps():
@@ -210,6 +246,23 @@ def test_item_cards_use_title_and_family_fields():
     assert "escapeHtml(itemTitle(item))" in script
 
 
+def test_result_items_render_all_returned_items():
+    script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+    render_block = script.split("function renderResultItems", 1)[1].split("function renderSelectionReason", 1)[0]
+
+    assert "items.map((item)" in render_block
+    assert "items.slice(0, 6)" not in render_block
+    assert "重点项目${itemCountLabel}" in render_block
+
+
+def test_answer_result_area_remains_scrollable():
+    styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
+    answer_block = styles.split(".answer-scroll {", 1)[1].split(".answer-scroll::-webkit-scrollbar", 1)[0]
+
+    assert "overflow: auto;" in answer_block
+    assert "min-height: 0;" in answer_block
+
+
 def test_all_digital_human_video_states_use_dissolve_scheduler():
     script = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
 
@@ -288,6 +341,73 @@ def test_ask_api_returns_grounded_answer(monkeypatch):
     assert "太极拳" in payload["answer"]
     assert payload["speech"]
     assert payload["sources"]
+
+
+def test_ask_api_marks_server_tts_without_blocking_result(monkeypatch):
+    monkeypatch.setattr(config, "AI_API_KEY", "")
+    monkeypatch.setattr("heritage_explorer.web.volc_tts_available", lambda: True)
+    monkeypatch.setattr(
+        "heritage_explorer.web.synthesize_speech_to_file",
+        lambda _speech: (_ for _ in ()).throw(AssertionError("ask should not synthesize audio")),
+    )
+    app = create_app()
+    client = app.test_client()
+    response = client.post("/api/ask", json={"question": "陈氏太极拳是什么"})
+    payload = _sse_result(response)
+
+    assert payload["speech_engine"] == "volcengine"
+    assert payload["speech_audio_pending"] is True
+    assert "speech_audio_url" not in payload
+
+
+def test_tts_create_route_returns_audio_url(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    filename = f"{'a' * 64}.mp3"
+    audio_path = tmp_path / filename
+    audio_path.write_bytes(b"mp3")
+
+    def fake_tts(speech: str):
+        assert speech == "汴绣适合现场讲解。"
+        return SimpleNamespace(path=audio_path, mime_type="audio/mpeg", engine="volcengine")
+
+    monkeypatch.setattr("heritage_explorer.web.synthesize_speech_to_file", fake_tts)
+    app = create_app()
+    client = app.test_client()
+    response = client.post("/api/tts", json={"text": "汴绣适合现场讲解。"})
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["speech_audio_url"] == f"/api/tts/{filename}"
+    assert payload["speech_mime_type"] == "audio/mpeg"
+    assert payload["speech_engine"] == "volcengine"
+
+
+def test_tts_audio_route_serves_cached_mp3(monkeypatch, tmp_path):
+    filename = f"{'b' * 64}.mp3"
+    (tmp_path / filename).write_bytes(b"mp3")
+    monkeypatch.setattr("heritage_explorer.web.TTS_CACHE_DIR", tmp_path)
+
+    app = create_app()
+    client = app.test_client()
+    response = client.get(f"/api/tts/{filename}")
+
+    assert response.status_code == 200
+    assert response.mimetype == "audio/mpeg"
+    assert response.get_data() == b"mp3"
+
+
+def test_tts_stream_route_streams_audio(monkeypatch):
+    monkeypatch.setattr("heritage_explorer.web.stream_speech_audio", lambda text: iter([b"mp", text.encode()]))
+
+    app = create_app()
+    client = app.test_client()
+    response = client.get("/api/tts/stream?text=3")
+
+    assert response.status_code == 200
+    assert response.mimetype == "audio/mpeg"
+    assert response.headers["Cache-Control"] == "no-cache"
+    assert response.get_data() == b"mp3"
 
 
 def test_ask_api_uses_previous_context_for_short_transform_followup(monkeypatch):

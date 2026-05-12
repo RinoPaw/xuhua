@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-from .dataset import HeritageItem, KnowledgeBase
+from .dataset import HeritageItem
 
 _FIELD_NAMES = (
     "序号",

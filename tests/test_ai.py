@@ -99,6 +99,7 @@ def test_llm_answer_uses_second_model_for_speech(monkeypatch):
     assert calls["speech"][0] == answer.answer
     assert calls["speech"][1] == "罗山皮影戏"
     assert "罗山皮影戏" in calls["speech"][2]
+    assert calls["speech"][3] == 1800
 
 
 def test_spoken_answer_sanitizes_model_emoji_and_markdown(monkeypatch):
@@ -121,8 +122,35 @@ def test_speech_prompt_lets_model_keep_suitable_text():
     prompt = "\n".join(message["content"] for message in messages)
 
     assert "请先判断" in prompt
+    assert "不是另写一篇播报稿" in prompt
+    assert "演讲稿、讲解词、口播稿和播报稿之间的内容差别必须很小" in prompt
+    assert "不要压缩、删段、改写成另一种文风" in prompt
+    assert "文化推广结尾" in prompt
+    assert "生活场景、体验邀请、参观建议或传承呼吁" in prompt
     assert "如果它无需修改，请直接输出原文" in prompt
     assert "不要写“无需修改”" in prompt
+
+
+def test_speech_cleanup_keeps_cultural_call_to_action_without_emoji():
+    speech = clean_spoken_output(
+        "所以，下次过年，不妨搞一张朱仙镇木版年画贴在家里。"
+        "那一抹浓烈的色彩，就是穿越千年的“祝福弹幕”。"
+        "想体验的，还可以去非遗馆亲手印一张，超解压！📢"
+    )
+
+    assert "下次过年" in speech
+    assert "非遗馆亲手印一张" in speech
+    assert "祝福弹幕" in speech
+    assert "📢" not in speech
+
+
+def test_speech_cleanup_preserves_long_speech_by_default():
+    long_answer = "。".join(f"朱仙镇木版年画第{i}句介绍传统工艺和年俗记忆" for i in range(1, 35)) + "。"
+
+    speech = clean_spoken_output(long_answer)
+
+    assert "朱仙镇木版年画第1句" in speech
+    assert "朱仙镇木版年画第34句" in speech
 
 
 def test_spoken_output_removes_model_decision_label():

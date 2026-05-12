@@ -14,7 +14,7 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SRC))
 
-from heritage_explorer.dataset import load_dataset, normalize_text
+from heritage_explorer.dataset import load_dataset
 from heritage_explorer.extractor import RuleExtractor, infer_soft_labels
 
 ROOT = Path(__file__).resolve().parents[1]

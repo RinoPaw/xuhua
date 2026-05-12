@@ -1,0 +1,605 @@
+import { followupQueriesByTask, PROGRESS_STEP_INDEX, loadingSteps, LOADING_MIN_STEP_MS, speechSupported } from './consts.js';
+import { state, els } from './state.js';
+import { escapeHtml, renderMarkdown } from './markdown.js';
+import { itemTitle, itemMetaParts, itemTagList, renderRelatedItems, beginAskSessionRelated } from './search.js';
+import { responseHumanState, setDigitalHumanState, scheduleHumanReturnToIdle, waitForThinkingDissolve, visualAnswerDuration } from './human.js';
+import { speakAnswer, stopSpeech, unlockSpeech, resetLastSpeechText } from './speech.js';
+import { bindQueryChips, bindResultItemLinks } from './ui.js';
+
+let askAbortController = null;
+let askRequestId = 0;
+let loadingStepTimer = 0;
+let loadingFlushTimer = 0;
+let loadingStepIndex = 0;
+let loadingTargetIndex = 0;
+let loadingStepStartedAt = 0;
+let loadingProgressQueue = [];
+let loadingFlushResolvers = [];
+let activeLoadingSteps = [...loadingSteps];
+export let lastSpeechHumanState = "speaking";
+
+function setAnswerState(stateName) {
+  els.answerBox.classList.remove("is-idle", "is-loading", "is-error");
+  if (stateName) {
+    els.answerBox.classList.add(`is-${stateName}`);
+  }
+}
+
+function setAnswerPlain(value, stateName = "") {
+  stopLoadingSteps();
+  els.answerBox.classList.remove("markdown-answer", "result-answer");
+  setAnswerState(stateName);
+  els.answerBox.textContent = value;
+}
+
+function setAnswerMarkdown(value) {
+  stopLoadingSteps();
+  setAnswerState("");
+  els.answerBox.classList.remove("result-answer");
+  els.answerBox.classList.add("markdown-answer");
+  els.answerBox.innerHTML = renderMarkdown(value);
+}
+
+function setAnswerResult(question, payload) {
+  stopLoadingSteps();
+  setAnswerState("");
+  els.answerBox.classList.remove("markdown-answer");
+  els.answerBox.classList.add("result-answer");
+  els.answerBox.innerHTML = renderResultAnswer(question, payload);
+  bindQueryChips(els.answerBox);
+  bindResultItemLinks(els.answerBox);
+}
+
+function startLoadingSteps() {
+  window.clearTimeout(loadingStepTimer);
+  window.clearTimeout(loadingFlushTimer);
+  loadingStepTimer = 0;
+  loadingFlushTimer = 0;
+  activeLoadingSteps = getLoadingSteps();
+  loadingStepIndex = 0;
+  loadingTargetIndex = 0;
+  loadingStepStartedAt = performance.now();
+  loadingProgressQueue = [];
+  resolveLoadingFlush();
+  setAnswerLoading(loadingStepIndex);
+}
+
+function getLoadingSteps() {
+  return loadingSteps.map((step) => ({ ...step }));
+}
+
+function stopLoadingSteps() {
+  window.clearTimeout(loadingStepTimer);
+  window.clearTimeout(loadingFlushTimer);
+  loadingStepTimer = 0;
+  loadingFlushTimer = 0;
+  loadingStepIndex = 0;
+  loadingTargetIndex = 0;
+  loadingStepStartedAt = 0;
+  loadingProgressQueue = [];
+  resolveLoadingFlush();
+}
+
+function setAnswerLoading(activeIndex) {
+  els.answerBox.classList.remove("markdown-answer", "result-answer");
+  setAnswerState("loading");
+  const steps = activeLoadingSteps.length ? activeLoadingSteps : getLoadingSteps();
+  const active = steps[activeIndex] || steps[0];
+  els.answerBox.innerHTML = `
+    <div class="answer-loading" role="status" aria-live="polite">
+      <div class="loading-seal">叙</div>
+      <div class="loading-copy">
+        <p class="loading-title">${escapeHtml(active.title)}</p>
+        <p class="loading-detail">${escapeHtml(active.detail)}</p>
+      </div>
+      <div class="loading-steps">
+        ${steps.map((step, index) => `
+          <span class="loading-step ${index < activeIndex ? "is-done" : ""} ${index === activeIndex ? "is-active" : ""}">
+            ${escapeHtml(step.title)}
+          </span>
+        `).join("")}
+      </div>
+      <div class="loading-shimmer" aria-hidden="true">
+        <span></span><span></span><span></span>
+      </div>
+    </div>
+  `;
+}
+
+function applyAskProgress(event) {
+  const index = PROGRESS_STEP_INDEX[event.step];
+  if (index === undefined || index >= activeLoadingSteps.length) {
+    return;
+  }
+  activeLoadingSteps[index] = {
+    ...activeLoadingSteps[index],
+    detail: event.detail || activeLoadingSteps[index].detail,
+  };
+  if (index <= loadingStepIndex) {
+    if (index === loadingStepIndex) {
+      setAnswerLoading(loadingStepIndex);
+    }
+    return;
+  }
+  if (!loadingProgressQueue.includes(index)) {
+    loadingProgressQueue.push(index);
+  }
+  window.clearTimeout(loadingFlushTimer);
+  loadingFlushTimer = 0;
+  scheduleNextLoadingStep();
+}
+
+function scheduleNextLoadingStep() {
+  if (loadingStepTimer || !loadingProgressQueue.length) {
+    scheduleLoadingFlushResolution();
+    return;
+  }
+  const elapsed = performance.now() - loadingStepStartedAt;
+  const delay = Math.max(0, LOADING_MIN_STEP_MS - elapsed);
+  loadingStepTimer = window.setTimeout(() => {
+    loadingStepTimer = 0;
+    const nextIndex = loadingProgressQueue.shift();
+    if (nextIndex !== undefined && nextIndex > loadingStepIndex) {
+      loadingTargetIndex = Math.max(loadingTargetIndex, nextIndex);
+      loadingStepIndex = nextIndex;
+      loadingStepStartedAt = performance.now();
+      setAnswerLoading(loadingStepIndex);
+    }
+    scheduleNextLoadingStep();
+  }, delay);
+}
+
+function waitForLoadingSteps() {
+  scheduleNextLoadingStep();
+  return new Promise((resolve) => {
+    loadingFlushResolvers.push(resolve);
+    scheduleLoadingFlushResolution();
+  });
+}
+
+function scheduleLoadingFlushResolution() {
+  if (!loadingFlushResolvers.length || loadingProgressQueue.length || loadingStepTimer || loadingFlushTimer) {
+    return;
+  }
+  const elapsed = performance.now() - loadingStepStartedAt;
+  const delay = Math.max(0, LOADING_MIN_STEP_MS - elapsed);
+  loadingFlushTimer = window.setTimeout(() => {
+    loadingFlushTimer = 0;
+    if (loadingProgressQueue.length || loadingStepTimer) {
+      scheduleLoadingFlushResolution();
+      return;
+    }
+    resolveLoadingFlush();
+  }, delay);
+}
+
+function resolveLoadingFlush() {
+  window.clearTimeout(loadingFlushTimer);
+  loadingFlushTimer = 0;
+  const resolvers = loadingFlushResolvers;
+  loadingFlushResolvers = [];
+  resolvers.forEach((resolve) => resolve());
+}
+
+export function renderSuggestionStrip(queries, options = {}) {
+  if (!queries?.length) {
+    return "";
+  }
+  const chips = queries.map((query) => `
+    <button
+      class="query-chip ${options.compact ? "is-compact" : ""}"
+      type="button"
+      data-query="${escapeHtml(query)}"
+      data-submit="${options.submit === false ? "0" : "1"}"
+    >${escapeHtml(query)}</button>
+  `).join("");
+  return chips;
+}
+
+function resultIntroText(question, payload) {
+  const taskType = payload?.task_type || "";
+  const itemCount = payload?.items?.length || payload?.sources?.length || 0;
+  const totalCount = payload?.total_count || itemCount;
+  const sourceItem = payload?.items?.[0] || payload?.sources?.[0] || null;
+  const sourceTitle = sourceItem ? itemTitle(sourceItem) : "";
+  const taskLabel = payload?.task_label || "任务";
+
+  if (taskType === "browse_query") {
+    return `系统已根据你的问题整理出 ${totalCount} 个匹配项目，当前优先展示其中最相关的 ${itemCount} 项。`;
+  }
+  if (taskType === "comparison") {
+    return `系统把你关心的项目放到同一组维度里对照，方便直接看差异和适用场景。`;
+  }
+  if (taskType === "recommendation") {
+    return `系统会围绕你的使用场景，从资料库里挑出更合适的项目，并说明为什么推荐它们。`;
+  }
+  if (taskType === "exhibition_plan") {
+    return `系统正在把候选非遗项目整理成可直接落地的展示方案，而不只是给一段说明文字。`;
+  }
+  if (taskType === "study_task") {
+    return `系统把资料库内容转成研学和教学任务，方便继续做课堂活动或学习单。`;
+  }
+  if (taskType === "content_transform") {
+    return `系统先匹配最相关的非遗项目，再把内容改写成更适合传播或展示的版本。`;
+  }
+  if (taskType === "chitchat") {
+    return "这是一次直接回应。如果你想查项目、做筛选、对比或策划，也可以直接自然提问。";
+  }
+  if (sourceTitle) {
+    return `系统正围绕「${sourceTitle}」回答你的问题，并把可追溯的资料条目放在右侧。`;
+  }
+  return `系统已识别为「${taskLabel}」任务，并结合资料库来回答「${question}」。`;
+}
+
+function resultStats(payload) {
+  const taskType = payload?.task_type || "";
+  const itemCount = payload?.items?.length || payload?.sources?.length || 0;
+  const totalCount = payload?.total_count || 0;
+  const stats = [];
+
+  if (taskType) {
+    stats.push(`任务类型 · ${payload?.task_label || modeLabel(payload?.mode)}`);
+  }
+  if (totalCount) {
+    stats.push(`命中 ${totalCount} 项`);
+  } else if (itemCount) {
+    stats.push(`涉及 ${itemCount} 项`);
+  }
+  if (taskType === "comparison" && itemCount) {
+    stats.push(`当前对比 ${itemCount} 项`);
+  }
+  if (taskType === "recommendation") {
+    stats.push("已进入场景推荐");
+  }
+  if (taskType === "exhibition_plan") {
+    stats.push("已整理展示方案");
+  }
+  if (taskType === "content_transform") {
+    stats.push("已切换内容转化");
+  }
+  return stats;
+}
+
+function renderResultStats(payload) {
+  const stats = resultStats(payload);
+  if (!stats.length) {
+    return "";
+  }
+  return `
+    <section class="result-section">
+      <h3>任务概览</h3>
+      <div class="result-stats">
+        ${stats.map((value) => `<span class="result-stat">${escapeHtml(value)}</span>`).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderResultItems(payload) {
+  const items = payload?.items?.length ? payload.items : payload?.sources || [];
+  if (!items.length) {
+    return "";
+  }
+  const itemCountLabel = items.length > 1 ? `（${items.length}项）` : "";
+  return `
+    <section class="result-section">
+      <h3>重点项目${itemCountLabel}</h3>
+      <div class="result-items">
+        ${items.map((item) => {
+          const meta = itemMetaParts(item).join(" · ");
+          const tags = itemTagList(item, 3);
+          return `
+            <button class="result-item-link" type="button" data-id="${escapeHtml(item.id)}">
+              <span class="result-item-title">${escapeHtml(itemTitle(item))}</span>
+              ${meta ? `<span class="result-item-meta">${escapeHtml(meta)}</span>` : ""}
+              ${tags.length ? `<span class="result-item-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</span>` : ""}
+            </button>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderSelectionReason(payload) {
+  if (!payload?.selection_reason) {
+    return "";
+  }
+  return `
+    <section class="result-section">
+      <h3>为什么这样选</h3>
+      <p class="result-note">${escapeHtml(payload.selection_reason)}</p>
+    </section>
+  `;
+}
+
+function renderWarnings(payload) {
+  if (!payload?.warnings?.length) {
+    return "";
+  }
+  return `
+    <section class="result-section">
+      <h3>补充说明</h3>
+      <ul class="result-warnings">
+        ${payload.warnings.map((warning) => `<li>${escapeHtml(warning)}</li>`).join("")}
+      </ul>
+    </section>
+  `;
+}
+
+function followupQueries(payload) {
+  return followupQueriesByTask[payload?.task_type] || followupQueriesByTask.fact_qa;
+}
+
+function renderFollowups(payload) {
+  const queries = followupQueries(payload);
+  if (!queries.length) {
+    return "";
+  }
+  return `
+    <section class="result-section">
+      <h3>下一步可以这样问</h3>
+      <div class="result-followups">
+        ${renderSuggestionStrip(queries, { compact: true, submit: true })}
+      </div>
+    </section>
+  `;
+}
+
+function renderResultAnswer(question, payload) {
+  const taskLabel = payload?.task_label || modeLabel(payload?.mode);
+  return `
+    <div class="result-shell" data-task="${escapeHtml(payload?.task_type || "fact_qa")}">
+      <section class="result-section">
+        <h3>任务理解</h3>
+        <p class="result-intro">${escapeHtml(resultIntroText(question, payload))}</p>
+      </section>
+      ${renderResultStats(payload)}
+      ${renderResultItems(payload)}
+      ${renderSelectionReason(payload)}
+      <section class="result-section">
+        <h3>${escapeHtml(taskLabel)}结果</h3>
+        <div class="result-markdown">${renderMarkdown(payload?.answer || "")}</div>
+      </section>
+      ${renderWarnings(payload)}
+      ${renderFollowups(payload)}
+    </div>
+  `;
+}
+
+function modeLabel(mode) {
+  const labels = {
+    local: "资料库回答",
+    llm: "模型生成",
+    fallback: "回退回答",
+    no_context: "能力边界",
+    empty: "等待问题",
+  };
+  return labels[mode] || mode;
+}
+
+function taskModeLabel(payload) {
+  if (payload?.task_type === "chitchat") {
+    return payload?.decision?.planner === "model" ? "对话回应" : "对话回应";
+  }
+  return `已识别：${payload?.task_label || modeLabel(payload?.mode)}`;
+}
+
+function isActiveAskRequest(requestId, controller = askAbortController) {
+  return requestId === askRequestId && controller === askAbortController;
+}
+
+function beginAskSession(question) {
+  const requestId = ++askRequestId;
+  askAbortController?.abort();
+  const controller = new AbortController();
+  askAbortController = controller;
+  beginAskSessionRelated(requestId);
+
+  state.query = question;
+  state.currentTaskType = "";
+  els.askButton.disabled = true;
+  els.askButton.textContent = "提问";
+  els.answerMode.textContent = "正在识别任务";
+  startLoadingSteps();
+  resetLastSpeechText();
+  stopSpeech({ preserveHuman: true });
+  const thinkingStartedAt = performance.now();
+  setDigitalHumanState("thinking", "正在思考", "我先从资料库里找和问题最相关的内容。");
+  unlockSpeech(true);
+
+  return { requestId, controller, thinkingStartedAt };
+}
+
+function finishAskSession(requestId, controller) {
+  if (!isActiveAskRequest(requestId, controller)) {
+    return;
+  }
+  els.askButton.disabled = false;
+  els.askButton.textContent = "提问";
+  askAbortController = null;
+}
+
+function answerSpeechFromPayload(payload) {
+  return payload?.speech || payload?.answer || "";
+}
+
+function answerRelatedItems(payload) {
+  return payload?.items?.length ? payload.items : (payload?.sources || []);
+}
+
+function isContextualFollowup(question) {
+  const text = String(question || "").trim();
+  if (!text) {
+    return false;
+  }
+  const startsLikeFollowup = /^(再|继续|接着|然后|上一|上个|这个|这份|这段|它|把它|把这个|帮我把它|帮我把这个|基于)/u.test(text);
+  const startsLikeTransform = /^(改成|改为|换成|润色|压缩|精简|扩写|翻译|做成|来个|更)/u.test(text);
+  const asksForTransform = /(年轻化|口语化|轻松|双语|英文|翻译|压缩|精简|扩写|改写|润色|换个版本|讲解词|口播稿|文案)/u.test(text);
+  return startsLikeFollowup || (startsLikeTransform && asksForTransform);
+}
+
+function compactAskContextText(value, limit = 3000) {
+  const text = String(value || "").trim();
+  if (text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, limit).trimEnd()}……`;
+}
+
+function contextItemPayload(item) {
+  return {
+    id: item?.id || "",
+    title: itemTitle(item),
+    family: item?.family || "",
+    category: item?.category || "",
+    level: item?.level || "",
+    address: item?.address || "",
+  };
+}
+
+function rememberAskContext(question, payload) {
+  const related = answerRelatedItems(payload).slice(0, 5).map(contextItemPayload);
+  const answer = compactAskContextText(payload?.answer || "");
+  if (!answer && !related.length) {
+    return;
+  }
+  state.lastAskContext = {
+    question,
+    task_type: payload?.task_type || "",
+    answer,
+    items: related,
+  };
+}
+
+function buildAskContext(question) {
+  if (!state.lastAskContext || !isContextualFollowup(question)) {
+    return null;
+  }
+  return state.lastAskContext;
+}
+
+async function presentAskResponse(requestId, controller, question, payload, thinkingStartedAt) {
+  await waitForThinkingDissolve(thinkingStartedAt);
+  if (!isActiveAskRequest(requestId, controller)) {
+    return;
+  }
+  await waitForLoadingSteps();
+  if (!isActiveAskRequest(requestId, controller)) {
+    return;
+  }
+
+  const speech = answerSpeechFromPayload(payload);
+  const speechAudioUrl = payload?.speech_audio_url || "";
+  const speechAudioPending = Boolean(payload?.speech_audio_pending);
+  state.currentTaskType = payload?.task_type || "";
+  setAnswerResult(question, payload);
+  rememberAskContext(question, payload);
+  console.info("[xuhua:speech]", {
+    mode: payload.mode,
+    engine: payload?.speech_engine || "browser",
+    length: speech.length,
+    text: speech,
+  });
+  els.answerMode.textContent = taskModeLabel(payload);
+  lastSpeechHumanState = responseHumanState(question);
+  setDigitalHumanState(lastSpeechHumanState, "正在回答", speech);
+  if (!speakAnswer(speech, speechAudioUrl, { serverTts: speechAudioPending })) {
+    scheduleHumanReturnToIdle(visualAnswerDuration(speech));
+  }
+  const related = answerRelatedItems(payload);
+  renderRelatedItems(related, payload?.total_count || related.length);
+}
+
+function presentAskError(requestId, controller, error) {
+  if (!isActiveAskRequest(requestId, controller)) {
+    return;
+  }
+  state.currentTaskType = "";
+  const message = error.name === "AbortError" ? "问答超时，请稍后再试。" : `问答失败：${error.message}`;
+  setAnswerPlain(message, "error");
+  els.answerMode.textContent = "系统自动识别任务";
+  setDigitalHumanState("idle", "出现错误", message);
+  stopSpeech();
+}
+
+export async function askQuestion() {
+  const question = els.questionInput.value.trim();
+  if (!question) {
+    setAnswerPlain("请先输入问题。", "error");
+    return;
+  }
+
+  const session = beginAskSession(question);
+  const requestData = {
+    question,
+    category: "",
+    voice_enabled: speechSupported,
+  };
+  const context = buildAskContext(question);
+  if (context) {
+    requestData.context = context;
+  }
+
+  try {
+    const payload = await postSseResult("/api/ask", requestData, 65000, session.controller);
+    await presentAskResponse(session.requestId, session.controller, question, payload, session.thinkingStartedAt);
+  } catch (error) {
+    presentAskError(session.requestId, session.controller, error);
+  } finally {
+    finishAskSession(session.requestId, session.controller);
+  }
+}
+
+async function postSseResult(url, data, timeoutMs = 65000, controller = null) {
+  const requestController = controller || new AbortController();
+  const signal = requestController.signal;
+  const timer = window.setTimeout(() => requestController.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+      signal,
+    });
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+
+    if (!response.body) {
+      return response.json();
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let payload = null;
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        if (!line.startsWith("data: ")) continue;
+        const event = JSON.parse(line.slice(6));
+        if (event.type === "progress") {
+          applyAskProgress(event);
+        } else if (event.type === "result") {
+          payload = event;
+        }
+      }
+    }
+
+    if (!payload) {
+      throw new Error("未收到回答结果");
+    }
+    return payload;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}

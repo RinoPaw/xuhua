@@ -203,12 +203,25 @@ class QueryAnalyzer:
         self.kb = kb
         self._category_names = [c.name for c in kb.categories]
 
-    def analyze(self, query: str, task_type: TaskType | None = None) -> QueryAnalysis:
+    def analyze(
+        self, query: str, task_type: TaskType | None = None, context: dict | None = None,
+    ) -> QueryAnalysis:
         # ── task identity supplied by the model planner ──
         primary_task = task_type.name if task_type else TaskType.FACT_QA.name
 
         # ── entity & location extraction ──
         entities = self._extract_entities(query)
+        # Boost with context item titles when query has no entities
+        if not entities and context and isinstance(context, dict):
+            context_items = context.get("items") or []
+            if isinstance(context_items, list):
+                for item in context_items:
+                    if not isinstance(item, dict):
+                        continue
+                    title = str(item.get("title") or "").strip()
+                    if title and title not in entities:
+                        entities.append(title)
+                        break  # one context entity is enough to anchor the query
         categories = self._extract_categories(query)
         provinces = self._extract_provinces(query)
         cities = self._extract_cities(query)

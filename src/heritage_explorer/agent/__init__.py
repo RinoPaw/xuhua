@@ -72,21 +72,23 @@ def _render_template(name, **kwargs):
 class IntentRouter:
     """Plan user input with the model planner."""
 
-    def decide(self, query: str, kb: KnowledgeBase, category: str = "") -> AgentDecision:
-        """Plan the next action before retrieval/generation.
+    def decide(
+        self, query: str, kb: KnowledgeBase,
+        category: str = "", context: dict | None = None,
+    ) -> AgentDecision:
+        return call_agent_planner_model(query, kb, category, context)
 
-        This is the agentic boundary: the app decides whether it should talk,
-        search, use a rule handler, call an LLM-backed path, or decline because
-        the request is outside the heritage data domain.
-        """
-        return call_agent_planner_model(query, kb, category)
+    def plan(
+        self, query: str, kb: KnowledgeBase,
+        category: str = "", context: dict | None = None,
+    ) -> AgentDecision:
+        return self.decide(query, kb, category, context)
 
-    def plan(self, query: str, kb: KnowledgeBase, category: str = "") -> AgentDecision:
-        """Alias for callers that want an explicit agent planning API."""
-        return self.decide(query, kb, category)
-
-    def needs_retrieval(self, query: str, kb: KnowledgeBase, category: str = "") -> bool:
-        return self.decide(query, kb, category).needs_retrieval
+    def needs_retrieval(
+        self, query: str, kb: KnowledgeBase,
+        category: str = "", context: dict | None = None,
+    ) -> bool:
+        return self.decide(query, kb, category, context).needs_retrieval
 
 
 class Agent:
@@ -105,15 +107,21 @@ class Agent:
 
     # -- dispatch --------------------------------------------------------
 
-    def dispatch(self, query: str, category: str = "", include_speech: bool = True) -> AgentResult:
+    def dispatch(
+        self, query: str, category: str = "",
+        include_speech: bool = True, context: dict | None = None,
+    ) -> AgentResult:
         """Backward-compat wrapper: consume stream and return final result."""
         result = None
-        for event in self.dispatch_stream(query, category, include_speech=include_speech):
+        for event in self.dispatch_stream(query, category, include_speech=include_speech, context=context):
             if isinstance(event, AgentResult):
                 result = event
         return result
 
-    def dispatch_stream(self, query: str, category: str = "", include_speech: bool = True):
+    def dispatch_stream(
+        self, query: str, category: str = "",
+        include_speech: bool = True, context: dict | None = None,
+    ):
         """Generator: yields progress dicts, then AgentResult."""
         from ..retriever import QueryAnalyzer
 
@@ -130,7 +138,7 @@ class Agent:
         # Step 1: classify + analyze
         yield self._progress_event("classify", "理解问题", "正在判断任务类型，并识别项目名称、地区和输出要求")
         try:
-            decision = self.router.decide(query, self.kb, category)
+            decision = self.router.decide(query, self.kb, category, context)
         except Exception as exc:  # noqa: BLE001 - planner failure is reported as a user-visible error.
             from ..ai import describe_model_error
 
@@ -162,7 +170,7 @@ class Agent:
             return
 
         analyzer = QueryAnalyzer(self.kb)
-        analysis = analyzer.analyze(query, task_type)
+        analysis = analyzer.analyze(query, task_type, context)
 
         # Step 2: search
         yield self._progress_event("search", "检索资料", "正在检索资料库，优先匹配明确标题和结构化字段")

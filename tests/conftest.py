@@ -13,7 +13,15 @@ def disable_embedding_search(monkeypatch):
 def fake_agent_planner(monkeypatch):
     """Keep tests deterministic while production planning is model-only."""
 
-    def fake_planner(query: str, _kb, _category: str = "") -> AgentDecision:
+    def fake_planner(query: str, _kb, _category: str = "", _context: dict | None = None) -> AgentDecision:
+        # Simulate context-based entity resolution (what the real LLM planner does)
+        if _context and isinstance(_context, dict):
+            items = _context.get("items") or []
+            if items and isinstance(items, list):
+                titles = [item.get("title", "") for item in items if isinstance(item, dict) and item.get("title")]
+                if titles and not any(t in query for t in titles):
+                    query = f"{titles[0]} {query}"
+
         if not query:
             task_type = TaskType.FACT_QA
         elif any(term in query for term in ("你好", "你是谁", "你叫什么", "你知道什么", "你能做什么", "资料库里有什么")):

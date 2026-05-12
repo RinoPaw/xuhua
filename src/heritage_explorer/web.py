@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 
 from flask import Flask, Response, abort, jsonify, render_template, request, send_file, stream_with_context
 
@@ -105,7 +104,7 @@ def create_app() -> Flask:
         payload = request.get_json(silent=True) or {}
         question = str(payload.get("question") or "")
         category = str(payload.get("category") or "")
-        agent_question = _question_with_context(question, payload.get("context"))
+        context = payload.get("context") if isinstance(payload.get("context"), dict) else None
         voice_enabled = payload.get("voice_enabled", True)
         if isinstance(voice_enabled, str):
             include_speech = voice_enabled.lower() not in {"0", "false", "no", "off"}
@@ -115,9 +114,10 @@ def create_app() -> Flask:
         def generate():
             agent = Agent(kb)
             for event in agent.dispatch_stream(
-                query=agent_question,
+                query=question,
                 category=category,
                 include_speech=include_speech,
+                context=context,
             ):
                 if isinstance(event, AgentResult):
                     speech_audio = _speech_audio_hint(event.speech) if include_speech else {}
@@ -213,82 +213,6 @@ def _tts_extension() -> str:
     from . import config as cfg
 
     return cfg.VOLC_TTS_ENCODING.lower()
-
-
-_CONTEXT_LEAD_RE = re.compile(r"^\s*(再|继续|接着|然后|上一|上个|这个|这份|这段|它|把它|把这个|帮我把它|帮我把这个|基于)")
-_CONTEXT_TRANSFORM_RE = re.compile(r"(年轻化|口语化|轻松|双语|英文|翻译|压缩|精简|扩写|改写|润色|换个版本|讲解词|口播稿|文案)")
-_PRNOUN_RE = re.compile(r"^(它|这个|这段|这份|把它|把这个|帮我把它|帮我把这个)")
-
-
-def _question_with_context(question: str, context) -> str:
-    """Resolve pronouns from previous context; only attach full answer for content transforms."""
-    question = str(question or "").strip()
-    if not question or not isinstance(context, dict) or not _needs_previous_context(question):
-        return question
-
-    item_titles = _context_item_titles(context.get("items"))
-    is_transform = _CONTEXT_TRANSFORM_RE.search(question)
-
-    # Resolve pronoun references: "它和同类非遗有什么区别？" → "汴绣和同类非遗有什么区别？"
-    if item_titles and _PRNOUN_RE.search(question):
-        resolved = _PRNOUN_RE.sub(item_titles[0], question, count=1)
-        if resolved != question:
-            question = resolved
-
-    # Only attach full answer context for content transform operations
-    if not is_transform:
-        return question
-
-    previous_question = _compact_context_text(context.get("question"), 240)
-    previous_answer = _compact_context_text(context.get("answer"), 2400)
-    if not previous_question and not previous_answer:
-        return question
-
-    parts = [
-        question,
-        "",
-        "上一轮上下文（供本轮理解指代，不要逐字复述）：",
-    ]
-    if previous_question:
-        parts.append(f"上一轮问题：{previous_question}")
-    if item_titles:
-        parts.append(f"相关项目：{'、'.join(item_titles)}")
-    if previous_answer:
-        parts.append(f"可改写原文：\n{previous_answer}")
-    return "\n".join(parts)
-
-
-def _needs_previous_context(question: str) -> bool:
-    text = str(question or "").strip()
-    if not text:
-        return False
-    if _CONTEXT_LEAD_RE.search(text):
-        return True
-    if re.search(r"^\s*(改成|改为|换成|润色|压缩|精简|扩写|翻译|做成|来个|更)", text) and _CONTEXT_TRANSFORM_RE.search(text):
-        return True
-    return False
-
-
-def _compact_context_text(value, limit: int) -> str:
-    text = str(value or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[:limit].rstrip() + "……"
-
-
-def _context_item_titles(items) -> list[str]:
-    if not isinstance(items, list):
-        return []
-    titles: list[str] = []
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        title = str(item.get("title") or "").strip()
-        if title and title not in titles:
-            titles.append(title)
-        if len(titles) >= 5:
-            break
-    return titles
 
 
 def _stream_items(

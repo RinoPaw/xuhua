@@ -122,7 +122,7 @@ def test_model_planner_prompt_disambiguates_lecture_copy_from_study_task():
 
     assert "讲解词" in prompt
     assert "content_transform" in prompt
-    assert "不要因为出现“讲解”就归为 study_task" in prompt
+    assert "不要因为出现「讲解」就归为 study_task" in prompt
     assert "不要因为用于展馆就归为 exhibition_plan" in prompt
 
 

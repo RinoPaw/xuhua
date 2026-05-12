@@ -128,13 +128,13 @@ def test_speech_prompt_lets_model_keep_suitable_text():
     assert "文化推广结尾" in prompt
     assert "生活场景、体验邀请、参观建议或传承呼吁" in prompt
     assert "如果它无需修改，请直接输出原文" in prompt
-    assert "不要写“无需修改”" in prompt
+    assert "不要解释判断过程" in prompt
 
 
 def test_speech_cleanup_keeps_cultural_call_to_action_without_emoji():
     speech = clean_spoken_output(
         "所以，下次过年，不妨搞一张朱仙镇木版年画贴在家里。"
-        "那一抹浓烈的色彩，就是穿越千年的“祝福弹幕”。"
+        "那一抹浓烈的色彩，就是穿越千年的'祝福弹幕'。"
         "想体验的，还可以去非遗馆亲手印一张，超解压！📢"
     )
 

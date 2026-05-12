@@ -3,7 +3,7 @@ import { state, els } from './state.js';
 import { escapeHtml, renderMarkdown } from './markdown.js';
 import { itemTitle, itemMetaParts, itemTagList, renderRelatedItems, beginAskSessionRelated } from './search.js';
 import { responseHumanState, setDigitalHumanState, scheduleHumanReturnToIdle, waitForThinkingDissolve, visualAnswerDuration } from './human.js';
-import { speakAnswer, stopSpeech, unlockSpeech, resetLastSpeechText } from './speech.js';
+import { speakAnswer, stopSpeech, unlockSpeech, resetLastSpeechText, voiceEnabled } from './speech.js';
 import { bindQueryChips, bindResultItemLinks } from './ui.js';
 
 let askAbortController = null;
@@ -505,6 +505,13 @@ function applyAnswerSpeech(event) {
     length: text.length,
     text,
   });
+
+  if (!voiceEnabled) {
+    // Voice is off — update caption silently, don't speak
+    setDigitalHumanState(lastSpeechHumanState, "正在回答", text);
+    return;
+  }
+
   lastSpeechHumanState = responseHumanState(state.query || "");
   setDigitalHumanState(lastSpeechHumanState, "正在回答", text);
   if (!speakAnswer(text, speechAudioUrl, { serverTts: speechAudioPending })) {

@@ -16,7 +16,35 @@ let speechUnlocked = false;
 let speechCancelTimer = 0;
 let speechStartGuardTimer = 0;
 export let voiceState = "idle";
+export let voiceEnabled = true;
 export let lastSpeechHumanState = "speaking";
+
+export function setVoiceEnabled(enabled) {
+  voiceEnabled = enabled;
+  if (!enabled) {
+    stopSpeech();
+  }
+  if (els.voiceToggle) {
+    els.voiceToggle.dataset.state = enabled ? "idle" : "disabled";
+    els.voiceToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
+    if (!enabled) {
+      els.voiceToggle.setAttribute("disabled", "disabled");
+    } else {
+      els.voiceToggle.removeAttribute("disabled");
+    }
+    const label = els.voiceToggle.querySelector(".voice-label");
+    if (label) {
+      label.textContent = enabled ? "播报中" : "已关闭";
+    }
+  }
+  if (enabled) {
+    setVoiceState("idle");
+    setVoiceStatus("");
+  } else {
+    setVoiceState("disabled");
+    setVoiceStatus("已关闭");
+  }
+}
 
 export function speakAnswer(value, audioUrl = "", options = {}) {
   lastSpeechText = speechText(value);

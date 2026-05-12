@@ -46,7 +46,7 @@ def test_homepage_contains_digital_human_panel():
     assert 'id="relatedTitle"' in html
     assert "vendor/purify.min.js" in html
     assert "vendor/marked.umd.js" in html
-    assert "20260512-asyncspeech" in html
+    assert "20260512-voicetoggle" in html
     assert response.headers["Cache-Control"] == "no-store, max-age=0"
 
 
@@ -79,8 +79,9 @@ def test_voice_button_uses_play_stop_without_pause():
     main_script = (ROOT / "static" / "js" / "main.js").read_text(encoding="utf-8")
     styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
 
-    assert 'label.textContent = { speaking: "停止", idle: "播放", disabled: "播放" }[state] || "播放";' in speech_script
-    assert 'setVoiceStatus("已停止")' in main_script
+    assert 'export let voiceEnabled = true;' in speech_script
+    assert 'export function setVoiceEnabled(enabled)' in speech_script
+    assert 'setVoiceEnabled(!voiceEnabled)' in main_script
     assert "window.speechSynthesis?.pause()" not in main_script
     assert '"paused"' not in main_script
     assert ".voice-button" in styles

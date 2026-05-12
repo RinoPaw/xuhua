@@ -1,10 +1,10 @@
 import { state, bindElements, els } from './state.js';
 import { speechSupported } from './consts.js';
-import { initHuman, configureHumanVideoPlayback, scheduleHumanVideoAdvance, currentHumanState, setDigitalHumanState, restoreHumanVideoAfterVisibility } from './human.js';
-import { stopSpeech, unlockSpeech, setVoiceStatus, speakText, playAudioAnswer, voiceState, lastSpeechText, lastSpeechAudioUrl } from './speech.js';
+import { initHuman, configureHumanVideoPlayback, scheduleHumanVideoAdvance, restoreHumanVideoAfterVisibility } from './human.js';
+import { stopSpeech, unlockSpeech, setVoiceStatus, voiceEnabled, setVoiceEnabled } from './speech.js';
 import { renderQuerySuggestions, loadMeta, resizeQuestionInput, syncRestoredQuestion, handleQuestionInput } from './ui.js';
 import { updateRelatedItems, renderRelatedItems, updateRelatedPanelTitle } from './search.js';
-import { askQuestion, lastSpeechHumanState } from './ask.js';
+import { askQuestion } from './ask.js';
 
 function init() {
   bindElements({
@@ -55,30 +55,13 @@ function init() {
     }
   });
 
-  // Voice toggle
+  // Voice toggle — on/off switch
   els.voiceToggle?.addEventListener("click", () => {
     if (!speechSupported) {
       setVoiceStatus("浏览器不支持语音");
       return;
     }
-    if (voiceState === "speaking") {
-      stopSpeech();
-      setVoiceStatus("已停止");
-      return;
-    }
-    if (!lastSpeechText) {
-      setVoiceStatus("暂无可播报内容");
-      return;
-    }
-    if (currentHumanState !== "speaking" && currentHumanState !== "farewell") {
-      setDigitalHumanState(lastSpeechHumanState, "正在回答", lastSpeechText);
-    }
-    unlockSpeech();
-    if (lastSpeechAudioUrl) {
-      playAudioAnswer(lastSpeechAudioUrl, lastSpeechText);
-    } else {
-      speakText(lastSpeechText);
-    }
+    setVoiceEnabled(!voiceEnabled);
   });
 
   // SpeechSynthesis voice list

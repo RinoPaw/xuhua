@@ -175,24 +175,56 @@ data/processed/heritage_items.json
 xuhua/
 ├── app.py                         # 项目根目录启动器
 ├── src/heritage_explorer/         # 核心 Python 包
-│   ├── ai.py                      # AI 问答、本地兜底回答与提示词组织
+│   ├── agent/                     # Agent 意图路由、规划器与任务处理器
+│   │   ├── planner.py             #   LLM 规划器 prompt 构建
+│   │   └── handlers/              #   各任务类型处理器
+│   ├── ai/                        # AI 问答、语音生成与提示词
+│   │   ├── client.py              #   模型调用封装（chat + speech 双模型）
+│   │   ├── context.py             #   上下文构建
+│   │   ├── prompts.py             #   系统提示词
+│   │   ├── qa.py                  #   问答流程编排
+│   │   └── speech.py              #   语音播报文本生成
+│   ├── agent_comparison.py        # Agent 对比评估
+│   ├── agent_models.py            # Agent 任务类型与决策模型
+│   ├── agent_task_config.py       # 任务配置与提示词
 │   ├── config.py                  # 环境变量和路径配置
 │   ├── dataset.py                 # 数据集加载、分类统计与条目序列化
 │   ├── embeddings.py              # OpenAI 兼容 embedding 索引与语义召回
-│   ├── search.py                  # 关键词检索和排序
+│   ├── extractor.py               # 结构化字段提取与溯源
+│   ├── http_client.py             # 统一 HTTP 层（httpx + zhipuai 自动路由）
+│   ├── item_cards.py              # 条目卡片渲染
+│   ├── retriever.py               # 查询分析与实体抽取
+│   ├── search.py                  # 关键词检索和混合排序
+│   ├── volc_tts.py                # 火山引擎服务端 TTS
 │   └── web.py                     # Flask 页面与 API
 ├── data/processed/
-│   └── heritage_items.json        # 已处理的牡丹非遗知识库数据
+│   └── heritage_items.json        # 已处理的非遗知识库数据
 ├── data/embeddings/               # 本地生成的语义索引，不上传 GitHub
 ├── static/
-│   ├── app.js                     # 前端交互、问答、语音播报和数字人状态
 │   ├── styles.css                 # Web UI 样式
-│   └── media/                     # 数字人 idle/greet/speak 视频
+│   ├── js/                        # 前端 ES 模块
+│   │   ├── main.js                #   入口
+│   │   ├── ask.js                 #   问答请求与 SSE 流
+│   │   ├── search.js              #   搜索建议
+│   │   ├── speech.js              #   语音播报控制
+│   │   ├── human.js               #   数字人视频状态机
+│   │   ├── markdown.js            #   Markdown 渲染
+│   │   ├── ui.js                  #   UI 交互
+│   │   ├── state.js               #   全局状态
+│   │   └── consts.js              #   常量
+│   ├── media/                     # 数字人视频
+│   └── vendor/                    # 第三方库（marked, DOMPurify）
 ├── templates/
-│   └── index.html                 # 主页面模板
+│   ├── index.html                 # 主页面
+│   ├── study_task.md.j2           # 学习任务模板
+│   ├── exhibition_plan.md.j2      # 展览方案模板
+│   └── transform_local.md.j2      # 内容改写本地兜底模板
 ├── scripts/
 │   ├── build_dataset.py           # 从旧项目重新生成数据集
-│   └── build_embeddings.py        # 调用 embedding 接口生成本地语义索引
+│   ├── build_embeddings.py        # 调用 embedding 接口生成本地语义索引
+│   ├── build_embeddings.ps1       # embedding 构建 PowerShell 包装
+│   ├── import_ihchina_projects.py # 从 ihchina.cn 导入非遗项目
+│   └── migrate_dataset.py         # 数据集格式迁移
 ├── tests/                         # 单元测试
 ├── .env.example                   # 配置模板
 ├── .env                           # 本地配置，不上传 GitHub

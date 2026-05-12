@@ -17,5 +17,6 @@ tmp/
 data/embeddings/
 *.log
 skills-lock.json
+新形象/
 Thumbs.db
 .DS_Store

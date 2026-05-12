@@ -24,25 +24,34 @@ export function setVoiceEnabled(enabled) {
   if (!enabled) {
     stopSpeech();
   }
-  if (els.voiceToggle) {
-    els.voiceToggle.dataset.state = enabled ? "idle" : "disabled";
-    els.voiceToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
-    if (!enabled) {
-      els.voiceToggle.setAttribute("disabled", "disabled");
-    } else {
-      els.voiceToggle.removeAttribute("disabled");
-    }
+  setVoiceState(enabled ? "idle" : "disabled");
+  setVoiceStatus(enabled ? "" : "已关闭");
+  refreshVoiceToggleUI();
+}
+
+function refreshVoiceToggleUI() {
+  if (!els.voiceToggle) return;
+  if (!voiceEnabled) {
+    els.voiceToggle.dataset.state = "disabled";
+    els.voiceToggle.setAttribute("disabled", "disabled");
+    els.voiceToggle.setAttribute("aria-pressed", "false");
+    els.voiceToggle.classList.remove("is-speaking");
     const label = els.voiceToggle.querySelector(".voice-label");
-    if (label) {
-      label.textContent = enabled ? "播报中" : "已关闭";
-    }
-  }
-  if (enabled) {
-    setVoiceState("idle");
-    setVoiceStatus("");
+    if (label) label.textContent = "已关闭";
+  } else if (voiceState === "speaking") {
+    els.voiceToggle.dataset.state = "speaking";
+    els.voiceToggle.removeAttribute("disabled");
+    els.voiceToggle.setAttribute("aria-pressed", "true");
+    els.voiceToggle.classList.add("is-speaking");
+    const label = els.voiceToggle.querySelector(".voice-label");
+    if (label) label.textContent = "播报中";
   } else {
-    setVoiceState("disabled");
-    setVoiceStatus("已关闭");
+    els.voiceToggle.dataset.state = "idle";
+    els.voiceToggle.removeAttribute("disabled");
+    els.voiceToggle.setAttribute("aria-pressed", "true");
+    els.voiceToggle.classList.remove("is-speaking");
+    const label = els.voiceToggle.querySelector(".voice-label");
+    if (label) label.textContent = "播报";
   }
 }
 
@@ -134,19 +143,7 @@ export function setVoiceStatus(value) {
 
 export function setVoiceState(state) {
   voiceState = state;
-  if (!els.voiceToggle) return;
-  els.voiceToggle.classList.toggle("is-speaking", state === "speaking");
-  els.voiceToggle.dataset.state = state;
-  els.voiceToggle.setAttribute("aria-pressed", state === "speaking" ? "true" : "false");
-  if (state === "disabled") {
-    els.voiceToggle.setAttribute("disabled", "disabled");
-  } else {
-    els.voiceToggle.removeAttribute("disabled");
-  }
-  const label = els.voiceToggle.querySelector(".voice-label");
-  if (label) {
-    label.textContent = { speaking: "停止", idle: "播放", disabled: "播放" }[state] || "播放";
-  }
+  refreshVoiceToggleUI();
 }
 
 export function speakText(text, playbackSeq = ++speechPlaybackSeq) {

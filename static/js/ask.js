@@ -506,14 +506,14 @@ function applyAnswerSpeech(event) {
     text,
   });
 
+  lastSpeechHumanState = responseHumanState(state.query || "");
+  setDigitalHumanState(lastSpeechHumanState, "正在回答", text);
+
   if (!voiceEnabled) {
-    // Voice is off — update caption silently, don't speak
-    setDigitalHumanState(lastSpeechHumanState, "正在回答", text);
+    scheduleHumanReturnToIdle(visualAnswerDuration(text));
     return;
   }
 
-  lastSpeechHumanState = responseHumanState(state.query || "");
-  setDigitalHumanState(lastSpeechHumanState, "正在回答", text);
   if (!speakAnswer(text, speechAudioUrl, { serverTts: speechAudioPending })) {
     scheduleHumanReturnToIdle(visualAnswerDuration(text));
   }

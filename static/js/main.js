@@ -1,6 +1,6 @@
 import { state, bindElements, els } from './state.js';
 import { speechSupported } from './consts.js';
-import { initHuman, configureHumanVideoPlayback, scheduleHumanVideoAdvance, currentHumanState, setDigitalHumanState } from './human.js';
+import { initHuman, configureHumanVideoPlayback, scheduleHumanVideoAdvance, currentHumanState, setDigitalHumanState, restoreHumanVideoAfterVisibility } from './human.js';
 import { stopSpeech, unlockSpeech, setVoiceStatus, speakText, playAudioAnswer, voiceState, lastSpeechText, lastSpeechAudioUrl } from './speech.js';
 import { renderQuerySuggestions, loadMeta, resizeQuestionInput, syncRestoredQuestion, handleQuestionInput } from './ui.js';
 import { updateRelatedItems, renderRelatedItems, updateRelatedPanelTitle } from './search.js';
@@ -92,6 +92,9 @@ function init() {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       stopSpeech({ delayed: true });
+    } else {
+      // Browser may have suspended video playback while tab was hidden
+      restoreHumanVideoAfterVisibility();
     }
   });
 

@@ -181,6 +181,17 @@ export function scheduleHumanReturnToIdle(delayMs) {
   }, delayMs);
 }
 
+export function restoreHumanVideoAfterVisibility() {
+  if (!activeHumanVideo) return;
+  // Browser may have suspended playback while tab was hidden
+  if (activeHumanVideo.paused) {
+    activeHumanVideo.play().catch(() => {});
+  }
+  // Re-schedule the idle loop — background timer throttling may have expired it
+  window.clearTimeout(humanLoopTimer);
+  scheduleHumanVideoAdvance(activeHumanVideo, currentHumanState);
+}
+
 export function visualAnswerDuration(text) {
   const length = stripMarkdown(text).length;
   return Math.min(22000, Math.max(7500, 3600 + length * 90));

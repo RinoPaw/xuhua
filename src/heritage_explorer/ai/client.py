@@ -10,7 +10,7 @@ from ..dataset import HeritageItem
 def call_model_with_messages(
     messages: list[dict[str, str]],
     temperature: float = 0.2,
-    max_tokens: int = 1000,
+    max_tokens: int = 2000,
 ) -> str:
     """Send a chat completion via the unified http_client."""
     from ..http_client import chat_completion
@@ -24,7 +24,7 @@ def call_chat_model(question: str, sources: list[HeritageItem]) -> str:
     return call_model_with_messages(
         build_messages(question, sources),
         temperature=0.2,
-        max_tokens=1000,
+        max_tokens=2000,
     )
 
 

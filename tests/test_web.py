@@ -275,7 +275,7 @@ def test_all_digital_human_video_states_use_dissolve_scheduler():
 
 
 def test_agent_progress_uses_search_wording_outside_preserved_thinking_states():
-    agent_source = (ROOT / "src" / "heritage_explorer" / "agent.py").read_text(encoding="utf-8")
+    agent_source = (ROOT / "src" / "heritage_explorer" / "agent" / "__init__.py").read_text(encoding="utf-8")
 
     assert 'self._progress_event("search", "检索资料"' in agent_source
     assert '"title": "思考资料"' not in agent_source

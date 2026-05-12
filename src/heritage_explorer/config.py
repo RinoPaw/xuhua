@@ -23,7 +23,6 @@ def load_dotenv(path: Path = PROJECT_ROOT / ".env") -> None:
             os.environ[key] = value
 
 
-load_dotenv()
 
 
 def env_path(name: str, default: str) -> Path:

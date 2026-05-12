@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
-import urllib.error
-import urllib.request
 from dataclasses import replace
 from typing import Any
 
@@ -821,35 +818,16 @@ _TRANSFORM_PROMPTS: dict[str, str] = {
 
 def _call_transform_model(transform_type: str, context: str, query: str) -> str:
     """Call LLM with a task-specific system prompt for content transformation."""
-    import json
-    import urllib.error
-    import urllib.request
-
-    from .. import config
+    from ..http_client import chat_completion
 
     system_prompt = _TRANSFORM_PROMPTS.get(transform_type, _TRANSFORM_PROMPTS["改写"])
-    payload = {
-        "model": config.AI_MODEL,
-        "messages": [
+    return chat_completion(
+        [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"任务要求：{query}\n\n非遗项目资料：\n{context}"},
         ],
-        "temperature": 0.7,
-    }
-    url = config.AI_BASE_URL.rstrip("/") + "/chat/completions"
-    data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(
-        url,
-        data=data,
-        headers={
-            "Authorization": f"Bearer {config.AI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
+        temperature=0.7,
     )
-    with urllib.request.urlopen(request, timeout=config.AI_TIMEOUT) as response:
-        body = json.loads(response.read().decode("utf-8"))
-    return body["choices"][0]["message"]["content"].strip()
 
 
 def _build_transform_local(transform_type: str, target_item, meta) -> str:

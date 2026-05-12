@@ -5,15 +5,8 @@ from __future__ import annotations
 from ..ai.client import (
     call_chat_model,
     call_model_with_messages,
-    call_openai_compatible_messages,
-    call_openai_compatible_model,
     call_speech_model,
-    call_zhipu_messages,
-    call_zhipu_sdk,
     describe_model_error,
-    sanitize_error,
-    should_use_zhipu_sdk,
-    zhipu_extra_options,
 )
 from ..ai.context import (
     build_context,
@@ -49,11 +42,7 @@ __all__ = [
     "build_spoken_answer",
     "call_chat_model",
     "call_model_with_messages",
-    "call_openai_compatible_messages",
-    "call_openai_compatible_model",
     "call_speech_model",
-    "call_zhipu_messages",
-    "call_zhipu_sdk",
     "clean_knowledge_text",
     "clean_spoken_output",
     "describe_model_error",
@@ -61,9 +50,6 @@ __all__ = [
     "extract_structured_field",
     "fact_question_sources",
     "item_context_text",
-    "sanitize_error",
-    "should_use_zhipu_sdk",
     "source_payload",
     "summarize_snippet",
-    "zhipu_extra_options",
 ]

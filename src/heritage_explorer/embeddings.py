@@ -6,14 +6,14 @@ import json
 import math
 import textwrap
 import time
-import urllib.error
-import urllib.request
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from . import config
 from .dataset import HeritageItem, KnowledgeBase, normalize_text
@@ -90,8 +90,8 @@ class EmbeddingClient:
         raise EmbeddingUnavailable(last_error or "Embedding request failed.")
 
     def retry_delay(self, exc: Exception, attempt: int) -> float:
-        if isinstance(exc.__cause__, urllib.error.HTTPError):
-            retry_after = exc.__cause__.headers.get("Retry-After")
+        if isinstance(exc, EmbeddingUnavailable) and isinstance(exc.__cause__, httpx.HTTPStatusError):
+            retry_after = exc.__cause__.response.headers.get("Retry-After")
             if retry_after:
                 try:
                     return max(float(retry_after), 0.0)
@@ -100,32 +100,12 @@ class EmbeddingClient:
         return self.retry_backoff * (attempt + 1)
 
     def _embed_texts_once(self, texts: list[str]) -> list[list[float]]:
-        payload = {
-            "model": self.model,
-            "input": texts,
-        }
-        request = urllib.request.Request(
-            self.base_url + "/embeddings",
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            raise EmbeddingUnavailable(describe_embedding_error(exc, self.api_key)) from exc
-        except urllib.error.URLError as exc:
-            raise EmbeddingUnavailable(describe_embedding_error(exc, self.api_key)) from exc
+        from ..http_client import embedding_request, describe_error
 
         try:
-            rows = sorted(body["data"], key=lambda row: int(row.get("index", 0)))
-            return [list(map(float, row["embedding"])) for row in rows]
-        except (KeyError, TypeError, ValueError) as exc:
-            raise EmbeddingUnavailable("Unexpected embedding API response.") from exc
+            return embedding_request(texts)
+        except Exception as exc:
+            raise EmbeddingUnavailable(describe_error(exc, self.api_key)) from exc
 
 
 def build_embedding_text(item: HeritageItem, max_chars: int | None = None) -> str:
@@ -246,21 +226,6 @@ def dot(left: Iterable[float], right: Iterable[float]) -> float:
 
 
 def describe_embedding_error(exc: Exception, api_key: str = "") -> str:
-    if isinstance(exc, urllib.error.HTTPError):
-        detail = f"HTTPError {exc.code}"
-        try:
-            body = exc.read().decode("utf-8", errors="replace")
-        except Exception:  # noqa: BLE001 - best effort diagnostics only.
-            body = ""
-        if body:
-            detail += f": {body}"
-    elif isinstance(exc, urllib.error.URLError):
-        reason = getattr(exc, "reason", "")
-        detail = f"URLError: {reason or exc}"
-    else:
-        detail = str(exc) or type(exc).__name__
+    from ..http_client import describe_error
 
-    text = normalize_text(detail)
-    if api_key:
-        text = text.replace(api_key, "***")
-    return textwrap.shorten(text, width=220, placeholder="...")
+    return describe_error(exc, api_key)

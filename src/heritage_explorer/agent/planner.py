@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.request
 from typing import Any
 
 from .. import config
@@ -17,25 +15,13 @@ def call_agent_planner_model(query: str, kb: KnowledgeBase, category: str = "") 
         raise RuntimeError("AI_AGENT_PLANNER is disabled")
     if not config.AI_API_KEY:
         raise RuntimeError("AI_API_KEY is not configured")
-    payload = {
-        "model": config.AI_MODEL,
-        "messages": build_agent_planner_messages(query, kb, category),
-        "temperature": 0,
-        **agent_planner_extra_options(),
-    }
-    request = urllib.request.Request(
-        config.AI_BASE_URL.rstrip("/") + "/chat/completions",
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {config.AI_API_KEY}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=min(config.AI_TIMEOUT, 20)) as response:
-        body = json.loads(response.read().decode("utf-8"))
+    from ..http_client import chat_completion
 
-    content = body["choices"][0]["message"]["content"]
+    content = chat_completion(
+        build_agent_planner_messages(query, kb, category),
+        temperature=0,
+        extra_options=agent_planner_extra_options(),
+    )
     plan = json.loads(extract_json_object(content))
     return decision_from_planner_payload(plan, query, kb, category)
 

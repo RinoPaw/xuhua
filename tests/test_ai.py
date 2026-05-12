@@ -275,7 +275,7 @@ def test_context_omits_backend_coordinate_fields():
 
 
 def test_zhipu_reasoning_models_disable_thinking(monkeypatch):
-    from heritage_explorer.ai.client import call_zhipu_sdk
+    from heritage_explorer.ai.client import call_model_with_messages
 
     captured = {}
 
@@ -296,20 +296,11 @@ def test_zhipu_reasoning_models_disable_thinking(monkeypatch):
     monkeypatch.setitem(sys.modules, "zhipuai", types.SimpleNamespace(ZhipuAI=FakeClient))
     monkeypatch.setattr(config, "AI_API_KEY", "test-key")
     monkeypatch.setattr(config, "AI_BASE_URL", "https://open.bigmodel.cn/api/paas/v4")
-    source = HeritageItem(
-        id="shadow",
-        title="皮影戏",
-        family="",
-        category="传统戏剧",
-        summary="皮影戏资料",
-        content="皮影戏资料",
-        search_text="皮影戏",
-        source={},
-    )
+    messages = [{"role": "user", "content": "皮影戏资料"}]
 
     for model in ("glm-4.5-flash", "glm-4.7-flash", "glm-5.1"):
         captured.clear()
         monkeypatch.setattr(config, "AI_MODEL", model)
 
-        assert call_zhipu_sdk("皮影戏", [source]) == "智谱回答"
+        assert call_model_with_messages(messages) == "智谱回答"
         assert captured["thinking"] == {"type": "disabled"}

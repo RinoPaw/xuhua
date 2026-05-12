@@ -46,7 +46,7 @@ def test_homepage_contains_digital_human_panel():
     assert 'id="relatedTitle"' in html
     assert "vendor/purify.min.js" in html
     assert "vendor/marked.umd.js" in html
-    assert "20260512-voicetoggle" in html
+    assert "20260512-textfirst" in html
     assert response.headers["Cache-Control"] == "no-store, max-age=0"
 
 
@@ -163,7 +163,7 @@ def test_loading_progress_uses_fixed_event_driven_steps():
     assert "loadingProgressQueue.push(index);" in progress_block
     assert "scheduleNextLoadingStep();" in progress_block
     assert "function waitForLoadingSteps()" in ask_script
-    assert "await waitForLoadingSteps();" in ask_script
+    assert "stopLoadingSteps();" in ask_script
     assert "title: event.title" not in progress_block
     assert "let stepIndex = 0;" not in ask_script
 

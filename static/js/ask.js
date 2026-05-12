@@ -476,21 +476,17 @@ function buildAskContext(question) {
 }
 
 async function presentAskResult(requestId, controller, question, payload, thinkingStartedAt) {
-  await waitForThinkingDissolve(thinkingStartedAt);
-  if (!isActiveAskRequest(requestId, controller)) {
-    return;
-  }
-  await waitForLoadingSteps();
-  if (!isActiveAskRequest(requestId, controller)) {
-    return;
-  }
-
+  // Display answer text immediately — don't wait for video dissolve
+  stopLoadingSteps();
   state.currentTaskType = payload?.task_type || "";
   setAnswerResult(question, payload);
   rememberAskContext(question, payload);
   els.answerMode.textContent = taskModeLabel(payload);
   const related = answerRelatedItems(payload);
   renderRelatedItems(related, payload?.total_count || related.length);
+
+  // Video dissolve is visual polish for the digital human, can happen after text is visible
+  await waitForThinkingDissolve(thinkingStartedAt);
 }
 
 function applyAnswerSpeech(event) {

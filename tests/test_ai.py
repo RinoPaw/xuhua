@@ -9,7 +9,7 @@ from heritage_explorer.ai import (
     direct_item_matches,
     fact_question_sources,
 )
-from heritage_explorer.dataset import HeritageItem, load_dataset
+from heritage_explorer.dataset import load_dataset
 import sys
 import types
 

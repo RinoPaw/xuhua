@@ -5,7 +5,10 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
+
+from jinja2 import Environment, FileSystemLoader
 
 from .. import config
 from ..agent_models import (
@@ -24,7 +27,7 @@ from ..dataset import (
     normalize_text,
 )
 from ..item_cards import _enriched_item_card, _source_payload, _title_with_family
-from .planner import (
+from .planner import (  # noqa: F401 - re-exported for backward compat
     agent_planner_extra_options,
     build_agent_planner_messages,
     call_agent_planner_model,
@@ -43,14 +46,19 @@ __all__ = [
     "TaskType",
     "TASK_CONFIGS",
     "_TASK_CONFIGS",
+    "agent_planner_extra_options",
+    "build_agent_planner_messages",
+    "call_agent_planner_model",
+    "clamp_float",
+    "decision_from_planner_payload",
+    "extract_json_object",
+    "normalize_query_with_pinyin_anchor",
+    "replace_homophone_span",
     "task_type_from_str",
     "task_type_label",
 ]
 
 LOGGER = logging.getLogger(__name__)
-
-from pathlib import Path
-from jinja2 import Environment, FileSystemLoader
 
 _TEMPLATE_DIR = Path(__file__).resolve().parents[3] / "templates"
 _JINJA_ENV = Environment(

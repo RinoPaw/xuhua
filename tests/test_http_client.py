@@ -1,5 +1,4 @@
 """Tests for http_client: singleton, error wrapping, API key sanitization."""
-import pytest
 import httpx
 from heritage_explorer.http_client import (
     get_http_client,

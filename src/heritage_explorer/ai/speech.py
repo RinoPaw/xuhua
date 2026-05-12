@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
 
 from .. import config
 from ..dataset import HeritageItem, normalize_text
-from ..ai.context import build_context, item_context_text, extract_structured_field, clean_knowledge_text
+from ..ai.context import build_context, extract_structured_field, clean_knowledge_text
 from ..ai.prompts import get_emoji_re, qa_system_prompt, speech_system_prompt
 
 

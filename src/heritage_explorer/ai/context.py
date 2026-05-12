@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 
-from .. import config
 from ..dataset import HeritageItem, normalize_text
 from ..ai.prompts import get_structured_labels
 

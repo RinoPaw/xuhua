@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable
+from functools import lru_cache
 
 from . import config
 from .dataset import HeritageItem, KnowledgeBase, normalize_text
@@ -20,7 +21,6 @@ SEMANTIC_RANK_WEIGHT = 1.35
 # Pinyin fuzzy search constants
 _PINYIN_MIN_QUERY_LEN = 2  # minimum query chars to try pinyin matching
 _PINYIN_MATCH_BONUS = 0.3  # score for pinyin-exact match
-_PINYIN_INDEX: dict[str, list[str]] | None = None
 _SEARCH_TRAILING_PUNCTUATION = "？?！!。.，,、 \t\r\n"
 _SEARCH_QUERY_FILLERS = (
     "是什么",
@@ -53,19 +53,21 @@ _SEARCH_QUERY_FILLERS = (
 )
 
 
-def _build_pinyin_index(kb: KnowledgeBase) -> dict[str, list[str]]:
+@lru_cache(maxsize=1)
+def _build_pinyin_index(kb_hash: str) -> dict[str, list[str]]:
     """Build a pinyin-to-item-id index for all heritage items.
 
     Converts each item's title and family to pinyin and maps the
     resulting pinyin strings to item IDs for homophone fuzzy matching.
+    kb_hash is a cache key derived from the dataset for thread safety.
     """
-    global _PINYIN_INDEX
-    if _PINYIN_INDEX is not None:
-        return _PINYIN_INDEX
-
     try:
         from pypinyin import lazy_pinyin  # noqa: PLC0415 - optional dependency
+        # We need kb inside the function but want the signature to accept
+        # a cache key string.  Pull the singleton via dataset.
+        from .dataset import load_dataset
 
+        kb = load_dataset()
         index: dict[str, list[str]] = {}
         for item in kb.items:
             texts = [item.title]
@@ -76,12 +78,10 @@ def _build_pinyin_index(kb: KnowledgeBase) -> dict[str, list[str]]:
                 py_compact = py.replace(" ", "")
                 if py_compact:
                     index.setdefault(py_compact, []).append(item.id)
-        _PINYIN_INDEX = index
         LOGGER.info("Pinyin index built: %d entries", len(index))
         return index
     except ImportError:
         LOGGER.debug("pypinyin not installed, pinyin fuzzy search disabled")
-        _PINYIN_INDEX = {}
         return {}
 
 
@@ -98,7 +98,7 @@ def search_items_pinyin(
     if not query or len(query) < _PINYIN_MIN_QUERY_LEN:
         return []
 
-    index = _build_pinyin_index(kb)
+    index = _build_pinyin_index(kb.generated_at or str(len(kb.items)))
     if not index:
         return []
 

@@ -9,7 +9,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
-def load_dotenv(path: Path = PROJECT_ROOT / ".env") -> None:
+def load_dotenv(path: Path | None = None) -> None:
+    if path is None:
+        path = PROJECT_ROOT / ".env"
     if not path.exists():
         return
     for raw_line in path.read_text(encoding="utf-8").splitlines():
@@ -23,6 +25,7 @@ def load_dotenv(path: Path = PROJECT_ROOT / ".env") -> None:
             os.environ[key] = value
 
 
+load_dotenv()
 
 
 def env_path(name: str, default: str) -> Path:

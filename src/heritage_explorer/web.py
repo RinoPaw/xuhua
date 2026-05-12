@@ -343,10 +343,6 @@ def _item_payload(item, include_content: bool = False) -> dict:
 
 
 def main() -> None:
-    from .config import load_dotenv
-
-    load_dotenv()
-
     create_app().run(host=HOST, port=PORT, debug=DEBUG)
 
 

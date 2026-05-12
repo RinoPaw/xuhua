@@ -11,6 +11,9 @@ from .config import DEBUG, HOST, PORT, TTS_CACHE_DIR, VOLC_TTS_API_KEY, VOLC_TTS
 from .dataset import get_knowledge_base, item_to_dict
 from .search import search_items, search_items_lexical
 from .volc_tts import (
+    openai_tts_available,
+    server_tts_available,
+    server_tts_engine,
     stream_speech_audio,
     synthesize_speech_to_file,
     valid_tts_filename,
@@ -25,13 +28,11 @@ def create_app() -> Flask:
         static_folder="../../static",
     )
 
-    tts_ready = volc_tts_available()
     app.logger.info(
-        "TTS engine: %s (enabled=%s api_key=%s app_id=%s)",
-        "volcengine" if tts_ready else "browser",
-        VOLC_TTS_ENABLED,
-        bool(VOLC_TTS_API_KEY),
-        bool(VOLC_TTS_APP_ID),
+        "TTS: engine=%s volc=%s openai=%s",
+        server_tts_engine(),
+        volc_tts_available(),
+        openai_tts_available(),
     )
 
     @app.after_request
@@ -203,8 +204,11 @@ def create_app() -> Flask:
 
 
 def _speech_audio_hint(speech: str) -> dict:
-    if speech and volc_tts_available():
-        return {"speech_engine": "volcengine", "speech_audio_pending": True}
+    if speech and server_tts_available():
+        return {
+            "speech_engine": server_tts_engine(),
+            "speech_audio_pending": True,
+        }
     return {"speech_engine": "browser"}
 
 

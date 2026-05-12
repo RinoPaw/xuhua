@@ -1,10 +1,11 @@
-"""Volcengine TTS integration for server-side speech audio."""
+"""Server-side TTS: Volcengine + OpenAI-compatible fallback."""
 
 from __future__ import annotations
 
 import base64
 import hashlib
 import json
+import logging
 import re
 import uuid
 from collections.abc import Iterator
@@ -13,6 +14,8 @@ from pathlib import Path
 from urllib import request
 
 from . import config
+
+LOGGER = logging.getLogger(__name__)
 
 
 class VolcTTSError(RuntimeError):
@@ -26,6 +29,24 @@ class TTSAudio:
     engine: str = "volcengine"
 
 
+def openai_tts_available() -> bool:
+    """True when AI API key is configured and can serve as TTS fallback."""
+    return bool(config.AI_API_KEY) and bool(config.AI_BASE_URL)
+
+
+def server_tts_available() -> bool:
+    """True when any server-side TTS engine is available."""
+    return volc_tts_available() or openai_tts_available()
+
+
+def server_tts_engine() -> str:
+    if volc_tts_available():
+        return "volcengine"
+    if openai_tts_available():
+        return "openai"
+    return "browser"
+
+
 def volc_tts_available() -> bool:
     if not config.VOLC_TTS_ENABLED:
         return False
@@ -36,27 +57,82 @@ def volc_tts_available() -> bool:
 
 def synthesize_speech_to_file(text: str) -> TTSAudio | None:
     text = _clean_text(text)
-    if not text or not volc_tts_available():
+    if not text:
         return None
 
     cache_dir = config.TTS_CACHE_DIR
     cache_dir.mkdir(parents=True, exist_ok=True)
-    path = cache_dir / f"{_cache_key(text)}.{config.VOLC_TTS_ENCODING}"
+    encoding = "mp3"  # OpenAI TTS uses mp3; Volcengine configured encoding
+    if volc_tts_available():
+        encoding = config.VOLC_TTS_ENCODING
+    path = cache_dir / f"{_cache_key(text)}.{encoding}"
     if path.is_file() and path.stat().st_size > 0:
-        return TTSAudio(path=path, mime_type=_mime_type())
+        engine = "volcengine" if volc_tts_available() else "openai"
+        return TTSAudio(path=path, mime_type=_mime_type(encoding), engine=engine)
 
-    audio = b"".join(_synthesize_chunk(chunk) for chunk in _text_chunks(text))
-    if not audio:
-        raise VolcTTSError("Volcengine TTS returned empty audio")
-    path.write_bytes(audio)
-    return TTSAudio(path=path, mime_type=_mime_type())
+    if volc_tts_available():
+        audio = b"".join(_synthesize_chunk(chunk) for chunk in _text_chunks(text))
+        if not audio:
+            raise VolcTTSError("Volcengine TTS returned empty audio")
+        path.write_bytes(audio)
+        return TTSAudio(path=path, mime_type=_mime_type(encoding), engine="volcengine")
+
+    if openai_tts_available():
+        return _openai_synthesize(text, path)
+
+    return None
 
 
 def stream_speech_audio(text: str) -> Iterator[bytes] | None:
     text = _clean_text(text)
-    if not text or not volc_tts_available():
+    if not text:
         return None
-    return _stream_chunks(text)
+    if volc_tts_available():
+        return _stream_chunks(text)
+    if openai_tts_available():
+        audio = _openai_tts_bytes(text)
+        if audio:
+            return _chunk_bytes(audio)
+    return None
+
+
+def _openai_synthesize(text: str, path: Path) -> TTSAudio | None:
+    audio = _openai_tts_bytes(text)
+    if not audio:
+        return None
+    path.write_bytes(audio)
+    return TTSAudio(path=path, mime_type="audio/mpeg", engine="openai")
+
+
+def _openai_tts_bytes(text: str) -> bytes | None:
+    """Call OpenAI-compatible /v1/audio/speech endpoint."""
+    import httpx
+
+    url = config.AI_BASE_URL.rstrip("/") + "/v1/audio/speech"
+    payload = {
+        "model": "tts-1",
+        "input": text,
+        "voice": "nova",
+        "response_format": "mp3",
+        "speed": 1.0,
+    }
+    headers = {
+        "Authorization": f"Bearer {config.AI_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    try:
+        client = httpx.Client(timeout=httpx.Timeout(30.0))
+        response = client.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        return response.content
+    except Exception as exc:
+        LOGGER.warning("OpenAI TTS failed: %s", exc)
+        return None
+
+
+def _chunk_bytes(data: bytes, size: int = 32768) -> Iterator[bytes]:
+    for i in range(0, len(data), size):
+        yield data[i : i + size]
 
 
 def valid_tts_filename(filename: str) -> bool:
@@ -353,11 +429,12 @@ def _clean_text(text: str) -> str:
     return re.sub(r"\s+", " ", str(text or "")).strip()
 
 
-def _mime_type() -> str:
+def _mime_type(encoding: str = "") -> str:
+    enc = (encoding or config.VOLC_TTS_ENCODING).lower()
     return {
         "mp3": "audio/mpeg",
         "ogg": "audio/ogg",
         "opus": "audio/ogg",
         "wav": "audio/wav",
         "pcm": "audio/L16",
-    }.get(config.VOLC_TTS_ENCODING.lower(), "application/octet-stream")
+    }.get(enc, "application/octet-stream")

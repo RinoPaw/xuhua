@@ -7,7 +7,7 @@ import json
 from flask import Flask, Response, abort, jsonify, render_template, request, send_file, stream_with_context
 
 from .agent import Agent, AgentResult, task_type_label
-from .config import DEBUG, HOST, PORT, TTS_CACHE_DIR
+from .config import DEBUG, HOST, PORT, TTS_CACHE_DIR, VOLC_TTS_API_KEY, VOLC_TTS_APP_ID, VOLC_TTS_ENABLED
 from .dataset import get_knowledge_base, item_to_dict
 from .search import search_items, search_items_lexical
 from .volc_tts import (
@@ -23,6 +23,15 @@ def create_app() -> Flask:
         __name__,
         template_folder="../../templates",
         static_folder="../../static",
+    )
+
+    tts_ready = volc_tts_available()
+    app.logger.info(
+        "TTS engine: %s (enabled=%s api_key=%s app_id=%s)",
+        "volcengine" if tts_ready else "browser",
+        VOLC_TTS_ENABLED,
+        bool(VOLC_TTS_API_KEY),
+        bool(VOLC_TTS_APP_ID),
     )
 
     @app.after_request
@@ -147,6 +156,11 @@ def create_app() -> Flask:
                         'text': speech_text,
                         **speech_audio,
                     }
+                    app.logger.info(
+                        "Speech event: engine=%s text_len=%d",
+                        speech_payload.get("speech_engine", "browser"),
+                        len(speech_text),
+                    )
                     yield f"data: {json.dumps(speech_payload, ensure_ascii=False)}\n\n"
                 else:
                     yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"

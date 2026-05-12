@@ -46,7 +46,7 @@ def test_homepage_contains_digital_human_panel():
     assert 'id="relatedTitle"' in html
     assert "vendor/purify.min.js" in html
     assert "vendor/marked.umd.js" in html
-    assert "20260512-textfirst" in html
+    assert "20260512-ttslog" in html
     assert response.headers["Cache-Control"] == "no-store, max-age=0"
 
 

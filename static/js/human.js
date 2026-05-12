@@ -183,10 +183,33 @@ export function scheduleHumanReturnToIdle(delayMs) {
 
 export function restoreHumanVideoAfterVisibility() {
   if (!activeHumanVideo) return;
-  // Browser may have suspended playback while tab was hidden
-  if (activeHumanVideo.paused) {
+
+  // Clean up any stale dissolve state from while we were hidden
+  activeHumanVideo.classList.remove("is-dissolve-in", "is-dissolve-out");
+  activeHumanVideo.style.opacity = "";
+  if (standbyHumanVideo) {
+    standbyHumanVideo.classList.remove("is-dissolve-in", "is-dissolve-out");
+    standbyHumanVideo.style.opacity = "";
+  }
+
+  // Browser may have discarded video data — reload the current src if needed
+  if (activeHumanVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA && activeHumanVideo.src) {
+    const currentSrc = activeHumanVideo.src;
+    activeHumanVideo.load();
+    // Wait for the first frame before playing
+    const onReady = () => {
+      activeHumanVideo.removeEventListener("canplay", onReady);
+      activeHumanVideo.play().catch(() => {});
+    };
+    activeHumanVideo.addEventListener("canplay", onReady, { once: true });
+    window.setTimeout(() => {
+      activeHumanVideo.removeEventListener("canplay", onReady);
+      activeHumanVideo.play().catch(() => {});
+    }, 600);
+  } else if (activeHumanVideo.paused) {
     activeHumanVideo.play().catch(() => {});
   }
+
   // Re-schedule the idle loop — background timer throttling may have expired it
   window.clearTimeout(humanLoopTimer);
   scheduleHumanVideoAdvance(activeHumanVideo, currentHumanState);

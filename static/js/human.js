@@ -47,6 +47,18 @@ export function transitionHumanVideo(nextSrc, stateName = currentHumanState, opt
 
   window.clearTimeout(humanTransitionTimer);
   window.clearTimeout(humanDissolveTimer);
+
+  // Clean up any stale dissolve state from interrupted transitions
+  if (activeHumanVideo) {
+    activeHumanVideo.classList.remove("is-dissolve-in", "is-dissolve-out");
+    activeHumanVideo.style.opacity = "";
+  }
+  if (standbyHumanVideo) {
+    standbyHumanVideo.classList.remove("is-dissolve-in", "is-dissolve-out");
+    standbyHumanVideo.style.opacity = "";
+  }
+  els.digitalHumanVideo.parentElement?.classList.remove("is-dissolving");
+
   const incoming = standbyHumanVideo;
   const outgoing = activeHumanVideo;
   let started = false;
@@ -89,7 +101,7 @@ export function transitionHumanVideo(nextSrc, stateName = currentHumanState, opt
 
   incoming.addEventListener("loadeddata", startTransition, { once: true });
   incoming.addEventListener("canplay", startTransition, { once: true });
-  window.setTimeout(startTransition, 240);
+  window.setTimeout(startTransition, 500);
 }
 
 export function configureHumanVideoPlayback(video, stateName) {

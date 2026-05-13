@@ -1614,3 +1614,76 @@ textarea:focus {
   .seal-mark { width: 36px; height: 36px; font-size: 20px; }
   .inscription-text h1 { font-size: 17px; }
 }
+
+/* ── Bilingual card layout ── */
+.bilingual-card {
+  padding: 16px 0;
+}
+
+.bilingual-card .bilingual-head {
+  padding: 0 4px;
+  margin-bottom: 18px;
+}
+
+.bilingual-card .bilingual-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink-primary);
+  margin: 0 0 4px;
+}
+
+.bilingual-card .bilingual-subtitle {
+  font-size: 14px;
+  color: var(--ink-secondary);
+  font-style: italic;
+  margin: 0;
+}
+
+.bilingual-card .bilingual-intro {
+  padding: 0 4px;
+  margin-bottom: 16px;
+  font-size: 13px;
+  color: var(--ink-secondary);
+  line-height: 1.6;
+}
+
+.bilingual-card .bilingual-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bilingual-field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding: 12px 4px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.bilingual-field-row:last-child {
+  border-bottom: none;
+}
+
+.bilingual-field-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.bilingual-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+
+.bilingual-field-value {
+  font-size: 14px;
+  color: var(--ink-primary);
+  line-height: 1.5;
+  word-break: break-word;
+}

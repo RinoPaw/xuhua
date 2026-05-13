@@ -109,7 +109,9 @@ _TRANSFORM_TYPE_KEYWORDS: dict[str, str] = {
     "翻译": "翻译",
     "英文": "翻译",
     "英语": "翻译",
-    "双语": "双语",
+    "中英": "翻译",
+    "双语": "翻译",
+    "translate": "翻译",
     "讲解词": "讲解词",
     "讲解稿": "讲解词",
     "口播稿": "讲解词",
@@ -174,7 +176,7 @@ class QueryAnalysis:
     output_format: str = ""  # 列表 / 表格 / 方案文档 / 文案
 
     # ── content transform ──
-    transform_type: str = ""  # 翻译 / 年轻化 / 双语 / 文创文案
+    transform_type: str = ""  # 翻译 / 年轻化 / 讲解词 / 文创文案
 
     # ── backward-compat (used by agent.py) ──
     metadata_filters: dict[str, str] = field(default_factory=dict)

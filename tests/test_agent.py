@@ -326,11 +326,36 @@ def test_content_transform_llm_branch_uses_spoken_answer_rewrite(monkeypatch):
 
 
 def test_content_transform_prompts_keep_cultural_promotion_closing():
-    from heritage_explorer.agent import _TRANSFORM_PROMPTS
+    from heritage_explorer.agent import _TRANSFORM_MAX_TOKENS, _TRANSFORM_PROMPTS
+    from heritage_explorer.transform_config import TRANSFORM_MAX_TOKENS, TRANSFORM_PROMPTS
 
     assert "生活场景、参观体验或文化传承" in _TRANSFORM_PROMPTS["年轻化"]
     assert "体验邀请或文化推广" in _TRANSFORM_PROMPTS["朋友圈"]
     assert "鼓励参观、体验、关注传承" in _TRANSFORM_PROMPTS["讲解词"]
+    assert _TRANSFORM_MAX_TOKENS["讲解词"] > _TRANSFORM_MAX_TOKENS["朋友圈"]
+    assert _TRANSFORM_PROMPTS is TRANSFORM_PROMPTS
+    assert _TRANSFORM_MAX_TOKENS is TRANSFORM_MAX_TOKENS
+
+
+def test_call_transform_model_uses_larger_token_budget_for_guide_script(monkeypatch):
+    from heritage_explorer.agent import _call_transform_model
+
+    captured = {}
+
+    def fake_chat_completion(messages, temperature=0.2, max_tokens=1000, extra_options=None):
+        captured["messages"] = messages
+        captured["temperature"] = temperature
+        captured["max_tokens"] = max_tokens
+        captured["extra_options"] = extra_options
+        return "讲解词结果"
+
+    monkeypatch.setattr("heritage_explorer.http_client.chat_completion", fake_chat_completion)
+
+    result = _call_transform_model("讲解词", "项目资料", "给朱仙镇木版年画生成讲解词")
+
+    assert result == "讲解词结果"
+    assert captured["temperature"] == 0.7
+    assert captured["max_tokens"] == 2400
 
 
 def test_content_transform_targets_specific_title_in_suggestion_query(monkeypatch):
@@ -361,11 +386,12 @@ def test_content_transform_translation_produces_bilingual_fields(monkeypatch):
         lambda **_kwargs: (
             '{\n'
             '  "answer": "朱仙镇木版年画是中国传统美术瑰宝。",\n'
+            '  "speech_en": "Zhuxianzhen Woodblock New Year Prints is a representative form of traditional Chinese woodblock art. It is known for bold lines, bright colors, and festive imagery. The craft flourished in Kaifeng and remains closely tied to seasonal folk customs.",\n'
             '  "fields": {\n'
-            '    "名称": "Zhuxianzhen Woodblock New Year Prints",\n'
-            '    "类别": "Traditional Fine Arts",\n'
-            '    "简介": "One of China\'s oldest folk art forms.",\n'
-            '    "主要特色": "Bold outlines and vibrant colors."\n'
+            '    "名称": { "zh": "朱仙镇木版年画", "en": "Zhuxianzhen Woodblock New Year Prints" },\n'
+            '    "类别": { "zh": "传统美术", "en": "Traditional Fine Arts" },\n'
+            '    "简介": { "zh": "朱仙镇木版年画历史悠久，是中国传统木版年画的重要代表。", "en": "One of China\'s oldest folk art forms." },\n'
+            '    "主要特色": { "zh": "构图饱满、线条有力、色彩浓烈，年节气息鲜明。", "en": "Bold outlines and vibrant colors." }\n'
             '  }\n'
             '}'
         ),
@@ -380,10 +406,40 @@ def test_content_transform_translation_produces_bilingual_fields(monkeypatch):
     assert result.bilingual_fields[0] == {
         "label_cn": "名称",
         "label_en": "Name",
-        "value_cn": result.items[0]["title"],
+        "value_cn": "朱仙镇木版年画",
         "value_en": "Zhuxianzhen Woodblock New Year Prints",
     }
+    assert result.bilingual_fields[2]["value_cn"] == "朱仙镇木版年画历史悠久，是中国传统木版年画的重要代表。"
     assert result.answer == "朱仙镇木版年画是中国传统美术瑰宝。"
+    assert result.speech.startswith("Zhuxianzhen Woodblock New Year Prints is a representative form")
+
+
+def test_content_transform_bilingual_word_uses_translation_path(monkeypatch):
+    from heritage_explorer.dataset import load_dataset
+    from heritage_explorer import config
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    monkeypatch.setattr(config, "AI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "heritage_explorer.agent._call_transform_model",
+        lambda **_kwargs: (
+            '{"answer":"汴绣双语信息已整理。","speech_en":"Bian Embroidery is a famous embroidery tradition from Kaifeng. It is known for recreating classical Chinese paintings with refined stitching.","fields":{'
+            '"名称":{"zh":"汴绣","en":"Bian Embroidery"},'
+            '"类别":{"zh":"传统美术","en":"Traditional Fine Arts"},'
+            '"简介":{"zh":"汴绣是具有代表性的中原刺绣艺术。","en":"Bian embroidery is a traditional embroidery craft."},'
+            '"主要特色":{"zh":"针法细腻，画绣结合，格调典雅。","en":"Fine stitches and elegant imagery."}'
+            "}}"
+        ),
+    )
+
+    result = agent.dispatch("给汴绣生成中英双语介绍")
+
+    assert result.task_type is TaskType.CONTENT_TRANSFORM
+    assert result.mode == "llm"
+    assert result.bilingual_fields is not None
+    assert result.bilingual_fields[0]["value_en"] == "Bian Embroidery"
+    assert result.bilingual_fields[0]["value_cn"] == "汴绣"
 
 
 def test_content_transform_translation_no_api_key(monkeypatch):
@@ -556,6 +612,23 @@ def test_exhibition_plan_returns_template():
     assert "展示策划方案" in result.answer
     assert "推荐展项" in result.answer
     assert len(result.warnings) >= 1
+
+
+def test_exhibition_plan_with_one_small_exhibit_returns_one_core_item():
+    from heritage_explorer.dataset import load_dataset
+    from heritage_explorer.retriever import QueryAnalyzer
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    analysis = QueryAnalyzer(kb).analyze(
+        "策划一个适合社区活动展示的河南非遗小展",
+        TaskType.EXHIBITION_PLAN,
+    )
+    result = agent._handle_exhibition(analysis)
+
+    assert result.task_type is TaskType.EXHIBITION_PLAN
+    assert len(result.items) == 1
+    assert "1 个核心项目" in result.selection_reason or "1个核心项目" in result.selection_reason
 
 
 def test_agent_result_has_all_required_fields():

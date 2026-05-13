@@ -1,5 +1,5 @@
 import { els, state } from './state.js';
-import { defaultSuggestionQueries } from './consts.js';
+import { pickSuggestionQueries } from './consts.js';
 import { updateRelatedItems, renderRelatedItems, loadDetail, fetchJson } from './search.js';
 import { renderSuggestionStrip, askQuestion } from './ask.js';
 
@@ -42,7 +42,7 @@ export function renderQuerySuggestions() {
   if (!els.querySuggestions) {
     return;
   }
-  els.querySuggestions.innerHTML = renderSuggestionStrip(defaultSuggestionQueries, { submit: true });
+  els.querySuggestions.innerHTML = renderSuggestionStrip(pickSuggestionQueries(6), { submit: true });
   bindQueryChips(els.querySuggestions);
 }
 

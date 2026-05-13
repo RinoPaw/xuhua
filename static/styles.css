@@ -38,6 +38,7 @@
   --cat-传统体育: #2c6e49;
   --cat-民间文学: #7b5e3c;
   --cat-未分类: #888;
+  --category-accent: var(--celadon);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -564,6 +565,35 @@ textarea:focus {
   background: transparent;
 }
 
+.voice-button.is-rewriting {
+  border-color: rgba(92, 129, 112, 0.34);
+  background: rgba(99, 139, 120, 0.1);
+  box-shadow: 0 8px 24px rgba(49, 83, 70, 0.08);
+}
+
+.voice-button.is-rewriting .voice-icon {
+  background: rgba(86, 130, 111, 0.22);
+}
+
+.voice-button.is-rewriting .voice-icon::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  opacity: 0.28;
+  animation: voice-rewrite-ring 1.7s ease-out infinite;
+}
+
+.voice-button.is-rewriting .voice-glyph {
+  width: 8px;
+  height: 8px;
+  border: none;
+  border-radius: 50%;
+  background: currentColor;
+  animation: voice-rewrite-dot 1.7s ease-in-out infinite;
+}
+
 .voice-button[data-state="speaking"] .voice-icon {
   background: rgba(194, 58, 43, 0.16);
 }
@@ -638,6 +668,32 @@ textarea:focus {
 
 .voice-hint.is-active {
   opacity: 1;
+}
+
+@keyframes voice-rewrite-dot {
+  0%, 100% {
+    transform: scale(0.72);
+    opacity: 0.58;
+  }
+  45% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes voice-rewrite-ring {
+  0% {
+    transform: scale(0.82);
+    opacity: 0.34;
+  }
+  70% {
+    transform: scale(1.16);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.16);
+    opacity: 0;
+  }
 }
 
 #askButton {
@@ -980,13 +1036,14 @@ textarea:focus {
 }
 
 .result-item-link {
+  --category-accent: var(--celadon);
   display: flex;
   flex-direction: column;
   gap: 5px;
   min-width: 0;
   padding: 12px 12px 11px;
   border: 1px solid rgba(0, 0, 0, 0.06);
-  border-left: 2px solid rgba(194, 58, 43, 0.42);
+  border-left: 2px solid var(--category-accent);
   background: rgba(255, 252, 244, 0.62);
   text-align: left;
   color: inherit;
@@ -1225,8 +1282,11 @@ textarea:focus {
 }
 
 .item-entry {
-  display: block;
+  --category-accent: var(--celadon);
+  display: flex;
+  flex-direction: column;
   width: 100%;
+  min-height: 168px;
   padding: 12px 14px;
   margin-bottom: 6px;
   border: 1px solid transparent;
@@ -1243,7 +1303,7 @@ textarea:focus {
 .item-entry.active {
   background: rgba(255, 250, 240, 0.8);
   border-color: rgba(0, 0, 0, 0.06);
-  border-left-color: var(--celadon);
+  border-left-color: var(--category-accent, var(--celadon));
   box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
 }
 
@@ -1252,26 +1312,19 @@ textarea:focus {
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
+  min-height: 42px;
 }
 
 /* 每个条目左边框按分类着色 */
 .item-entry[data-category] {
-  border-left-color: var(--celadon);
+  border-left-color: var(--category-accent);
 }
 
-.item-entry[data-category="传统戏剧"] { border-left-color: var(--cat-传统戏剧); }
-.item-entry[data-category="传统音乐"] { border-left-color: var(--cat-传统音乐); }
-.item-entry[data-category="传统美术"] { border-left-color: var(--cat-传统美术); }
-.item-entry[data-category="传统舞蹈"] { border-left-color: var(--cat-传统舞蹈); }
-.item-entry[data-category="传统医药"] { border-left-color: var(--cat-传统医药); }
-.item-entry[data-category="民俗"]       { border-left-color: var(--cat-民俗); }
-.item-entry[data-category="传统技艺"]   { border-left-color: var(--cat-传统技艺); }
-.item-entry[data-category="曲艺"]       { border-left-color: var(--cat-曲艺); }
-.item-entry[data-category="传统体育、游艺与杂技"] { border-left-color: var(--cat-传统体育); }
-.item-entry[data-category="民间文学"]   { border-left-color: var(--cat-民间文学); }
-.item-entry[data-category="未分类"]     { border-left-color: var(--cat-未分类); }
-
 .item-entry-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   font-size: 14px;
   font-weight: 900;
   color: var(--ink);
@@ -1282,6 +1335,10 @@ textarea:focus {
 
 .item-entry-meta {
   margin-top: 5px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   font-size: 11px;
   color: rgba(26, 22, 20, 0.58);
   line-height: 1.5;
@@ -1291,6 +1348,10 @@ textarea:focus {
 
 .item-entry-summary {
   margin-top: 6px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
   color: rgba(26, 22, 20, 0.74);
   font-size: 12px;
   line-height: 1.7;
@@ -1306,7 +1367,8 @@ textarea:focus {
 }
 
 .item-entry-tags {
-  margin-top: 8px;
+  margin-top: auto;
+  padding-top: 8px;
 }
 
 .marginalia-detail {
@@ -1345,27 +1407,60 @@ textarea:focus {
 }
 
 .detail-tag {
+  --category-accent: var(--celadon);
   display: inline-block;
   padding: 2px 12px;
   border-radius: 999px;
-  background: var(--celadon);
+  background: var(--category-accent);
   color: white;
   font-size: 11px;
   font-weight: 900;
   letter-spacing: 1px;
 }
 
-.detail-tag[data-category="传统戏剧"] { background: var(--cat-传统戏剧); }
-.detail-tag[data-category="传统音乐"] { background: var(--cat-传统音乐); }
-.detail-tag[data-category="传统美术"] { background: var(--cat-传统美术); }
-.detail-tag[data-category="传统舞蹈"] { background: var(--cat-传统舞蹈); }
-.detail-tag[data-category="传统医药"] { background: var(--cat-传统医药); }
-.detail-tag[data-category="民俗"]       { background: var(--cat-民俗); }
-.detail-tag[data-category="传统技艺"]   { background: var(--cat-传统技艺); }
-.detail-tag[data-category="曲艺"]       { background: var(--cat-曲艺); }
-.detail-tag[data-category="传统体育、游艺与杂技"] { background: var(--cat-传统体育); }
-.detail-tag[data-category="民间文学"]   { background: var(--cat-民间文学); }
-.detail-tag[data-category="未分类"]     { background: var(--cat-未分类); }
+.result-item-link[data-category="传统戏剧"],
+.item-entry[data-category="传统戏剧"],
+.detail-tag[data-category="传统戏剧"] { --category-accent: var(--cat-传统戏剧); }
+
+.result-item-link[data-category="传统音乐"],
+.item-entry[data-category="传统音乐"],
+.detail-tag[data-category="传统音乐"] { --category-accent: var(--cat-传统音乐); }
+
+.result-item-link[data-category="传统美术"],
+.item-entry[data-category="传统美术"],
+.detail-tag[data-category="传统美术"] { --category-accent: var(--cat-传统美术); }
+
+.result-item-link[data-category="传统舞蹈"],
+.item-entry[data-category="传统舞蹈"],
+.detail-tag[data-category="传统舞蹈"] { --category-accent: var(--cat-传统舞蹈); }
+
+.result-item-link[data-category="传统医药"],
+.item-entry[data-category="传统医药"],
+.detail-tag[data-category="传统医药"] { --category-accent: var(--cat-传统医药); }
+
+.result-item-link[data-category="民俗"],
+.item-entry[data-category="民俗"],
+.detail-tag[data-category="民俗"] { --category-accent: var(--cat-民俗); }
+
+.result-item-link[data-category="传统技艺"],
+.item-entry[data-category="传统技艺"],
+.detail-tag[data-category="传统技艺"] { --category-accent: var(--cat-传统技艺); }
+
+.result-item-link[data-category="曲艺"],
+.item-entry[data-category="曲艺"],
+.detail-tag[data-category="曲艺"] { --category-accent: var(--cat-曲艺); }
+
+.result-item-link[data-category="传统体育、游艺与杂技"],
+.item-entry[data-category="传统体育、游艺与杂技"],
+.detail-tag[data-category="传统体育、游艺与杂技"] { --category-accent: var(--cat-传统体育); }
+
+.result-item-link[data-category="民间文学"],
+.item-entry[data-category="民间文学"],
+.detail-tag[data-category="民间文学"] { --category-accent: var(--cat-民间文学); }
+
+.result-item-link[data-category="未分类"],
+.item-entry[data-category="未分类"],
+.detail-tag[data-category="未分类"] { --category-accent: var(--cat-未分类); }
 
 /* 摘要左边线跟着分类色走 */
 .detail-blurb {

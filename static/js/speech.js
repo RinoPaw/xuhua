@@ -8,6 +8,8 @@ let currentSpeechAudio = null;
 let currentSpeechSegments = [];
 export let lastSpeechText = "";
 export let lastSpeechAudioUrl = "";
+let lastSpeechUsesServerTts = false;
+let lastSpeechLang = "zh-CN";
 let speechPlaybackSeq = 0;
 let speechUnlocked = false;
 let speechCancelTimer = 0;
@@ -15,10 +17,23 @@ let speechStartGuardTimer = 0;
 export let voiceState = "idle";
 export let voiceEnabled = true;
 export let lastSpeechHumanState = "speaking";
+let pendingSpeechRewrite = false;
+let visibilityInterruptedPlayback = false;
+let visibilityInterruptedMode = "";
+
+function syncVoiceStatusVisuals(value = "") {
+  if (!els.voiceToggle) {
+    return;
+  }
+  els.voiceToggle.classList.toggle("is-rewriting", value === "正在润色播报");
+}
 
 export function setVoiceEnabled(enabled) {
   voiceEnabled = enabled;
   if (!enabled) {
+    pendingSpeechRewrite = false;
+    visibilityInterruptedPlayback = false;
+    visibilityInterruptedMode = "";
     stopSpeech();
     setVoiceState("disabled");
     setVoiceStatus("已暂停");
@@ -28,22 +43,124 @@ export function setVoiceEnabled(enabled) {
   if (lastSpeechText) {
     setVoiceState("speaking");
     refreshVoiceToggleUI();
-    speakAnswer(lastSpeechText, lastSpeechAudioUrl);
+    speakAnswer(lastSpeechText, lastSpeechAudioUrl, { serverTts: lastSpeechUsesServerTts, lang: lastSpeechLang });
   } else {
     setVoiceState("idle");
-    setVoiceStatus("正在润色播报");
+    setVoiceStatus("");
     refreshVoiceToggleUI();
   }
 }
 
-export function cacheSpeechResult(text, audioUrl = "") {
+export function hasReplayableSpeech() {
+  return Boolean(lastSpeechText);
+}
+
+export function replayLastSpeech() {
+  if (!lastSpeechText) {
+    setVoiceStatus("暂无可播报内容");
+    return false;
+  }
+  if (!voiceEnabled) {
+    voiceEnabled = true;
+  }
+  return speakAnswer(lastSpeechText, lastSpeechAudioUrl, { serverTts: lastSpeechUsesServerTts, lang: lastSpeechLang });
+}
+
+export function cacheSpeechResult(text, audioUrl = "", options = {}) {
   lastSpeechText = speechText(text);
   lastSpeechAudioUrl = audioUrl || "";
+  lastSpeechUsesServerTts = Boolean(options.serverTts || audioUrl);
+  lastSpeechLang = normalizeSpeechLang(options.lang || lastSpeechText);
 }
 
 export function clearSpeechCache() {
   lastSpeechText = "";
   lastSpeechAudioUrl = "";
+  lastSpeechUsesServerTts = false;
+  lastSpeechLang = "zh-CN";
+  pendingSpeechRewrite = false;
+  visibilityInterruptedPlayback = false;
+  visibilityInterruptedMode = "";
+}
+
+export function markSpeechRewritePending(pending = true) {
+  pendingSpeechRewrite = pending;
+  if (!voiceEnabled || voiceState === "speaking") {
+    return;
+  }
+  setVoiceStatus(pending ? "正在润色播报" : "");
+}
+
+export function pauseSpeechForVisibility() {
+  if (!voiceEnabled) {
+    return;
+  }
+  if (currentSpeechAudio) {
+    visibilityInterruptedPlayback = true;
+    visibilityInterruptedMode = "audio";
+    clearSpeechStartGuard();
+    currentSpeechAudio.pause();
+    setVoiceState("idle");
+    setVoiceStatus("播报已暂停");
+    return;
+  }
+  if (browserSpeechSupported && currentUtterance && (window.speechSynthesis.speaking || window.speechSynthesis.pending)) {
+    visibilityInterruptedPlayback = true;
+    visibilityInterruptedMode = "browser";
+    clearSpeechStartGuard();
+    window.speechSynthesis.pause();
+    setVoiceState("idle");
+    setVoiceStatus("播报已暂停");
+    return;
+  }
+  visibilityInterruptedPlayback = false;
+  visibilityInterruptedMode = "";
+  stopSpeech({
+    delayed: true,
+    preserveHuman: true,
+    preserveIdleStatus: true,
+    pausedByVisibility: true,
+  });
+}
+
+export function resumeSpeechAfterVisibility() {
+  if (!voiceEnabled) {
+    visibilityInterruptedPlayback = false;
+    visibilityInterruptedMode = "";
+    return;
+  }
+  if (visibilityInterruptedPlayback && visibilityInterruptedMode === "audio" && currentSpeechAudio) {
+    visibilityInterruptedPlayback = false;
+    visibilityInterruptedMode = "";
+    const playPromise = currentSpeechAudio.play();
+    if (playPromise?.catch) {
+      playPromise.catch(() => {
+        speakAnswer(lastSpeechText, lastSpeechAudioUrl, { serverTts: lastSpeechUsesServerTts, lang: lastSpeechLang });
+      });
+    }
+    return;
+  }
+  if (visibilityInterruptedPlayback && visibilityInterruptedMode === "browser" && currentUtterance) {
+    visibilityInterruptedPlayback = false;
+    visibilityInterruptedMode = "";
+    window.speechSynthesis.resume();
+    setVoiceState("speaking");
+    setVoiceStatus("正在播报");
+    return;
+  }
+  if (visibilityInterruptedPlayback && lastSpeechText) {
+    visibilityInterruptedPlayback = false;
+    visibilityInterruptedMode = "";
+    speakAnswer(lastSpeechText, lastSpeechAudioUrl, { serverTts: lastSpeechUsesServerTts, lang: lastSpeechLang });
+    return;
+  }
+  visibilityInterruptedPlayback = false;
+  visibilityInterruptedMode = "";
+  if (pendingSpeechRewrite) {
+    setVoiceStatus("正在润色播报");
+  } else if (voiceState !== "speaking") {
+    setVoiceStatus("");
+  }
 }
 
 function refreshVoiceToggleUI() {
@@ -73,8 +190,11 @@ function refreshVoiceToggleUI() {
 }
 
 export function speakAnswer(value, audioUrl = "", options = {}) {
+  pendingSpeechRewrite = false;
   lastSpeechText = speechText(value);
   lastSpeechAudioUrl = audioUrl || "";
+  lastSpeechUsesServerTts = Boolean(options.serverTts || audioUrl);
+  lastSpeechLang = normalizeSpeechLang(options.lang || lastSpeechText);
   if (!speechSupported || !lastSpeechText) {
     return false;
   }
@@ -85,7 +205,7 @@ export function speakAnswer(value, audioUrl = "", options = {}) {
   if (options.serverTts) {
     return requestServerSpeech(lastSpeechText, playbackSeq);
   }
-  return speakText(lastSpeechText, playbackSeq);
+  return speakText(lastSpeechText, playbackSeq, { lang: lastSpeechLang });
 }
 
 export function finishSpeechPlayback(status = "") {
@@ -93,6 +213,8 @@ export function finishSpeechPlayback(status = "") {
   currentUtterance = null;
   currentSpeechAudio = null;
   currentSpeechSegments = [];
+  visibilityInterruptedPlayback = false;
+  visibilityInterruptedMode = "";
   syncVoiceIdleState(status);
   if (currentHumanState === "speaking" || currentHumanState === "farewell") {
     setDigitalHumanState("idle", "待机", "我在这里，可以继续问我。");
@@ -122,7 +244,8 @@ export function stopSpeech(options = {}) {
     }
   }
   currentUtterance = null;
-  syncVoiceIdleState("");
+  visibilityInterruptedMode = "";
+  syncVoiceIdleState("", options);
   if (!options.preserveHuman && (currentHumanState === "speaking" || currentHumanState === "farewell")) {
     setDigitalHumanState("idle", "待机", "我在这里，可以继续问我。");
   }
@@ -151,6 +274,7 @@ export function setVoiceStatus(value) {
   if (els.voiceStatus) {
     els.voiceStatus.textContent = value;
   }
+  syncVoiceStatusVisuals(value);
   if (value) {
     els.voiceStatus.classList.add("is-active");
   } else {
@@ -163,24 +287,35 @@ export function setVoiceState(state) {
   refreshVoiceToggleUI();
 }
 
-export function speakText(text, playbackSeq = ++speechPlaybackSeq) {
+export function speakText(text, playbackSeq = ++speechPlaybackSeq, options = {}) {
   if (!browserSpeechSupported) {
     setVoiceStatus("浏览器不支持语音");
     return false;
   }
   stopSpeech({ preserveHuman: true, keepPlaybackSeq: true });
   clearSpeechStartGuard();
+  const lang = normalizeSpeechLang(options.lang || text);
+  const segments = speechPlaybackSegments(text, lang);
+  return playBrowserSpeechSegment(segments, 0, playbackSeq, lang);
+}
+
+export function playBrowserSpeechSegment(segments, index, playbackSeq, lang = "zh-CN") {
+  const text = segments[index] || "";
+  if (!text) {
+    finishSpeechPlayback("");
+    return true;
+  }
   window.speechSynthesis.resume();
   const utterance = new SpeechSynthesisUtterance(text);
   currentUtterance = utterance;
-  utterance.lang = "zh-CN";
+  utterance.lang = lang;
   utterance.rate = 1;
   utterance.pitch = 1;
 
   const voices = window.speechSynthesis.getVoices();
-  const chineseVoice = voices.find((voice) => /zh|Chinese|普通话|中文/i.test(voice.lang + voice.name));
-  if (chineseVoice) {
-    utterance.voice = chineseVoice;
+  const preferredVoice = pickSpeechVoice(voices, lang);
+  if (preferredVoice) {
+    utterance.voice = preferredVoice;
   }
 
   utterance.onstart = () => {
@@ -192,7 +327,7 @@ export function speakText(text, playbackSeq = ++speechPlaybackSeq) {
   utterance.onend = () => {
     if (currentUtterance !== utterance || speechPlaybackSeq !== playbackSeq) return;
     clearSpeechStartGuard();
-    finishSpeechPlayback("");
+    playBrowserSpeechSegment(segments, index + 1, playbackSeq, lang);
   };
   utterance.onerror = () => {
     if (currentUtterance !== utterance || speechPlaybackSeq !== playbackSeq) return;
@@ -212,7 +347,7 @@ export function speakText(text, playbackSeq = ++speechPlaybackSeq) {
 
 export function playAudioAnswer(audioUrl, fallbackText = "", playbackSeq = ++speechPlaybackSeq, options = {}) {
   if (!audioSpeechSupported || !audioUrl) {
-    return speakText(fallbackText, playbackSeq);
+    return speakText(fallbackText, playbackSeq, { lang: lastSpeechLang });
   }
   stopSpeech({ preserveHuman: true, keepPlaybackSeq: true });
   clearSpeechStartGuard();
@@ -233,7 +368,7 @@ export function playAudioAnswer(audioUrl, fallbackText = "", playbackSeq = ++spe
     if (currentSpeechAudio !== audio || speechPlaybackSeq !== playbackSeq) return;
     currentSpeechAudio = null;
     if (options.onError?.()) return;
-    if (!speakText(fallbackText, playbackSeq)) {
+    if (!speakText(fallbackText, playbackSeq, { lang: lastSpeechLang })) {
       finishSpeechPlayback("音频播报失败");
     }
   };
@@ -243,7 +378,7 @@ export function playAudioAnswer(audioUrl, fallbackText = "", playbackSeq = ++spe
       if (currentSpeechAudio !== audio || speechPlaybackSeq !== playbackSeq) return;
       currentSpeechAudio = null;
       if (options.onError?.()) return;
-      if (!speakText(fallbackText, playbackSeq)) {
+      if (!speakText(fallbackText, playbackSeq, { lang: lastSpeechLang })) {
         finishSpeechPlayback("自动播报被浏览器拦截");
       }
     });
@@ -253,7 +388,7 @@ export function playAudioAnswer(audioUrl, fallbackText = "", playbackSeq = ++spe
 
 export function requestServerSpeech(text, playbackSeq) {
   if (!audioSpeechSupported) {
-    return speakText(text, playbackSeq);
+    return speakText(text, playbackSeq, { lang: lastSpeechLang });
   }
   stopSpeech({ preserveHuman: true, keepPlaybackSeq: true });
   setVoiceState("speaking");
@@ -288,13 +423,13 @@ export function requestServerSpeechFile(text, playbackSeq) {
       lastSpeechAudioUrl = audioUrl;
       if (audioUrl) {
         playAudioAnswer(audioUrl, text, playbackSeq);
-      } else if (!speakText(text, playbackSeq)) {
+      } else if (!speakText(text, playbackSeq, { lang: lastSpeechLang })) {
         finishSpeechPlayback("语音暂不可用");
       }
     })
     .catch(() => {
       if (speechPlaybackSeq !== playbackSeq || lastSpeechText !== text) return;
-      if (!speakText(text, playbackSeq)) {
+      if (!speakText(text, playbackSeq, { lang: lastSpeechLang })) {
         finishSpeechPlayback("语音生成失败");
       }
     });
@@ -320,22 +455,26 @@ export function playSpeechSegment(index, playbackSeq) {
   });
 }
 
-export function speechPlaybackSegments(text) {
+export function speechPlaybackSegments(text, lang = "zh-CN") {
   const source = String(text || "").trim();
   if (!source) return [];
-  const pieces = source.match(/[^。！？!?；;]+[。！？!?；;]?/gu) || [source];
+  const splitter = lang === "en-US"
+    ? /[^.!?;]+[.!?;]?/gu
+    : /[^。！？!?；;]+[。！？!?；;]?/gu;
+  const pieces = source.match(splitter) || [source];
   const segments = [];
   let current = "";
+  const maxBytes = lang === "en-US" ? 320 : 720;
   for (const piece of pieces) {
     const candidate = current + piece;
-    if (current && utf8ByteLength(candidate) > 720) {
+    if (current && utf8ByteLength(candidate) > maxBytes) {
       segments.push(current);
       current = piece;
     } else {
       current = candidate;
     }
-    while (utf8ByteLength(current) > 720) {
-      segments.push(sliceUtf8Bytes(current, 720));
+    while (utf8ByteLength(current) > maxBytes) {
+      segments.push(sliceUtf8Bytes(current, maxBytes));
       current = current.slice(segments[segments.length - 1].length);
     }
   }
@@ -375,6 +514,36 @@ export function speechText(value) {
   return text;
 }
 
+export function normalizeSpeechLang(value) {
+  const text = String(value || "").trim();
+  if (/^en(?:-[A-Z]{2})?$/i.test(text)) {
+    return "en-US";
+  }
+  const latinCount = (text.match(/[A-Za-z]/g) || []).length;
+  const chineseCount = (text.match(/[\u4e00-\u9fff]/g) || []).length;
+  if (latinCount >= 24 && latinCount > chineseCount * 2) {
+    return "en-US";
+  }
+  return "zh-CN";
+}
+
+export function pickSpeechVoice(voices, lang = "zh-CN") {
+  if (!Array.isArray(voices) || !voices.length) {
+    return null;
+  }
+  if (lang === "en-US") {
+    const englishVoices = voices.filter((voice) => /en|English/i.test(`${voice.lang} ${voice.name}`));
+    if (!englishVoices.length) {
+      return null;
+    }
+    const preferredFemaleEnglishVoice = englishVoices.find((voice) =>
+      /zira|aria|ava|jenny|emma|samantha|victoria|hazel|susan|sara|sonia|libby|female|woman/i.test(voice.name || ""),
+    );
+    return preferredFemaleEnglishVoice || englishVoices[0] || null;
+  }
+  return voices.find((voice) => /zh|Chinese|普通话|中文/i.test(`${voice.lang} ${voice.name}`)) || null;
+}
+
 export function stripSpeechDecorations(value) {
   return stripMarkdown(value)
     .replace(/[\u{1F1E6}-\u{1F1FF}\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, " ")
@@ -388,6 +557,7 @@ export function clearSpeechStartGuard() {
 }
 
 function syncVoiceIdleState(status = "") {
+  const options = arguments[1] || {};
   if (!voiceEnabled) {
     return;
   }
@@ -397,5 +567,16 @@ function syncVoiceIdleState(status = "") {
     return;
   }
   setVoiceState("idle");
-  setVoiceStatus(status || "正在润色播报");
+  if (status) {
+    setVoiceStatus(status);
+    return;
+  }
+  if (options.pausedByVisibility) {
+    setVoiceStatus("播报已暂停");
+    return;
+  }
+  if (options.preserveIdleStatus) {
+    return;
+  }
+  setVoiceStatus(pendingSpeechRewrite ? "正在润色播报" : "");
 }

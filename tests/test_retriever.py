@@ -235,6 +235,9 @@ def test_extract_transform_type():
     plan = analyzer.analyze("把这段翻译成英文")
     assert plan.transform_type == "翻译"
 
+    bilingual_plan = analyzer.analyze("给汴绣生成中英双语介绍")
+    assert bilingual_plan.transform_type == "翻译"
+
 
 def test_extract_scenario_and_audience_as_strings():
     kb = load_dataset()

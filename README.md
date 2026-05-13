@@ -49,7 +49,7 @@
 1. 创建并激活虚拟环境：
 
 ```powershell
-cd D:\Projects\xuhua
+cd <项目目录>
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -265,7 +265,7 @@ xuhua/
 - `.venv/`：不会上传 GitHub，需要按快速开始重新创建虚拟环境。
 - `data/embeddings/`：不会上传 GitHub，需要在配置 embedding 后本地生成。
 - `logs/`、`__pycache__/`、`.pytest_cache/`、`.ruff_cache/`：运行和测试产物，不需要手动下载。
-- `D:\Projects\panda_mudan`：只在重新构建数据集时需要；直接运行本项目不需要旧项目目录，可从"资源下载"中的旧项目整体或 data 包补齐。
+- 旧项目目录（例如 `D:\Projects\panda_mudan`）：只在重新构建数据集时需要；直接运行本项目不需要旧项目目录，可从“资源下载”中的旧项目整体或 data 包补齐。
 
 ## 常用命令
 
@@ -282,10 +282,10 @@ python -m pip install -e .
 xuhua
 ```
 
-从旧项目迁移数据集：
+从旧项目迁移数据集（将 `<旧项目路径>` 替换为你自己的本地目录）：
 
 ```powershell
-python .\scripts\build_dataset.py --source-root D:\Projects\panda_mudan
+python .\scripts\build_dataset.py --source-root <旧项目路径>
 ```
 
 生成 embedding 语义索引：
@@ -338,10 +338,10 @@ node --check static/js/*.js
 
 当前数据集来自 ihchina.cn 全国非遗项目数据，通过 `scripts/import_ihchina_projects.py` 导入并结构化处理为 `data/processed/heritage_items.json`。
 
-如需从旧项目（牡丹非遗）重新构建数据集：
+如需从旧项目（牡丹非遗）重新构建数据集，请把下面命令中的 `<旧项目路径>` 替换为你自己的本地目录。文中的 `D:\Projects\...` 仅为作者机器上的示例路径，不是固定要求：
 
 ```powershell
-python .\scripts\build_dataset.py --source-root D:\Projects\panda_mudan
+python .\scripts\build_dataset.py --source-root <旧项目路径>
 ```
 
 ## 资源下载
@@ -350,8 +350,10 @@ python .\scripts\build_dataset.py --source-root D:\Projects\panda_mudan
 
 如果需要重新构建数据集、恢复旧项目来源文件，或替换数字人素材，可使用以下资源：
 
-- 旧项目整体 -> `D:\Projects\panda_mudan`：<https://pan.baidu.com/s/1wKuYYoeXhD80HnuSkbSl6w>（提取码：`h54t`）
-- 旧项目 data -> `D:\Projects\panda_mudan\data\`：<https://pan.baidu.com/s/1ccoQmU1BSTbK_wJVYe5hCw>（提取码：`y3ke`）
+- 旧项目整体（示例落地目录：`D:\Projects\panda_mudan`）：
+  <https://pan.baidu.com/s/1wKuYYoeXhD80HnuSkbSl6w>（提取码：`h54t`）
+- 旧项目 data（示例落地目录：`D:\Projects\panda_mudan\data\`）：
+  <https://pan.baidu.com/s/1ccoQmU1BSTbK_wJVYe5hCw>（提取码：`y3ke`）
 - 旧项目动画素材 -> 可按需提取到 `static/media/`：<https://pan.baidu.com/s/1zQyRXYG6JfvfzVDprm96cQ>（提取码：`wsv6`）
 
 旧项目中的 `models/`、`assets/audio/`、`assets/icons/` 等资源不再是本项目运行必需项；只有继续维护旧桌面端时才需要。

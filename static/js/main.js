@@ -1,7 +1,7 @@
 import { state, bindElements, els } from './state.js';
 import { speechSupported } from './consts.js';
 import { initHuman, configureHumanVideoPlayback, scheduleHumanVideoAdvance, restoreHumanVideoAfterVisibility } from './human.js';
-import { stopSpeech, unlockSpeech, setVoiceStatus, voiceEnabled, setVoiceEnabled } from './speech.js';
+import { stopSpeech, unlockSpeech, setVoiceStatus, voiceState, replayLastSpeech, hasReplayableSpeech, pauseSpeechForVisibility, resumeSpeechAfterVisibility } from './speech.js';
 import { renderQuerySuggestions, loadMeta, resizeQuestionInput, syncRestoredQuestion, handleQuestionInput } from './ui.js';
 import { updateRelatedItems, renderRelatedItems, updateRelatedPanelTitle } from './search.js';
 import { askQuestion } from './ask.js';
@@ -61,7 +61,15 @@ function init() {
       setVoiceStatus("浏览器不支持语音");
       return;
     }
-    setVoiceEnabled(!voiceEnabled);
+    if (voiceState === "speaking") {
+      stopSpeech({ preserveHuman: true });
+      return;
+    }
+    if (hasReplayableSpeech()) {
+      replayLastSpeech();
+      return;
+    }
+    setVoiceStatus("暂无可播报内容");
   });
 
   // SpeechSynthesis voice list
@@ -74,10 +82,11 @@ function init() {
   window.addEventListener("beforeunload", () => stopSpeech({ delayed: true }));
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
-      stopSpeech({ delayed: true });
+      pauseSpeechForVisibility();
     } else {
       // Browser may have suspended video playback while tab was hidden
       restoreHumanVideoAfterVisibility();
+      resumeSpeechAfterVisibility();
     }
   });
 

@@ -3,7 +3,7 @@ import { state, els } from './state.js';
 import { escapeHtml, renderMarkdown } from './markdown.js';
 import { itemTitle, itemMetaParts, itemTagList, renderRelatedItems, beginAskSessionRelated } from './search.js';
 import { responseHumanState, setDigitalHumanState, scheduleHumanReturnToIdle, waitForThinkingDissolve, visualAnswerDuration } from './human.js';
-import { speakAnswer, stopSpeech, unlockSpeech, cacheSpeechResult, clearSpeechCache, voiceEnabled } from './speech.js';
+import { speakAnswer, stopSpeech, unlockSpeech, cacheSpeechResult, clearSpeechCache, voiceEnabled, markSpeechRewritePending } from './speech.js';
 import { bindQueryChips, bindResultItemLinks } from './ui.js';
 
 let askAbortController = null;
@@ -288,8 +288,14 @@ function renderResultItems(payload) {
         ${items.map((item) => {
           const meta = itemMetaParts(item).join(" · ");
           const tags = itemTagList(item, 3);
+          const category = item?.category || "未分类";
           return `
-            <button class="result-item-link" type="button" data-id="${escapeHtml(item.id)}">
+            <button
+              class="result-item-link"
+              type="button"
+              data-id="${escapeHtml(item.id)}"
+              data-category="${escapeHtml(category)}"
+            >
               <span class="result-item-title">${escapeHtml(itemTitle(item))}</span>
               ${meta ? `<span class="result-item-meta">${escapeHtml(meta)}</span>` : ""}
               ${tags.length ? `<span class="result-item-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</span>` : ""}
@@ -532,6 +538,7 @@ function applyAnswerSpeech(event) {
 
   const speechAudioUrl = event?.speech_audio_url || "";
   const speechAudioPending = Boolean(event?.speech_audio_pending);
+  const speechLang = event?.speech_lang || "";
 
   console.info("[xuhua:speech]", {
     engine: event?.speech_engine || "browser",
@@ -543,12 +550,12 @@ function applyAnswerSpeech(event) {
   setDigitalHumanState(lastSpeechHumanState, "正在回答", text);
 
   if (!voiceEnabled) {
-    cacheSpeechResult(text, speechAudioUrl);
+    cacheSpeechResult(text, speechAudioUrl, { serverTts: speechAudioPending, lang: speechLang });
     scheduleHumanReturnToIdle(visualAnswerDuration(text));
     return;
   }
 
-  if (!speakAnswer(text, speechAudioUrl, { serverTts: speechAudioPending })) {
+  if (!speakAnswer(text, speechAudioUrl, { serverTts: speechAudioPending, lang: speechLang })) {
     scheduleHumanReturnToIdle(visualAnswerDuration(text));
   }
 }
@@ -588,19 +595,33 @@ export async function askQuestion() {
   try {
     const payload = await postSseResult("/api/ask", requestData, 65000, session.controller, {
       onResult(p) {
+        if (voiceEnabled && !speechArrived && p?.answer) {
+          markSpeechRewritePending(true);
+        }
         presentAskResult(session.requestId, session.controller, question, p, session.thinkingStartedAt);
       },
       onSpeech(e) {
         speechArrived = true;
+        markSpeechRewritePending(false);
         applyAnswerSpeech(e);
       },
     });
     // If speech arrived before stream ended, it was already handled by onSpeech
     // Otherwise, speech may be in the result payload (non-streaming fallback)
     if (!speechArrived && payload?.speech) {
-      applyAnswerSpeech({ text: payload.speech, speech_engine: "browser" });
+      markSpeechRewritePending(false);
+      applyAnswerSpeech({
+        text: payload.speech,
+        speech_engine: payload?.speech_engine || "browser",
+        speech_audio_url: payload?.speech_audio_url || "",
+        speech_audio_pending: Boolean(payload?.speech_audio_pending),
+        speech_lang: payload?.speech_lang || "",
+      });
+    } else if (!speechArrived) {
+      markSpeechRewritePending(false);
     }
   } catch (error) {
+    markSpeechRewritePending(false);
     presentAskError(session.requestId, session.controller, error);
   } finally {
     finishAskSession(session.requestId, session.controller);

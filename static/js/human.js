@@ -187,12 +187,20 @@ export function restoreHumanVideoAfterVisibility() {
   // Clean up any stale dissolve state from while we were hidden
   activeHumanVideo.classList.remove("is-dissolve-in", "is-dissolve-out");
   activeHumanVideo.style.opacity = "";
+  activeHumanVideo.classList.add("is-active");
   if (standbyHumanVideo) {
     standbyHumanVideo.classList.remove("is-dissolve-in", "is-dissolve-out");
     standbyHumanVideo.style.opacity = "";
+    standbyHumanVideo.classList.remove("is-active");
   }
+  els.digitalHumanVideo.parentElement?.classList.remove("is-dissolving");
 
   // Browser may have discarded video data — reload the current src if needed
+  if (!activeHumanVideo.src) {
+    transitionHumanVideo(pickHumanVideo(currentHumanState, { allowSame: true }), currentHumanState, { force: true });
+    return;
+  }
+
   if (activeHumanVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA && activeHumanVideo.src) {
     const currentSrc = activeHumanVideo.src;
     activeHumanVideo.load();

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from flask import Flask, Response, abort, jsonify, render_template, request, send_file, stream_with_context
 
@@ -205,12 +206,26 @@ def create_app() -> Flask:
 
 
 def _speech_audio_hint(speech: str) -> dict:
+    lang = _speech_language(speech)
     if speech and server_tts_available():
         return {
             "speech_engine": server_tts_engine(),
             "speech_audio_pending": True,
+            "speech_lang": lang,
         }
-    return {"speech_engine": "browser"}
+    return {
+        "speech_engine": "browser",
+        "speech_lang": lang,
+    }
+
+
+def _speech_language(speech: str) -> str:
+    text = str(speech or "")
+    latin_count = len(re.findall(r"[A-Za-z]", text))
+    chinese_count = len(re.findall(r"[\u4e00-\u9fff]", text))
+    if latin_count >= 24 and latin_count > chinese_count * 2:
+        return "en-US"
+    return "zh-CN"
 
 
 def _speech_audio_payload(speech: str) -> dict:

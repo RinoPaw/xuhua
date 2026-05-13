@@ -12,12 +12,20 @@ export function renderMarkdown(value) {
         gfm: true,
         breaks: true,
       });
+      if (hasUnresolvedMarkdown(rawHtml)) {
+        return sanitizer.sanitize(renderMarkdownFallback(source));
+      }
       return sanitizer.sanitize(rawHtml);
     } catch (error) {
       console.warn("Markdown engine failed; falling back to local parser.", error);
     }
   }
   return renderMarkdownFallback(source);
+}
+
+export function hasUnresolvedMarkdown(value) {
+  const html = String(value || "");
+  return /\*\*[^*\n]+?\*\*/u.test(html) || /__[^_\n]+?__/u.test(html);
 }
 
 export function renderMarkdownFallback(value) {

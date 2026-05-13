@@ -6,14 +6,35 @@ export const humanVideos = {
 };
 export const humanVideoIndexes = {};
 
-export const defaultSuggestionQueries = [
+export const suggestionQueryPool = [
   "汴绣是什么？",
+  "朱仙镇木版年画有什么特点？",
+  "罗山皮影戏和桐柏皮影戏有什么区别？",
   "河南有哪些传统美术类非遗？",
-  "四川皮影和湖北皮影有什么区别？",
-  "推荐适合校园展示的河南非遗项目",
+  "哪些河南非遗适合做校园展示？",
+  "推荐适合社区活动展示的河南非遗项目",
+  "策划一个适合社区活动展示的河南非遗小展",
   "给朱仙镇木版年画生成讲解词",
-  "适合社区活动展示的非遗有哪些？",
+  "给汴绣生成中英双语介绍",
+  "围绕陈氏太极拳设计一个 15 分钟研学任务",
+  "围绕豫剧设计一个适合中学生的研学任务",
+  "把淮阳泥泥狗改写成更年轻化的版本",
+  "把汴绣改成适合短视频口播的版本",
+  "给太极拳写一段适合展板展示的简介",
+  "推荐几个适合亲子互动体验的河南非遗项目",
+  "给豫剧生成一段双语介绍",
+  "比较一下汴绣和苏绣的风格差异",
+  "策划一个以年画为主题的非遗互动角",
 ];
+
+export function pickSuggestionQueries(count = 6) {
+  const pool = [...suggestionQueryPool];
+  for (let i = pool.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, Math.max(0, Math.min(count, pool.length)));
+}
 export const followupQueriesByTask = {
   fact_qa: [
     "这个项目更适合校园展示还是社区活动？",

@@ -80,8 +80,10 @@ def test_voice_button_uses_play_stop_without_pause():
     styles = (ROOT / "static" / "styles.css").read_text(encoding="utf-8")
 
     assert 'export let voiceEnabled = true;' in speech_script
-    assert 'export function setVoiceEnabled(enabled)' in speech_script
-    assert 'setVoiceEnabled(!voiceEnabled)' in main_script
+    assert 'export function replayLastSpeech()' in speech_script
+    assert 'export function hasReplayableSpeech()' in speech_script
+    assert 'if (voiceState === "speaking") {' in main_script
+    assert "replayLastSpeech();" in main_script
     assert "window.speechSynthesis?.pause()" not in main_script
     assert '"paused"' not in main_script
     assert ".voice-button" in styles
@@ -109,6 +111,27 @@ def test_voice_idle_state_keeps_disabled_support_message():
     assert 'setVoiceState("idle");' in sync_block
 
 
+def test_visibility_resume_prefers_continuing_existing_playback():
+    script = (ROOT / "static" / "js" / "speech.js").read_text(encoding="utf-8")
+
+    assert 'let visibilityInterruptedMode = "";' in script
+    assert 'visibilityInterruptedMode = "audio";' in script
+    assert 'visibilityInterruptedMode = "browser";' in script
+    assert "currentSpeechAudio.pause();" in script
+    assert "const playPromise = currentSpeechAudio.play();" in script
+    assert "window.speechSynthesis.pause();" in script
+    assert "window.speechSynthesis.resume();" in script
+
+
+def test_restore_human_video_reasserts_visible_layer_after_visibility_change():
+    script = (ROOT / "static" / "js" / "human.js").read_text(encoding="utf-8")
+    restore_block = script.split("export function restoreHumanVideoAfterVisibility()", 1)[1].split("export function visualAnswerDuration", 1)[0]
+
+    assert 'activeHumanVideo.classList.add("is-active");' in restore_block
+    assert 'standbyHumanVideo.classList.remove("is-active");' in restore_block
+    assert 'classList.remove("is-dissolving")' in restore_block
+
+
 def test_tts_text_strips_display_emoji():
     script = (ROOT / "static" / "js" / "speech.js").read_text(encoding="utf-8")
 
@@ -118,6 +141,15 @@ def test_tts_text_strips_display_emoji():
     assert "\\u{2600}-\\u{27BF}" in script
     speech_text_block = script.split("function speechText", 1)[1].split("function stripSpeechDecorations", 1)[0]
     assert "text.length > 720" not in speech_text_block
+
+
+def test_markdown_renderer_falls_back_when_marked_leaves_bold_markers():
+    script = (ROOT / "static" / "js" / "markdown.js").read_text(encoding="utf-8")
+
+    assert "export function hasUnresolvedMarkdown(value)" in script
+    assert "if (hasUnresolvedMarkdown(rawHtml)) {" in script
+    assert "return sanitizer.sanitize(renderMarkdownFallback(source));" in script
+    assert "/\\*\\*[^*\\n]+?\\*\\*/u.test(html)" in script
 
 
 def test_frontend_prefers_server_tts_audio():
@@ -132,7 +164,7 @@ def test_frontend_prefers_server_tts_audio():
     assert "function requestServerSpeech(text" in speech_script
     assert "function requestServerSpeechFile(text" in speech_script
     assert "function playSpeechSegment(index, playbackSeq)" in speech_script
-    assert "function speechPlaybackSegments(text)" in speech_script
+    assert 'function speechPlaybackSegments(text, lang = "zh-CN")' in speech_script
     assert "function utf8ByteLength(value)" in speech_script
     assert "function ttsStreamUrl(text)" in speech_script
     assert 'return `/api/tts/stream?${params.toString()}`;' in speech_script
@@ -141,8 +173,60 @@ def test_frontend_prefers_server_tts_audio():
     assert "onEnd: () => playSpeechSegment(index + 1, playbackSeq)" in speech_script
     assert "onError: () => requestServerSpeechFile(currentSpeechSegments.slice(index).join(\"\"), playbackSeq)" in speech_script
     assert "new Audio(audioUrl)" in speech_script
-    assert "speakAnswer(text, speechAudioUrl, { serverTts: speechAudioPending })" in ask_script
-    assert "speakText(fallbackText, playbackSeq)" in speech_script
+    assert "speakAnswer(text, speechAudioUrl, { serverTts: speechAudioPending, lang: speechLang })" in ask_script
+    assert "speakText(fallbackText, playbackSeq, { lang: lastSpeechLang })" in speech_script
+
+
+def test_frontend_tracks_speech_language_for_bilingual_playback():
+    speech_script = (ROOT / "static" / "js" / "speech.js").read_text(encoding="utf-8")
+    ask_script = (ROOT / "static" / "js" / "ask.js").read_text(encoding="utf-8")
+
+    assert 'let lastSpeechLang = "zh-CN";' in speech_script
+    assert "export function normalizeSpeechLang(value)" in speech_script
+    assert 'return "en-US";' in speech_script
+    assert 'utterance.lang = lang;' in speech_script
+    assert "pickSpeechVoice(voices, lang)" in speech_script
+    assert 'const speechLang = event?.speech_lang || "";' in ask_script
+    assert "cacheSpeechResult(text, speechAudioUrl, { serverTts: speechAudioPending, lang: speechLang });" in ask_script
+    assert "speakAnswer(lastSpeechText, lastSpeechAudioUrl, { serverTts: lastSpeechUsesServerTts, lang: lastSpeechLang })" in speech_script
+
+
+def test_browser_speech_segments_english_text_for_reliable_playback():
+    speech_script = (ROOT / "static" / "js" / "speech.js").read_text(encoding="utf-8")
+
+    assert 'export function playBrowserSpeechSegment(segments, index, playbackSeq, lang = "zh-CN")' in speech_script
+    assert 'const splitter = lang === "en-US"' in speech_script
+    assert '? /[^.!?;]+[.!?;]?/gu' in speech_script
+    assert 'const maxBytes = lang === "en-US" ? 320 : 720;' in speech_script
+    assert 'playBrowserSpeechSegment(segments, index + 1, playbackSeq, lang);' in speech_script
+
+
+def test_ask_api_english_speech_prefers_server_tts(monkeypatch):
+    monkeypatch.setattr(config, "AI_API_KEY", "")
+    monkeypatch.setattr("heritage_explorer.web.volc_tts_available", lambda: True)
+    app = create_app()
+    client = app.test_client()
+
+    def fake_dispatch(self, **kwargs):
+        from heritage_explorer.agent import AgentResult, TaskType
+
+        yield AgentResult(
+            task_type=TaskType.CONTENT_TRANSFORM,
+            answer="展示版",
+            speech="Bian Embroidery. Category: Traditional Fine Arts. Summary: Bian embroidery is a traditional embroidery craft.",
+            mode="llm",
+            confidence=0.8,
+        )
+
+    monkeypatch.setattr("heritage_explorer.agent.Agent.dispatch_stream", fake_dispatch)
+
+    response = client.post("/api/ask", json={"question": "给汴绣生成中英双语介绍"})
+    events = _sse_events(response)
+    result_event = next((e for e in events if e["type"] == "result"), {})
+
+    assert result_event.get("speech_engine") == "volcengine"
+    assert result_event.get("speech_lang") == "en-US"
+    assert result_event.get("speech_audio_pending") is True
 
 
 def test_loading_progress_uses_fixed_event_driven_steps():

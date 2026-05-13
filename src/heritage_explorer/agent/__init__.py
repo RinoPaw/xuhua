@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import re
 from dataclasses import replace
 from pathlib import Path
@@ -27,6 +28,11 @@ from ..dataset import (
     normalize_text,
 )
 from ..item_cards import _enriched_item_card, _source_payload, _title_with_family
+from ..transform_config import (
+    DEFAULT_TRANSFORM_TYPE,
+    TRANSFORM_MAX_TOKENS,
+    TRANSFORM_PROMPTS,
+)
 from .planner import (  # noqa: F401 - re-exported for backward compat
     agent_planner_extra_options,
     build_agent_planner_messages,
@@ -500,17 +506,6 @@ class Agent:
             warnings=["模型接口不可用，已切回本地模板。如需更丰富的内容，请配置 API Key。"],
         )
 
-    def _field_value_cn(self, target_item, field_name: str) -> str:
-        if field_name == "名称":
-            return _title_with_family(target_item)
-        if field_name == "类别":
-            return target_item.category
-        if field_name == "简介":
-            return target_item.summary[:300] if target_item.summary else ""
-        if field_name == "主要特色":
-            return (target_item.features or target_item.summary or "")[:300]
-        return ""
-
     def _handle_bilingual_transform(self, context: str, query: str, target_item) -> AgentResult:
         """Handle bilingual (翻译) transform using LLM JSON output."""
         try:
@@ -552,15 +547,17 @@ class Agent:
             {
                 "label_cn": label_cn,
                 "label_en": label_en,
-                "value_cn": self._field_value_cn(target_item, label_cn),
-                "value_en": parsed["fields"].get(label_cn, ""),
+                "value_cn": parsed["fields"].get(label_cn, {}).get("zh", ""),
+                "value_en": parsed["fields"].get(label_cn, {}).get("en", ""),
             }
             for label_cn, label_en in field_order
         ]
+        speech = str(parsed.get("speech_en") or "").strip()
 
         return AgentResult(
             task_type=TaskType.CONTENT_TRANSFORM,
             answer=parsed.get("answer", ""),
+            speech=speech,
             bilingual_fields=bilingual_fields,
             items=[_enriched_item_card(target_item)],
             sources=[_source_payload(target_item)],
@@ -683,12 +680,24 @@ class Agent:
 
     def _handle_exhibition(self, analysis) -> AgentResult:
         """EXHIBITION_PLAN: recommendation sub-pipeline + exhibition template."""
-        # Ensure a reasonable minimum -- "策划一个展" means 1 exhibition, not 1 item
-        if analysis.retrieval_count < 5:
-            analysis.retrieval_count = 5
+        # For "一个小展", first gather a small candidate pool, then pick one core item.
+        rec_analysis = analysis
+        if analysis.item_count == 1:
+            rec_analysis = replace(analysis, retrieval_count=max(analysis.retrieval_count, 5))
 
         # Reuse recommendation
-        rec = self._handle_recommend(analysis)
+        rec = self._handle_recommend(rec_analysis)
+        if analysis.item_count == 1 and rec.items:
+            selected_index, selected_reason = _select_exhibition_core_item(
+                rec.items,
+                scene=analysis.scenario or "非遗展示",
+                audience=analysis.audience or "公众",
+                time_budget=analysis.time_budget or "待定",
+            )
+            rec.items = [rec.items[selected_index]]
+            if rec.evidence:
+                rec.evidence = [rec.evidence[min(selected_index, len(rec.evidence) - 1)]]
+            rec.selection_reason = selected_reason or f"先筛出 {len(rec_analysis.items) if hasattr(rec_analysis, 'items') else max(analysis.retrieval_count, 5)} 个候选，再确定 1 个核心项目"
 
         rec.task_type = TaskType.EXHIBITION_PLAN
 
@@ -827,68 +836,97 @@ def _build_selection_reason(scenario: str, audience: str, constraints: list[str]
     return "，".join(parts)
 
 
-_TRANSFORM_PROMPTS: dict[str, str] = {
-    "翻译": (
-        "你是一个非遗资料翻译助手。请将以下非遗项目的中文信息逐字段翻译为英文，输出严格的 JSON 格式。\n"
-        "\n"
-        "输出格式：\n"
-        '{\n'
-        '  "answer": "一段50字以内的中英双语导语，介绍该项目",\n'
-        '  "fields": {\n'
-        '    "名称": "English name",\n'
-        '    "类别": "English category",\n'
-        '    "简介": "English summary",\n'
-        '    "主要特色": "English key features"\n'
-        '  }\n'
-        '}\n'
-        "\n"
-        "翻译要求：\n"
-        "- 名称：采用意译或通用译名，必要时括号注拼音\n"
-        "- 类别：使用标准的非物质文化遗产分类英文术语\n"
-        "- 简介：翻译准确流畅，适合对外传播\n"
-        "- 主要特色：保留关键技艺和文化的专有名词，可括号注中文\n"
-        "- 字段值保持简明，简介和特色各控制在 150 词以内"
-    ),
-    "年轻化": (
-        "你是一个面向年轻受众的非遗科普写手。请将以下非遗项目用轻松、"
-        "口语化的语言重新介绍，适合发在社交媒体上，保留关键信息但语气活泼。"
-        "结尾要落到生活场景、参观体验或文化传承上，让读者知道这项非遗和当下生活有关。"
-    ),
-    "朋友圈": (
-        "你是一个非遗文化传播者。请将以下非遗项目用适合发朋友圈的风格改写，"
-        "200字以内，带 emoji，有趣有料，结尾可以加话题标签。"
-        "结尾要有轻量的体验邀请或文化推广意味。"
-    ),
-    "文创文案": (
-        "你是一个非遗文创设计师。基于以下非遗项目的核心元素，"
-        "生成一份文创设计方案概要，包括：设计灵感来源、可提取的视觉/技艺元素、"
-        "建议的产品类型（文具/家居/服饰/数字产品等）、目标受众和产品调性。"
-    ),
-    "讲解词": (
-        "你是一个非遗展馆讲解员。请基于以下非遗项目资料生成面向公众的讲解词，"
-        "语言清楚、有画面感，适合现场或视频口播，避免编造资料外事实。"
-        "结尾可以引导观众把非遗带回生活，或鼓励参观、体验、关注传承。"
-    ),
-    "改写": (
-        "你是一个非遗内容编辑。请将以下非遗项目的介绍进行改写优化，"
-        "使内容更适合一般公众阅读，语言流畅有感染力，突出文化价值。"
-        "保留或补足一个自然的文化推广结尾。"
-    ),
-}
+_TRANSFORM_PROMPTS = TRANSFORM_PROMPTS
+_TRANSFORM_MAX_TOKENS = TRANSFORM_MAX_TOKENS
 
 
 def _call_transform_model(transform_type: str, context: str, query: str) -> str:
     """Call LLM with a task-specific system prompt for content transformation."""
     from ..http_client import chat_completion
 
-    system_prompt = _TRANSFORM_PROMPTS.get(transform_type, _TRANSFORM_PROMPTS["改写"])
+    system_prompt = _TRANSFORM_PROMPTS.get(transform_type, _TRANSFORM_PROMPTS[DEFAULT_TRANSFORM_TYPE])
+    max_tokens = _TRANSFORM_MAX_TOKENS.get(transform_type, _TRANSFORM_MAX_TOKENS[DEFAULT_TRANSFORM_TYPE])
     return chat_completion(
         [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"任务要求：{query}\n\n非遗项目资料：\n{context}"},
         ],
         temperature=0.7,
+        max_tokens=max_tokens,
     )
+
+
+def _select_exhibition_core_item(
+    candidate_items: list[dict[str, Any]],
+    scene: str,
+    audience: str,
+    time_budget: str,
+) -> tuple[int, str]:
+    if not candidate_items:
+        return 0, ""
+    if len(candidate_items) == 1:
+        return 0, "用户要求 1 个核心项目，当前候选仅 1 个。"
+    if not config.AI_API_KEY:
+        return 0, f"先筛出 {len(candidate_items)} 个候选，再按当前排序取第 1 个核心项目。"
+
+    from ..http_client import chat_completion
+
+    candidate_lines: list[str] = []
+    for index, item in enumerate(candidate_items, 1):
+        meta = " · ".join(
+            part for part in [
+                str(item.get("category") or ""),
+                str(item.get("level") or ""),
+                str(item.get("province") or ""),
+                str(item.get("city") or ""),
+            ] if part
+        )
+        display_forms = "、".join(item.get("display_forms") or [])
+        summary = str(item.get("summary") or "").strip()
+        candidate_lines.append(
+            f"{index}. {item.get('title', '')}\n"
+            f"   信息：{meta or '无'}\n"
+            f"   展示形式：{display_forms or '未标注'}\n"
+            f"   简介：{summary[:120]}"
+        )
+
+    system_prompt = (
+        "你是非遗展示策划顾问。现在有 5 个候选项目，需要为一个小展只选出 1 个最适合作为核心项目。"
+        "请综合场景、受众、时间预算、可展示性、教育价值和互动潜力判断。"
+        "只输出 JSON，不要输出解释文字，不要输出 Markdown。\n"
+        '{\"selected_index\": 1, \"reason\": \"一句中文理由\"}'
+    )
+    user_prompt = (
+        f"场景：{scene}\n"
+        f"受众：{audience}\n"
+        f"时间预算：{time_budget}\n\n"
+        "候选项目：\n"
+        + "\n\n".join(candidate_lines)
+    )
+    try:
+        raw = chat_completion(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.2,
+            max_tokens=220,
+        )
+        match = re.search(r"\{[\s\S]*\}", raw or "")
+        if not match:
+            raise ValueError("no json")
+        data = json.loads(match.group(0))
+        selected_index = int(data.get("selected_index", 1)) - 1
+        if not 0 <= selected_index < len(candidate_items):
+            raise ValueError("index out of range")
+        reason = str(data.get("reason") or "").strip()
+        if reason:
+            reason = f"先筛出 {len(candidate_items)} 个候选，再由模型选定 1 个核心项目：{reason}"
+        else:
+            reason = f"先筛出 {len(candidate_items)} 个候选，再由模型选定 1 个核心项目。"
+        return selected_index, reason
+    except Exception:
+        return 0, f"先筛出 {len(candidate_items)} 个候选，再按当前排序取第 1 个核心项目。"
 
 
 def _parse_bilingual_json(raw_text: str) -> dict | None:
@@ -927,8 +965,27 @@ def _parse_bilingual_json(raw_text: str) -> dict | None:
         return None
     if not all(key in fields for key in required_fields):
         return None
+    normalized_fields: dict[str, dict[str, str]] = {}
+    for key in required_fields:
+        normalized = _coerce_bilingual_field(fields.get(key))
+        if normalized is None:
+            return None
+        normalized_fields[key] = normalized
 
+    data["fields"] = normalized_fields
+    if "speech_en" in data and not isinstance(data.get("speech_en"), str):
+        return None
     return data
+
+
+def _coerce_bilingual_field(value: Any) -> dict[str, str] | None:
+    if isinstance(value, dict):
+        zh = str(value.get("zh") or "").strip()
+        en = str(value.get("en") or "").strip()
+        if zh and en:
+            return {"zh": zh, "en": en}
+        return None
+    return None
 
 
 def _build_transform_local(transform_type: str, target_item, meta) -> str:

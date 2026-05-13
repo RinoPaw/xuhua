@@ -346,8 +346,48 @@ function renderFollowups(payload) {
   `;
 }
 
+function renderBilingualCard(payload) {
+  const fields = payload?.bilingual_fields;
+  if (!fields?.length) return "";
+
+  const title = payload?.items?.[0]?.title || "";
+  const enTitle = fields.find(f => f.label_cn === "名称")?.value_en || "";
+
+  return `
+    <div class="bilingual-card">
+      <div class="bilingual-head">
+        <h2 class="bilingual-title">${escapeHtml(title)}</h2>
+        <p class="bilingual-subtitle">${escapeHtml(enTitle)}</p>
+      </div>
+      <p class="bilingual-intro">${escapeHtml(payload?.answer || "")}</p>
+      <div class="bilingual-fields">
+        ${fields.map(f => `
+        <div class="bilingual-field-row">
+          <div class="bilingual-field-col">
+            <span class="bilingual-field-label">${escapeHtml(f.label_cn)}</span>
+            <span class="bilingual-field-value">${escapeHtml(f.value_cn)}</span>
+          </div>
+          <div class="bilingual-field-col">
+            <span class="bilingual-field-label">${escapeHtml(f.label_en)}</span>
+            <span class="bilingual-field-value">${escapeHtml(f.value_en)}</span>
+          </div>
+        </div>`).join("")}
+      </div>
+    </div>
+  `;
+}
+
 function renderResultAnswer(question, payload) {
   const taskLabel = payload?.task_label || modeLabel(payload?.mode);
+
+  const bilingualCard = renderBilingualCard(payload);
+  const answerSection = bilingualCard
+    ? bilingualCard
+    : `<section class="result-section">
+        <h3>${escapeHtml(taskLabel)}结果</h3>
+        <div class="result-markdown">${renderMarkdown(payload?.answer || "")}</div>
+      </section>`;
+
   return `
     <div class="result-shell" data-task="${escapeHtml(payload?.task_type || "fact_qa")}">
       <section class="result-section">
@@ -357,10 +397,7 @@ function renderResultAnswer(question, payload) {
       ${renderResultStats(payload)}
       ${renderResultItems(payload)}
       ${renderSelectionReason(payload)}
-      <section class="result-section">
-        <h3>${escapeHtml(taskLabel)}结果</h3>
-        <div class="result-markdown">${renderMarkdown(payload?.answer || "")}</div>
-      </section>
+      ${answerSection}
       ${renderWarnings(payload)}
       ${renderFollowups(payload)}
     </div>

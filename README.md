@@ -1,19 +1,38 @@
 # 叙华
 
-叙华是一个面向牡丹非遗资料的本地 Web 知识库与 AI 问答系统。项目从 `panda_mudan` 中拆分重建，保留非遗数据与数字人展示能力，移除了旧桌面端、语音识别和复杂本地向量模型依赖，更适合课程展示、局域网演示和轻量 RAG 问答原型。
+面向全国非遗数据的非遗传播任务型 AI 智能体。内置 4415 项非遗条目（11 个类别），覆盖查询、筛选、比较、推荐、任务策划和内容转化等完整链路，适合课程展示、局域网演示和非遗教育场景。
 
-系统围绕"问题输入、资料召回、AI 回答、语音播报、数字人状态展示"这一流程构建。即使不配置模型接口，也可以基于本地数据集返回依据式回答。
+系统围绕"问题理解 → 资料召回 → 任务路由 → 答案生成 → 语音播报 → 数字人状态展示"这一流程构建。不依赖任何外部 API Key 也能正常运行——所有功能均有本地规则/模板回退。
 
 ## 功能特性
 
-- 本地知识库：内置牡丹非遗条目数据，统一为标题、分类、摘要、正文、别名和来源字段。
-- 混合检索：默认使用轻量关键词召回，也可接入 embedding 语义检索提升相关性。
-- AI 问答：支持 OpenAI 兼容接口，默认按智谱 API 地址配置。
-- 本地兜底：模型不可用或未配置 Key 时，会退回本地依据式回答。
-- 自动播报：回答生成后自动调用浏览器语音合成播报，并清理 Markdown 符号。
-- 数字人面板：根据待机、检索、回答状态切换三段数字人视频。
-- 局域网访问：Flask 服务可监听 `0.0.0.0`，手机和同一网络设备可直接访问。
-- 响应式界面：桌面端和手机端都可使用，页面高度控制在视口内，主要区域内部滚动。
+### 知识查询
+- 全国非遗知识库：4415 项非遗条目，覆盖 11 个类别，含标题/地区/级别/简介/正文/特色/历史/文化价值等结构化字段。
+- 混合检索：关键词 + 拼音同音匹配 + 可选 embedding 语义检索，RRF 排名融合。
+- 多维筛选：支持按类别、省份、级别、区县、关键词自由组合过滤。
+- 项目卡片：检索结果以结构化卡片展示，点击可查看详情、场景标签、受众标签和完整正文。
+
+### 分析选择
+- 同类对比：多个非遗项目的多维度结构化对比（类别/级别/地区/教育价值/互动潜力）。
+- 项目推荐：基于场景（校园/社区/展馆/研学/文创）和受众标签的规则打分推荐。
+
+### 任务策划
+- 校园展示策划：自动筛选 5+ 展项，生成展示形式/核心讲解/互动环节/所需物料方案。
+- 社区活动策划：同上流程，适配社区场景。
+- 研学任务生成：7 段教案模板，按受众年龄（儿童/青少年/大学生/亲子）自适应调整。
+
+### 内容转化
+- 非遗翻译：中译英，支持 LLM 全译或本地模板摘要。
+- 年轻化文案：社交媒体风格改写，口语化、带 emoji。
+- 文创灵感：基于非遗元素的设计简报（灵感来源/视觉元素/产品类型/目标受众）。
+
+### 通用能力
+- AI 问答：支持 OpenAI 兼容接口（DeepSeek、智谱等），流式 SSE 输出。
+- 本地兜底：所有功能模型不可用时自动退回本地规则/模板回答。
+- 自动播报：浏览器 Web Speech API + 可选服务端 TTS（火山引擎/OpenAI），一键切换。
+- 数字人面板：四段视频状态机（idle/thinking/speaking/farewell），交叉淡入淡出。
+- 局域网访问：Flask 监听 `0.0.0.0`，同一网络设备直接访问。
+- 响应式界面：桌面端和移动端自适应，视口内滚动。
 
 ## 运行环境
 
@@ -149,25 +168,36 @@ http://192.168.1.141:5050
 data/processed/heritage_items.json
 ```
 
-每条记录统一为：
+每条记录统一为结构化 HeritageItem：
 
 ```json
 {
   "id": "h_xxxxxxxxxx",
   "title": "太极拳（陈氏太极拳）",
+  "family": "太极拳",
   "category": "传统体育、游艺与杂技",
+  "province": "河南省",
+  "city": "焦作市",
+  "district": "温县",
+  "level": "人类非物质文化遗产代表作名录",
   "summary": "摘要文本",
   "content": "资料原文",
-  "aliases": [],
+  "display_forms": ["表演", "体验"],
+  "history": "历史背景文本",
+  "features": "核心特色文本",
+  "cultural_value": "文化价值文本",
+  "suitable_scenarios": ["校园展示", "社区活动"],
+  "target_audience": ["青少年", "大学生"],
+  "display_difficulty": "低",
+  "interaction_potential": "高",
+  "education_value": "高",
+  "cultural_keywords": ["武术", "养生", "哲学"],
   "search_text": "用于检索的合并文本",
-  "source": {
-    "legacy_order": 1,
-    "files": []
-  }
+  "source": {"files": [], "urls": []}
 }
 ```
 
-相比旧项目中分散的数据文件，这种结构更方便检索、展示、维护和后续接入数据库。
+软标签（scenarios/audience/difficulty/interaction/education）由规则推断，用于推荐和筛选。
 
 ## 项目结构
 
@@ -176,60 +206,56 @@ xuhua/
 ├── app.py                         # 项目根目录启动器
 ├── src/heritage_explorer/         # 核心 Python 包
 │   ├── agent/                     # Agent 意图路由、规划器与任务处理器
-│   │   ├── planner.py             #   LLM 规划器 prompt 构建
-│   │   └── handlers/              #   各任务类型处理器
+│   │   ├── __init__.py            #   主处理器: fact_qa / comparison / recommendation /
+│   │   │                          #     exhibition_plan / study_task / content_transform / browse
+│   │   ├── planner.py             #   LLM 规划器 prompt 构建（任务分类 + 改写）
+│   │   ├── models.py              #   任务类型与决策模型
+│   │   └── task_config.py         #   任务配置与提示词
 │   ├── ai/                        # AI 问答、语音生成与提示词
-│   │   ├── client.py              #   模型调用封装（chat + speech 双模型）
-│   │   ├── context.py             #   上下文构建
-│   │   ├── prompts.py             #   系统提示词
-│   │   ├── qa.py                  #   问答流程编排
-│   │   └── speech.py              #   语音播报文本生成
-│   ├── agent_comparison.py        # Agent 对比评估
-│   ├── agent_models.py            # Agent 任务类型与决策模型
-│   ├── agent_task_config.py       # 任务配置与提示词
+│   │   ├── __init__.py            #   RAG 问答入口（构建上下文 + 调用模型）
+│   │   ├── prompts.py             #   系统提示词（QA + Speech）
+│   │   └── speech.py              #   服务端 TTS 编排
 │   ├── config.py                  # 环境变量和路径配置
 │   ├── dataset.py                 # 数据集加载、分类统计与条目序列化
 │   ├── embeddings.py              # OpenAI 兼容 embedding 索引与语义召回
-│   ├── extractor.py               # 结构化字段提取与溯源
+│   ├── extractor.py               # 结构化字段提取与软标签推断
 │   ├── http_client.py             # 统一 HTTP 层（httpx + zhipuai 自动路由）
-│   ├── item_cards.py              # 条目卡片渲染
-│   ├── retriever.py               # 查询分析与实体抽取
-│   ├── search.py                  # 关键词检索和混合排序
+│   ├── item_cards.py              # 条目卡片渲染（前端侧边栏卡片）
+│   ├── retriever.py               # 查询分析、实体/场景/约束提取、语义正则
+│   ├── search.py                  # 关键词检索 + 拼音匹配 + RRF 混合排序
 │   ├── volc_tts.py                # 火山引擎服务端 TTS
 │   └── web.py                     # Flask 页面与 API
 ├── data/processed/
-│   └── heritage_items.json        # 已处理的非遗知识库数据
+│   └── heritage_items.json        # 4415 项非遗数据
 ├── data/embeddings/               # 本地生成的语义索引，不上传 GitHub
 ├── static/
 │   ├── styles.css                 # Web UI 样式
-│   ├── js/                        # 前端 ES 模块
-│   │   ├── main.js                #   入口
-│   │   ├── ask.js                 #   问答请求与 SSE 流
-│   │   ├── search.js              #   搜索建议
-│   │   ├── speech.js              #   语音播报控制
-│   │   ├── human.js               #   数字人视频状态机
+│   ├── js/                        # 前端 ES 模块（9 个模块）
+│   │   ├── main.js                #   入口 & 事件绑定
+│   │   ├── ask.js                 #   问答 SSE 流处理
+│   │   ├── search.js              #   侧边栏检索与详情
+│   │   ├── speech.js              #   语音切换与三态状态机
+│   │   ├── human.js               #   数字人视频四态调度
 │   │   ├── markdown.js            #   Markdown 渲染
 │   │   ├── ui.js                  #   UI 交互
-│   │   ├── state.js               #   全局状态
-│   │   └── consts.js              #   常量
-│   ├── media/                     # 数字人视频
+│   │   ├── state.js               #   全局状态管理
+│   │   └── consts.js              #   常量与能力检测
+│   ├── media/                     # 数字人视频素材
 │   └── vendor/                    # 第三方库（marked, DOMPurify）
 ├── templates/
 │   ├── index.html                 # 主页面
-│   ├── study_task.md.j2           # 学习任务模板
-│   ├── exhibition_plan.md.j2      # 展览方案模板
-│   └── transform_local.md.j2      # 内容改写本地兜底模板
+│   ├── study_task.md.j2           # 研学教案本地模板
+│   ├── exhibition_plan.md.j2      # 展示策划本地模板
+│   └── transform_local.md.j2      # 内容转化本地模板（含翻译/年轻化/文创/讲解词）
 ├── scripts/
-│   ├── build_dataset.py           # 从旧项目重新生成数据集
-│   ├── build_embeddings.py        # 调用 embedding 接口生成本地语义索引
-│   ├── build_embeddings.ps1       # embedding 构建 PowerShell 包装
-│   ├── import_ihchina_projects.py # 从 ihchina.cn 导入非遗项目
+│   ├── build_dataset.py           # 从旧项目迁移数据集
+│   ├── build_embeddings.py        # 生成本地语义索引
+│   ├── build_embeddings.ps1       # embedding 构建 PS 包装
+│   ├── import_ihchina_projects.py # 从 ihchina.cn 批量导入
 │   └── migrate_dataset.py         # 数据集格式迁移
-├── tests/                         # 单元测试
-├── .env.example                   # 配置模板
-├── .env                           # 本地配置，不上传 GitHub
+├── tests/                         # 12 个测试文件
+├── .env.example
 ├── requirements.txt
-├── requirements-dev.txt
 └── README.md
 ```
 
@@ -256,7 +282,7 @@ python -m pip install -e .
 xuhua
 ```
 
-重新生成数据集：
+从旧项目迁移数据集：
 
 ```powershell
 python .\scripts\build_dataset.py --source-root D:\Projects\panda_mudan
@@ -291,7 +317,7 @@ python -m pytest -q
 检查前端脚本语法：
 
 ```powershell
-node --check static/app.js
+node --check static/js/*.js
 ```
 
 ## API 简介
@@ -299,27 +325,24 @@ node --check static/app.js
 | 路径 | 方法 | 说明 |
 | --- | --- | --- |
 | `/` | GET | 主页面 |
-| `/api/meta` | GET | 数据集版本、来源和数量信息 |
-| `/api/categories` | GET | 分类列表 |
-| `/api/items` | GET | 条目检索，支持 `q`、`category`、`limit`、`offset`；启用 embedding 后使用混合检索 |
-| `/api/items/<item_id>` | GET | 条目详情 |
-| `/api/ask` | POST | 基于本地资料和可选模型接口生成回答 |
+| `/api/meta` | GET | 数据集版本、条目数、类别数 |
+| `/api/categories` | GET | 分类列表及每类条目数量 |
+| `/api/items` | GET | 条目检索，支持 `q`/`category`/`province`/`level`/`district`/`keywords`/`limit`/`offset`；可选 embedding 混合检索 |
+| `/api/items/<id>` | GET | 条目完整详情 |
+| `/api/ask` | POST | 任务型问答，SSE 流式输出（含进度/结果/语音事件） |
+| `/api/tts` | POST | 服务端 TTS，生成音频文件并返回 URL |
+| `/api/tts/stream` | GET | 流式 TTS 音频 |
+| `/api/tts/<filename>` | GET | 获取缓存的 TTS 音频文件 |
 
-## 旧数据来源
+## 数据来源
 
-默认从同级旧项目读取数据：
+当前数据集来自 ihchina.cn 全国非遗项目数据，通过 `scripts/import_ihchina_projects.py` 导入并结构化处理为 `data/processed/heritage_items.json`。
 
-```text
-D:\Projects\panda_mudan
-```
-
-可手动指定来源目录：
+如需从旧项目（牡丹非遗）重新构建数据集：
 
 ```powershell
 python .\scripts\build_dataset.py --source-root D:\Projects\panda_mudan
 ```
-
-构建脚本会把旧项目中的牡丹非遗资料整理为 `data/processed/heritage_items.json`。
 
 ## 资源下载
 

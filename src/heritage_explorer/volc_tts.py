@@ -30,8 +30,8 @@ class TTSAudio:
 
 
 def openai_tts_available() -> bool:
-    """True when AI API key is configured and can serve as TTS fallback."""
-    return bool(config.AI_API_KEY) and bool(config.AI_BASE_URL)
+    """True when explicitly enabled and AI API key is configured."""
+    return config.OPENAI_TTS_ENABLED and bool(config.AI_API_KEY) and bool(config.AI_BASE_URL)
 
 
 def server_tts_available() -> bool:

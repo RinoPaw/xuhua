@@ -67,6 +67,7 @@ EMBEDDING_MIN_SCORE = float(os.getenv("EMBEDDING_MIN_SCORE", "0.15"))
 SEARCH_USE_EMBEDDING = os.getenv("SEARCH_USE_EMBEDDING", "0") == "1"
 
 VOLC_TTS_ENABLED = os.getenv("VOLC_TTS_ENABLED", "1") == "1"
+OPENAI_TTS_ENABLED = os.getenv("OPENAI_TTS_ENABLED", "0") == "1"  # Requires OpenAI/v1/audio/speech support
 VOLC_TTS_API_VERSION = os.getenv("VOLC_TTS_API_VERSION", "auto")
 VOLC_TTS_ENDPOINT = os.getenv("VOLC_TTS_ENDPOINT", "https://openspeech.bytedance.com/api/v1/tts")
 VOLC_TTS_V3_ENDPOINT = os.getenv(

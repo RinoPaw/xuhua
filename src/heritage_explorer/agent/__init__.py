@@ -791,6 +791,46 @@ def _call_transform_model(transform_type: str, context: str, query: str) -> str:
     )
 
 
+def _parse_bilingual_json(raw_text: str) -> dict | None:
+    """Extract bilingual fields JSON from LLM output.
+
+    Handles markdown code fences and extra text around the JSON block.
+    Returns None if parsing fails or required keys are missing.
+    """
+    import json as _json
+
+    text = (raw_text or "").strip()
+    if not text:
+        return None
+
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
+    if fence:
+        text = fence.group(1).strip()
+    else:
+        obj_start = text.find("{")
+        obj_end = text.rfind("}")
+        if obj_start == -1 or obj_end == -1 or obj_start >= obj_end:
+            return None
+        text = text[obj_start:obj_end + 1]
+
+    try:
+        data = _json.loads(text)
+    except Exception:
+        return None
+
+    if not isinstance(data, dict):
+        return None
+
+    required_fields = ("名称", "类别", "简介", "主要特色")
+    fields = data.get("fields")
+    if not isinstance(fields, dict):
+        return None
+    if not all(key in fields for key in required_fields):
+        return None
+
+    return data
+
+
 def _build_transform_local(transform_type: str, target_item, meta) -> str:
     """Build a template-based local answer for content transformation."""
     title = _title_with_family(target_item)

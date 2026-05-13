@@ -7,9 +7,6 @@ let currentUtterance = null;
 let currentSpeechAudio = null;
 let currentSpeechSegments = [];
 export let lastSpeechText = "";
-export function resetLastSpeechText() {
-  lastSpeechText = "";
-}
 export let lastSpeechAudioUrl = "";
 let speechPlaybackSeq = 0;
 let speechUnlocked = false;
@@ -23,21 +20,41 @@ export function setVoiceEnabled(enabled) {
   voiceEnabled = enabled;
   if (!enabled) {
     stopSpeech();
+    setVoiceState("disabled");
+    setVoiceStatus("已暂停");
+    refreshVoiceToggleUI();
+    return;
   }
-  setVoiceState(enabled ? "idle" : "disabled");
-  setVoiceStatus(enabled ? "" : "已关闭");
-  refreshVoiceToggleUI();
+  if (lastSpeechText) {
+    setVoiceState("speaking");
+    refreshVoiceToggleUI();
+    speakAnswer(lastSpeechText, lastSpeechAudioUrl);
+  } else {
+    setVoiceState("idle");
+    setVoiceStatus("正在润色播报");
+    refreshVoiceToggleUI();
+  }
+}
+
+export function cacheSpeechResult(text, audioUrl = "") {
+  lastSpeechText = speechText(text);
+  lastSpeechAudioUrl = audioUrl || "";
+}
+
+export function clearSpeechCache() {
+  lastSpeechText = "";
+  lastSpeechAudioUrl = "";
 }
 
 function refreshVoiceToggleUI() {
   if (!els.voiceToggle) return;
   if (!voiceEnabled) {
     els.voiceToggle.dataset.state = "disabled";
-    els.voiceToggle.setAttribute("disabled", "disabled");
+    els.voiceToggle.removeAttribute("disabled");
     els.voiceToggle.setAttribute("aria-pressed", "false");
     els.voiceToggle.classList.remove("is-speaking");
     const label = els.voiceToggle.querySelector(".voice-label");
-    if (label) label.textContent = "已关闭";
+    if (label) label.textContent = "暂停播报";
   } else if (voiceState === "speaking") {
     els.voiceToggle.dataset.state = "speaking";
     els.voiceToggle.removeAttribute("disabled");
@@ -51,7 +68,7 @@ function refreshVoiceToggleUI() {
     els.voiceToggle.setAttribute("aria-pressed", "true");
     els.voiceToggle.classList.remove("is-speaking");
     const label = els.voiceToggle.querySelector(".voice-label");
-    if (label) label.textContent = "播报";
+    if (label) label.textContent = "等待播报";
   }
 }
 
@@ -240,7 +257,7 @@ export function requestServerSpeech(text, playbackSeq) {
   }
   stopSpeech({ preserveHuman: true, keepPlaybackSeq: true });
   setVoiceState("speaking");
-  setVoiceStatus("正在连接语音");
+  setVoiceStatus("正在播报");
   currentSpeechSegments = speechPlaybackSegments(text);
   if (currentSpeechSegments.length) {
     return playSpeechSegment(0, playbackSeq);
@@ -253,7 +270,7 @@ export function requestServerSpeechFile(text, playbackSeq) {
     return true;
   }
   setVoiceState("speaking");
-  setVoiceStatus("正在生成语音");
+  setVoiceStatus("正在播报");
   fetch("/api/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -371,11 +388,14 @@ export function clearSpeechStartGuard() {
 }
 
 function syncVoiceIdleState(status = "") {
+  if (!voiceEnabled) {
+    return;
+  }
   if (!speechSupported) {
     setVoiceState("disabled");
     setVoiceStatus("浏览器不支持语音");
     return;
   }
   setVoiceState("idle");
-  setVoiceStatus(status);
+  setVoiceStatus(status || "正在润色播报");
 }

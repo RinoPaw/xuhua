@@ -3,7 +3,7 @@ import { state, els } from './state.js';
 import { escapeHtml, renderMarkdown } from './markdown.js';
 import { itemTitle, itemMetaParts, itemTagList, renderRelatedItems, beginAskSessionRelated } from './search.js';
 import { responseHumanState, setDigitalHumanState, scheduleHumanReturnToIdle, waitForThinkingDissolve, visualAnswerDuration } from './human.js';
-import { speakAnswer, stopSpeech, unlockSpeech, resetLastSpeechText, voiceEnabled } from './speech.js';
+import { speakAnswer, stopSpeech, unlockSpeech, cacheSpeechResult, clearSpeechCache, voiceEnabled } from './speech.js';
 import { bindQueryChips, bindResultItemLinks } from './ui.js';
 
 let askAbortController = null;
@@ -402,7 +402,7 @@ function beginAskSession(question) {
   els.askButton.textContent = "提问";
   els.answerMode.textContent = "正在识别任务";
   startLoadingSteps();
-  resetLastSpeechText();
+  clearSpeechCache();
   stopSpeech({ preserveHuman: true });
   const thinkingStartedAt = performance.now();
   setDigitalHumanState("thinking", "正在思考", "我先从资料库里找和问题最相关的内容。");
@@ -506,6 +506,7 @@ function applyAnswerSpeech(event) {
   setDigitalHumanState(lastSpeechHumanState, "正在回答", text);
 
   if (!voiceEnabled) {
+    cacheSpeechResult(text, speechAudioUrl);
     scheduleHumanReturnToIdle(visualAnswerDuration(text));
     return;
   }

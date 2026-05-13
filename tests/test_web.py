@@ -791,3 +791,46 @@ def test_browse_query_truncation_warning(monkeypatch):
     else:
         # Small result sets don't need truncation warning
         pass
+
+
+def test_bilingual_fields_in_sse_result(monkeypatch):
+    """SSE result event carries bilingual_fields when present."""
+    from heritage_explorer.agent import AgentResult, TaskType
+
+    app = create_app()
+    client = app.test_client()
+
+    fake_result = AgentResult(
+        task_type=TaskType.CONTENT_TRANSFORM,
+        answer="导语",
+        bilingual_fields=[
+            {"label_cn": "名称", "label_en": "Name", "value_cn": "汴绣", "value_en": "Bian Embroidery"},
+            {"label_cn": "类别", "label_en": "Category", "value_cn": "传统美术", "value_en": "Traditional Fine Arts"},
+            {"label_cn": "简介", "label_en": "Summary", "value_cn": "汴绣是...", "value_en": "Bian embroidery is..."},
+            {"label_cn": "主要特色", "label_en": "Key Features", "value_cn": "针法细腻", "value_en": "Fine stitching"},
+        ],
+        items=[{"id": "test-1", "title": "汴绣"}],
+        sources=[],
+        mode="llm",
+        confidence=0.8,
+    )
+
+    def fake_dispatch(self, **kwargs):
+        yield fake_result
+        yield {"type": "speech", "text": "test speech"}
+
+    monkeypatch.setattr(
+        "heritage_explorer.agent.Agent.dispatch_stream",
+        fake_dispatch,
+    )
+
+    response = client.post(
+        "/api/ask",
+        json={"question": "把汴绣翻译成英文", "voice_enabled": "0"},
+        headers={"Accept": "text/event-stream"},
+    )
+    assert response.status_code == 200
+    body = response.get_data(as_text=True)
+    assert "bilingual_fields" in body
+    assert "Bian Embroidery" in body
+    assert "Traditional Fine Arts" in body

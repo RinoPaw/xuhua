@@ -147,6 +147,7 @@ def create_app() -> Flask:
                         'warnings': event.warnings,
                         'total_count': event.total_count,
                         'decision': event.decision,
+                        'bilingual_fields': event.bilingual_fields,
                     }
                     yield f"data: {json.dumps(result_payload, ensure_ascii=False)}\n\n"
                 elif isinstance(event, dict) and event.get("type") == "speech":

@@ -80,6 +80,7 @@ class AgentResult:
     warnings: list[str] = field(default_factory=list)
     total_count: int = 0
     decision: dict[str, Any] = field(default_factory=dict)
+    bilingual_fields: list[dict[str, str]] | None = None
     # backward-compat
     speech: str = ""
 

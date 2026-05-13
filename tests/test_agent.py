@@ -349,6 +349,80 @@ def test_content_transform_targets_specific_title_in_suggestion_query(monkeypatc
     assert "滑县木版年画" not in result.answer.splitlines()[0]
 
 
+def test_content_transform_translation_produces_bilingual_fields(monkeypatch):
+    from heritage_explorer.dataset import load_dataset
+    from heritage_explorer import config
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    monkeypatch.setattr(config, "AI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "heritage_explorer.agent._call_transform_model",
+        lambda **_kwargs: (
+            '{\n'
+            '  "answer": "朱仙镇木版年画是中国传统美术瑰宝。",\n'
+            '  "fields": {\n'
+            '    "名称": "Zhuxianzhen Woodblock New Year Prints",\n'
+            '    "类别": "Traditional Fine Arts",\n'
+            '    "简介": "One of China\'s oldest folk art forms.",\n'
+            '    "主要特色": "Bold outlines and vibrant colors."\n'
+            '  }\n'
+            '}'
+        ),
+    )
+
+    result = agent.dispatch("把朱仙镇木版年画翻译成英文")
+
+    assert result.task_type is TaskType.CONTENT_TRANSFORM
+    assert result.mode == "llm"
+    assert result.bilingual_fields is not None
+    assert len(result.bilingual_fields) == 4
+    assert result.bilingual_fields[0] == {
+        "label_cn": "名称",
+        "label_en": "Name",
+        "value_cn": result.items[0]["title"],
+        "value_en": "Zhuxianzhen Woodblock New Year Prints",
+    }
+    assert result.answer == "朱仙镇木版年画是中国传统美术瑰宝。"
+
+
+def test_content_transform_translation_no_api_key(monkeypatch):
+    from heritage_explorer.dataset import load_dataset
+    from heritage_explorer import config
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    monkeypatch.setattr(config, "AI_API_KEY", "")
+
+    result = agent.dispatch("把朱仙镇木版年画翻译成英文")
+
+    assert result.task_type is TaskType.CONTENT_TRANSFORM
+    assert result.mode == "unavailable"
+    assert result.bilingual_fields is None
+    assert "API Key" in result.answer
+
+
+def test_content_transform_translation_parse_failure_fallback(monkeypatch):
+    from heritage_explorer.dataset import load_dataset
+    from heritage_explorer import config
+
+    kb = load_dataset()
+    agent = Agent(kb)
+    monkeypatch.setattr(config, "AI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        "heritage_explorer.agent._call_transform_model",
+        lambda **_kwargs: "This is not JSON, just some English text.",
+    )
+
+    result = agent.dispatch("把朱仙镇木版年画翻译成英文")
+
+    assert result.task_type is TaskType.CONTENT_TRANSFORM
+    assert result.mode == "llm"
+    assert result.bilingual_fields is None
+    assert "This is not JSON" in result.answer
+    assert any("双语解析失败" in w for w in result.warnings)
+
+
 def test_router_uses_model_planner_decision_without_offline_repair(monkeypatch):
     from heritage_explorer.dataset import load_dataset
 

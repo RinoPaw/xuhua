@@ -456,6 +456,12 @@ class Agent:
         context = "\n".join(context_lines)
 
         if config.AI_API_KEY:
+            if transform_type == "翻译":
+                return self._handle_bilingual_transform(
+                    context=context,
+                    query=analysis.original_query,
+                    target_item=target_item,
+                )
             try:
                 answer_text = _call_transform_model(
                     transform_type=transform_type,
@@ -473,7 +479,16 @@ class Agent:
             except Exception:
                 pass  # fall through to local
 
-        # Local fallback: template-based answer
+        # Local fallback
+        if transform_type == "翻译":
+            return AgentResult(
+                task_type=TaskType.CONTENT_TRANSFORM,
+                answer="双语翻译需要配置 API Key。请在环境变量中设置 AI_API_KEY 后重试。",
+                items=[_enriched_item_card(target_item)],
+                sources=[_source_payload(target_item)],
+                mode="unavailable",
+                confidence=0.0,
+            )
         local_answer = _build_transform_local(transform_type, target_item, meta)
         return AgentResult(
             task_type=TaskType.CONTENT_TRANSFORM,
@@ -483,6 +498,74 @@ class Agent:
             mode="local",
             confidence=0.5,
             warnings=["模型接口不可用，已切回本地模板。如需更丰富的内容，请配置 API Key。"],
+        )
+
+    def _field_value_cn(self, target_item, field_name: str) -> str:
+        if field_name == "名称":
+            return _title_with_family(target_item)
+        if field_name == "类别":
+            return target_item.category
+        if field_name == "简介":
+            return target_item.summary[:300] if target_item.summary else ""
+        if field_name == "主要特色":
+            return (target_item.features or target_item.summary or "")[:300]
+        return ""
+
+    def _handle_bilingual_transform(self, context: str, query: str, target_item) -> AgentResult:
+        """Handle bilingual (翻译) transform using LLM JSON output."""
+        try:
+            raw = _call_transform_model(
+                transform_type="翻译",
+                context=context,
+                query=query,
+            )
+        except Exception:
+            return AgentResult(
+                task_type=TaskType.CONTENT_TRANSFORM,
+                answer="双语翻译请求失败，请稍后重试。",
+                items=[_enriched_item_card(target_item)],
+                sources=[_source_payload(target_item)],
+                mode="llm",
+                confidence=0.0,
+                warnings=["LLM 调用失败"],
+            )
+
+        parsed = _parse_bilingual_json(raw)
+        if parsed is None:
+            return AgentResult(
+                task_type=TaskType.CONTENT_TRANSFORM,
+                answer=raw,
+                items=[_enriched_item_card(target_item)],
+                sources=[_source_payload(target_item)],
+                mode="llm",
+                confidence=0.5,
+                warnings=["双语解析失败，已显示原始模型输出。格式为 JSON 时效果最佳。"],
+            )
+
+        field_order = [
+            ("名称", "Name"),
+            ("类别", "Category"),
+            ("简介", "Summary"),
+            ("主要特色", "Key Features"),
+        ]
+        bilingual_fields = [
+            {
+                "label_cn": label_cn,
+                "label_en": label_en,
+                "value_cn": self._field_value_cn(target_item, label_cn),
+                "value_en": parsed["fields"].get(label_cn, ""),
+            }
+            for label_cn, label_en in field_order
+        ]
+
+        return AgentResult(
+            task_type=TaskType.CONTENT_TRANSFORM,
+            answer=parsed.get("answer", ""),
+            bilingual_fields=bilingual_fields,
+            items=[_enriched_item_card(target_item)],
+            sources=[_source_payload(target_item)],
+            mode="llm",
+            confidence=0.8,
         )
 
     def _handle_browse(self, analysis) -> AgentResult:

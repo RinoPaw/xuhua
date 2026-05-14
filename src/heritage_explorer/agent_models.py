@@ -43,6 +43,7 @@ class AgentDecision:
     mode: str = "local"
     warnings: list[str] = field(default_factory=list)
     planner: str = "offline"
+    search_queries: list[str] = field(default_factory=list)  # planner 自己生成的检索词
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -54,6 +55,7 @@ class AgentDecision:
             "mode": self.mode,
             "warnings": list(self.warnings),
             "planner": self.planner,
+            "search_queries": list(self.search_queries),
         }
 
 

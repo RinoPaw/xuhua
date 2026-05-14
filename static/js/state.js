@@ -3,6 +3,7 @@ export const state = {
   selectedId: "",
   currentTaskType: "",
   lastAskContext: null,
+  sessionId: "",
 };
 
 export const els = {};

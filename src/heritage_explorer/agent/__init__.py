@@ -23,6 +23,7 @@ from ..agent_models import (
 )
 from ..agent_task_config import TASK_CONFIGS, _TASK_CONFIGS
 from ..dataset import (
+    get_ai_fields,
     get_structured_meta,
     KnowledgeBase,
     normalize_text,
@@ -65,6 +66,12 @@ __all__ = [
 ]
 
 LOGGER = logging.getLogger(__name__)
+MAX_SEARCH_ROUNDS_PER_TURN = 2
+INITIAL_TITLE_CANDIDATE_LIMIT = 100
+INITIAL_TITLE_CONTEXT_LIMIT = 100
+DETAIL_SEARCH_LIMIT_PER_QUERY = 8
+INITIAL_HIGH_RELEVANCE_MIN_SCORE = 35.0
+INITIAL_HIGH_RELEVANCE_TOP_RATIO = 0.55
 
 _TEMPLATE_DIR = Path(__file__).resolve().parents[3] / "templates"
 _JINJA_ENV = Environment(
@@ -111,7 +118,19 @@ class Agent:
         self.kb = kb
         self.router = IntentRouter()
 
-    # -- dispatch --------------------------------------------------------
+    # -- first-turn RAG --------------------------------------------------
+
+    def _dispatch_first_turn(
+        self, query: str, category: str, include_speech: bool,
+    ):
+        yield from self._dispatch_subsequent_turn(
+            query,
+            category,
+            include_speech,
+            context=None,
+        )
+
+    # -- dispatch (subsequent turns) ------------------------------------
 
     def dispatch(
         self, query: str, category: str = "",
@@ -133,9 +152,12 @@ class Agent:
         self, query: str, category: str = "",
         include_speech: bool = True, context: dict | None = None,
     ):
-        """Generator: yields progress dicts, then AgentResult."""
-        from ..retriever import QueryAnalyzer
+        """Generator: yields progress dicts, then AgentResult.
 
+        Each turn uses the same model decision loop: answer from available
+        context, or request another lexical search.  The server caps each
+        turn at two consecutive searches.
+        """
         query = query.strip()
         if not query:
             yield AgentResult(
@@ -146,53 +168,794 @@ class Agent:
             )
             return
 
-        # Step 1: classify + analyze
-        yield self._progress_event("classify", "理解问题", "正在判断任务类型，并识别项目名称、地区和输出要求")
-        try:
-            decision = self.router.decide(query, self.kb, category, context)
-        except Exception as exc:  # noqa: BLE001 - planner failure is reported as a user-visible error.
-            from ..ai import describe_model_error
+        # ── First turn: search-first RAG ──
+        has_legacy_context = bool(context and (context.get("question") or context.get("items") or context.get("answer")))
+        is_first = not context or (context.get("turn_count", 0) == 0 and not has_legacy_context)
+        if is_first:
+            yield from self._dispatch_first_turn(query, category, include_speech)
+            return
 
-            warning = describe_model_error(exc)
-            LOGGER.warning("Agent planner unavailable: %s", warning)
-            yield AgentResult(
-                task_type=TaskType.FACT_QA,
-                answer="模型规划暂时不可用，无法判断这次应该执行哪类任务。请检查模型配置或稍后再试。",
-                speech="模型规划暂时不可用，请稍后再试。" if include_speech else "",
-                mode="planner_error",
-                confidence=0.0,
-                warnings=[warning],
-                decision={
-                    "task_type": TaskType.FACT_QA.value,
-                    "confidence": 0.0,
-                    "needs_retrieval": False,
-                    "needs_llm": False,
-                    "reason": "模型 planner 调用失败。",
-                    "mode": "planner_error",
-                    "warnings": [warning],
-                    "planner": "model",
-                },
+        # ── Subsequent turns: same initial candidate search + LLM decision loop ──
+        yield from self._dispatch_subsequent_turn(query, category, include_speech, context)
+
+    def _dispatch_subsequent_turn(
+        self,
+        query: str,
+        category: str,
+        include_speech: bool,
+        context: dict | None,
+    ):
+        """Use the answer model as the per-turn search/answer decider."""
+        from ..ai import describe_model_error
+
+        context = context or {}
+        yield self._progress_event(
+            "search", "检索资料",
+            "正在按原问题检索候选标题...",
+        )
+        title_candidates, initial_total_count, initial_note = self._search_initial_candidates(
+            query,
+            category,
+            context,
+        )
+        search_rounds_used = 1
+        used_queries: list[str] = [query]
+        detailed_items: list[Any] = []
+        collected_items: list[Any] = self._merge_items(title_candidates, detailed_items)
+        total_count = initial_total_count
+        retrieval_note = initial_note
+        warnings: list[str] = []
+
+        while True:
+            detail = (
+                "正在读取上下文和候选资料，判断这轮是否需要补充检索。"
+                if search_rounds_used <= 1
+                else "搜索预算已用完，正在基于已有资料生成回答。"
             )
-            return
-        task_type = decision.task_type
-        yield self._progress_event("classify", "理解问题", decision.reason)
-        if decision.direct_answer:
-            yield from self._stream_direct_answer(decision, include_speech)
-            return
+            yield self._progress_event("classify", "理解问题", detail)
 
-        analyzer = QueryAnalyzer(self.kb)
-        analysis = analyzer.analyze(query, task_type, context)
+            try:
+                payload = self._call_subsequent_turn_model(
+                    query=query,
+                    context=context,
+                    title_candidates=title_candidates,
+                    detailed_items=detailed_items,
+                    search_rounds_used=search_rounds_used,
+                    retrieval_note=retrieval_note,
+                )
+            except Exception as exc:  # noqa: BLE001 - model failures degrade to a user-facing answer.
+                warning = describe_model_error(exc)
+                LOGGER.warning("Subsequent-turn LLM decision unavailable: %s", warning)
+                warnings.append(warning)
+                result, decision = self._subsequent_fallback_result(
+                    query=query,
+                    context=context,
+                    collected_items=collected_items,
+                    used_queries=used_queries,
+                    total_count=total_count,
+                    warnings=warnings,
+                )
+                yield from self._stream_completed_result(result, decision, include_speech, query=query)
+                return
 
-        # Step 2: search
-        yield self._progress_event("search", "检索资料", "正在检索资料库，优先匹配明确标题和结构化字段")
+            action = self._payload_action(payload)
+            answer = normalize_text(payload.get("answer") or "")
+            search_queries = self._payload_str_list(payload.get("search_queries"))
 
-        task_config = TASK_CONFIGS.get(task_type, TASK_CONFIGS[TaskType.FACT_QA])
-        yield self._progress_event("generate", "思考回答", task_config.generate_detail)
-        if task_config.handler_name:
-            result = self._run_configured_handler(task_config, analysis)
+            if action == "answer" and answer:
+                yield self._progress_event("generate", "思考回答", "已根据上下文和资料生成回答。")
+                result, decision = self._subsequent_answer_result(
+                    payload=payload,
+                    answer=answer,
+                    context=context,
+                    collected_items=collected_items,
+                    used_queries=used_queries,
+                    total_count=total_count,
+                    warnings=warnings,
+                )
+                yield from self._stream_completed_result(result, decision, include_speech, query=query)
+                return
+
+            if search_rounds_used >= MAX_SEARCH_ROUNDS_PER_TURN:
+                warnings.append("搜索预算已用尽，已基于现有上下文兜底回答。")
+                result, decision = self._subsequent_fallback_result(
+                    query=query,
+                    context=context,
+                    collected_items=collected_items,
+                    used_queries=used_queries,
+                    total_count=total_count,
+                    warnings=warnings,
+                )
+                yield from self._stream_completed_result(result, decision, include_speech, query=query)
+                return
+
+            if not search_queries:
+                search_queries = self._fallback_queries_from_context(context)
+
+            if not search_queries:
+                warnings.append("模型未给出答案或检索词，且上下文中没有可兜底检索的项目。")
+                result, decision = self._subsequent_fallback_result(
+                    query=query,
+                    context=context,
+                    collected_items=collected_items,
+                    used_queries=used_queries,
+                    total_count=total_count,
+                    warnings=warnings,
+                )
+                yield from self._stream_completed_result(result, decision, include_speech, query=query)
+                return
+
+            search_rounds_used += 1
+            used_queries.extend(q for q in search_queries if q not in used_queries)
+            yield self._progress_event(
+                "search",
+                "检索资料",
+                f"第 {search_rounds_used}/{MAX_SEARCH_ROUNDS_PER_TURN} 轮检索："
+                f"{'、'.join(search_queries[:4])}",
+            )
+            new_items, total = self._search_subsequent_items(search_queries, category)
+            total_count += total
+            if total == 0:
+                warnings.append(f"检索词未命中资料库：{'、'.join(search_queries)}")
+            detailed_items = self._merge_items(detailed_items, new_items)
+            collected_items = self._merge_items(title_candidates, detailed_items)
+            retrieval_note = (
+                f"服务器已根据模型查询词补充详情检索：{'、'.join(search_queries)}。"
+                if new_items
+                else f"服务器根据模型查询词没有查询到高相关结果：{'、'.join(search_queries)}。"
+            )
+
+    def _call_subsequent_turn_model(
+        self,
+        query: str,
+        context: dict,
+        title_candidates: list[Any],
+        detailed_items: list[Any],
+        search_rounds_used: int,
+        retrieval_note: str = "",
+    ) -> dict[str, Any]:
+        from ..http_client import chat_completion
+
+        raw = chat_completion(
+            self._build_subsequent_turn_messages(
+                query=query,
+                context=context,
+                title_candidates=title_candidates,
+                detailed_items=detailed_items,
+                search_rounds_used=search_rounds_used,
+                retrieval_note=retrieval_note,
+            ),
+            temperature=0.2,
+            max_tokens=2200,
+            extra_options=agent_planner_extra_options(),
+        )
+        payload = json.loads(extract_json_object(raw))
+        if not isinstance(payload, dict):
+            raise ValueError("Subsequent-turn model did not return a JSON object")
+        return payload
+
+    def _build_subsequent_turn_messages(
+        self,
+        query: str,
+        context: dict,
+        title_candidates: list[Any],
+        detailed_items: list[Any],
+        search_rounds_used: int,
+        retrieval_note: str = "",
+    ) -> list[dict[str, str]]:
+        remaining = max(MAX_SEARCH_ROUNDS_PER_TURN - search_rounds_used, 0)
+        history_text = self._format_history_for_llm(context)
+        title_text = (
+            _items_to_title_context(title_candidates[:INITIAL_TITLE_CONTEXT_LIMIT], len(title_candidates))
+            if title_candidates else "无"
+        )
+        detail_text = (
+            _items_to_llm_context(detailed_items[:30], len(detailed_items))
+            if detailed_items else "无"
+        )
+
+        system_prompt = (
+            "你是叙华非遗助手。你能看到最近五轮对话历史，也能看到本轮服务器已经检索到的候选资料。\n"
+            "本轮采用两段式检索：第 1 轮服务器会按原问题提供较多候选标题和基础元数据；"
+            "第 2 轮由你决定是否用 search_queries 精查若干项目或主题的详细资料。\n"
+            "每一轮你必须先决定：直接回答，还是请求服务器继续检索资料库。"
+            "请你根据对话历史自行判断当前问题是否在承接上一轮；如果是，就优先沿用历史中的项目、类别和回答目标；"
+            "如果不是，就忽略历史候选，按当前问题处理。\n"
+            "如果历史资料或详情资料足够回答，就输出 action=\"answer\" 并填写 answer。\n"
+            "如果只有标题候选，还需要事实依据、推荐理由、讲解词、对比细节或正文信息，且 search_rounds_remaining 大于 0，"
+            "输出 action=\"search\"，在 search_queries 中给出一个列表；列表中的每一项都是一个可直接检索资料库的中文查询字符串，服务器会逐项执行。\n"
+            "search_queries 可包含项目标题、同义标题、类别+地区+场景等组合，建议 1-6 项，最多 8 项。"
+            "本轮最多允许 2 次连续搜索，服务器已经执行过的标题候选检索也会计入 search_rounds_used。"
+            "search_rounds_remaining 为 0 时，必须输出 action=\"answer\"；如果仍不确定，要说明不确定点，不能继续请求搜索。\n"
+            "display_items 由你决定：只选择答案真正围绕、用户需要看到的项目；单项目问题通常只选 1 个；推荐、列表、对比才选择多个，最多 8 个；不需要展示卡片时输出空列表。\n"
+            "当 task_type=\"comparison\" 或用户要求比较多个项目时，answer 必须使用 Markdown 表格；"
+            "至少包含“项目、地区/流派、制作/表演特点、题材/剧目或用途、适合展示的差异点”等列。"
+            "表格后可加一小段结论，但不要把多个项目压成同一段编号文字。\n"
+            "不要编造资料库没有提供的事实；不要在没有资料支撑时凭常识列项目。"
+            "如果没有可用资料且搜索预算已用尽，请明确说明资料不足，而不是给无依据推荐。"
+            "只输出 JSON，不要输出 Markdown 或解释文字。\n"
+            "JSON 格式："
+            "{\"action\":\"answer|search\","
+            "\"task_type\":\"chitchat|fact_qa|browse_query|comparison|recommendation|"
+            "exhibition_plan|study_task|content_transform\","
+            "\"confidence\":0.0,\"reason\":\"一句内部理由\","
+            "\"search_queries\":[\"关键词\"]或null,"
+            "\"answer\":\"回答文本\"或null,"
+            "\"display_items\":[\"item_id\"]}"
+        )
+        user_prompt = (
+            f"搜索状态：已连续搜索 {search_rounds_used} 轮，剩余 {remaining} 轮。\n\n"
+            f"对话历史（最多最近五轮）：\n{history_text}\n\n"
+            f"检索说明：{retrieval_note or '服务器尚未提供额外检索说明。'}\n\n"
+            f"第1轮标题候选（仅含标题和基础元数据，不等同于完整事实依据）：\n{title_text}\n\n"
+            f"第2轮详情资料（模型查询后由服务器补充）：\n{detail_text}\n\n"
+            f"当前问题：{query}"
+        )
+        return [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+
+    def _format_history_for_llm(self, context: dict) -> str:
+        history = context.get("history")
+        if not isinstance(history, list) or not history:
+            q = normalize_text(context.get("question") or "")
+            a = normalize_text(context.get("answer") or "")
+            items = context.get("items") or []
+            lines = []
+            if q:
+                lines.append(f"上一轮问：{q}")
+            if a:
+                lines.append(f"上一轮答：{a[:300]}")
+            if isinstance(items, list) and items:
+                title_text = "、".join(
+                    normalize_text(item.get("title") if isinstance(item, dict) else str(item))
+                    for item in items[:8]
+                )
+                if title_text:
+                    lines.append(f"上一轮涉及项目：{title_text}")
+            return "\n".join(lines) if lines else "无"
+
+        blocks: list[str] = []
+        for idx, turn in enumerate(history[-5:], 1):
+            if not isinstance(turn, dict):
+                continue
+            q = normalize_text(turn.get("q") or "")
+            a = normalize_text(turn.get("a") or "")
+            lines = [f"第{idx}轮"]
+            if q:
+                lines.append(f"问：{q}")
+            if a:
+                lines.append(f"答：{a[:300]}")
+
+            items_full = turn.get("items_full") or []
+            if isinstance(items_full, list) and items_full:
+                lines.append("涉及项目：")
+                for item in items_full[:8]:
+                    item_text = self._format_context_item_for_llm(item)
+                    if item_text:
+                        lines.append(item_text)
+            else:
+                titles = turn.get("items") or []
+                if isinstance(titles, list) and titles:
+                    title_text = "、".join(str(title) for title in titles[:8] if str(title).strip())
+                    if title_text:
+                        lines.append(f"涉及项目：{title_text}")
+            blocks.append("\n".join(lines))
+
+        return "\n\n".join(blocks) if blocks else "无"
+
+    def _format_context_item_for_llm(self, item: Any) -> str:
+        if not isinstance(item, dict):
+            return ""
+        title = str(item.get("title") or "").strip()
+        item_id = str(item.get("id") or "").strip()
+        if not title and not item_id:
+            return ""
+
+        meta = " | ".join(
+            part for part in [
+                str(item.get("category") or "").strip(),
+                str(item.get("level") or "").strip(),
+                str(item.get("province") or "").strip(),
+                str(item.get("city") or "").strip(),
+                str(item.get("district") or "").strip(),
+            ] if part
+        )
+        label = f"- [{item_id}] {title}" if item_id else f"- {title}"
+        lines = [f"{label} | {meta}" if meta else label]
+        for key, label_name in (
+            ("summary", "简介"),
+            ("features", "特色"),
+            ("history", "历史"),
+            ("cultural_value", "价值"),
+            ("content", "正文摘要"),
+        ):
+            value = normalize_text(item.get(key) or "")
+            if value:
+                lines.append(f"  {label_name}：{value[:240]}")
+        forms = item.get("display_forms")
+        if isinstance(forms, list) and forms:
+            lines.append(f"  展示形式：{'、'.join(str(form) for form in forms[:6])}")
+        return "\n".join(lines)
+
+    def _payload_action(self, payload: dict[str, Any]) -> str:
+        action = str(payload.get("action") or "").strip().lower()
+        if action in {"answer", "search"}:
+            return action
+        if self._payload_str_list(payload.get("search_queries")):
+            return "search"
+        return "answer"
+
+    def _payload_str_list(self, value: Any) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        result: list[str] = []
+        for item in value:
+            text = normalize_text(str(item))
+            if text and text not in result:
+                result.append(text)
+        return result
+
+    def _fallback_queries_from_context(self, context: dict) -> list[str]:
+        queries: list[str] = []
+        for item in self._context_item_payloads(context):
+            title = normalize_text(item.get("title") or "")
+            if title and title not in queries:
+                queries.append(title)
+            category = normalize_text(item.get("category") or "")
+            if category and category not in queries:
+                queries.append(category)
+            if len(queries) >= 4:
+                break
+        if queries:
+            return queries
+
+        for item in context.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            title = normalize_text(item.get("title") or "")
+            if title and title not in queries:
+                queries.append(title)
+            if len(queries) >= 4:
+                break
+        return queries
+
+    def _context_item_payloads(self, context: dict) -> list[dict]:
+        payloads: list[dict] = []
+        seen: set[str] = set()
+        for item in context.get("items_full") or []:
+            if isinstance(item, dict):
+                key = str(item.get("id") or item.get("title") or "").strip()
+                if key and key not in seen:
+                    seen.add(key)
+                    payloads.append(item)
+        history = context.get("history")
+        if isinstance(history, list):
+            for turn in history[-5:]:
+                if not isinstance(turn, dict):
+                    continue
+                for item in turn.get("items_full") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    key = str(item.get("id") or item.get("title") or "").strip()
+                    if key and key not in seen:
+                        seen.add(key)
+                        payloads.append(item)
+        return payloads
+
+    def _context_items(self, context: dict) -> list[Any]:
+        items: list[Any] = []
+        seen: set[str] = set()
+        for payload in self._context_item_payloads(context):
+            item = self._resolve_context_item(payload)
+            if item is None or item.id in seen:
+                continue
+            seen.add(item.id)
+            items.append(item)
+        return items
+
+    def _resolve_context_item(self, payload: dict) -> Any | None:
+        item_id = str(payload.get("id") or "").strip()
+        if item_id:
+            item = self.kb.get(item_id)
+            if item is not None:
+                return item
+
+        title = normalize_text(payload.get("title") or "")
+        if not title:
+            return None
+        for item in self.kb.items:
+            if item.title == title or _title_with_family(item) == title:
+                return item
+        return None
+
+    def _search_initial_candidates(
+        self,
+        query: str,
+        category: str,
+        context: dict | None = None,
+    ) -> tuple[list[Any], int, str]:
+        from ..search import LEXICAL_MIN_SCORE, normalize_search_query, rank_lexical, tokenize
+
+        search_query = normalize_search_query(query)
+        lowered_query = search_query or normalize_text(query).lower()
+        context_items = self._context_items(context or {})
+        contextual_items = self._contextual_initial_candidates(context_items, category)
+        if not lowered_query:
+            if contextual_items:
+                return contextual_items, len(contextual_items), self._contextual_candidate_note(contextual_items)
+            return [], 0, "服务器根据原问题没有查询到候选标题；你可以直接回答或组织关键词重新查询。"
+
+        candidates = [
+            item for item in self.kb.items
+            if not category or item.category == category
+        ]
+        structured_items = self._structured_initial_candidates(query, limit=INITIAL_TITLE_CANDIDATE_LIMIT)
+        ranked = rank_lexical(candidates, lowered_query, tokenize(search_query))
+        lexical_items = [
+            item for score, item in ranked
+            if score >= LEXICAL_MIN_SCORE
+        ][:INITIAL_TITLE_CANDIDATE_LIMIT]
+
+        title_candidates = self._merge_items(
+            contextual_items,
+            self._merge_items(structured_items, lexical_items),
+        )[:INITIAL_TITLE_CANDIDATE_LIMIT]
+        if not title_candidates:
+            return [], 0, (
+                "服务器根据原问题没有查询到候选标题；"
+                "如果历史上下文不足，你可以发送 search_queries 重新组织关键词查询。"
+            )
+
+        note_prefix = (
+            "服务器已附带历史项目相关候选，是否采用由你根据对话判断；"
+            if contextual_items else ""
+        )
+        note = (
+            note_prefix +
+            f"服务器已完成第 1 轮标题候选检索，提供 {len(title_candidates)} 个候选项目的标题和基础元数据；"
+            "这些候选用于判断下一步，不包含完整事实依据。"
+            "如果需要生成推荐理由、讲解词、对比或其他需要细节支撑的回答，"
+            "请输出 action=\"search\"，并在 search_queries 列表中给出要精查的项目标题或主题；"
+            "本轮最多只能连续查询两次。"
+        )
+        return title_candidates, len(title_candidates), note
+
+    def _contextual_initial_candidates(self, context_items: list[Any], category: str) -> list[Any]:
+        if not context_items:
+            return []
+
+        categories = {item.category for item in context_items if item.category}
+        if category:
+            categories.add(category)
+        title_keywords = _context_title_keywords(context_items)
+        context_ids = {item.id for item in context_items}
+        forms = {form for item in context_items for form in item.display_forms}
+        scenarios = {scenario for item in context_items for scenario in item.suitable_scenarios}
+
+        scored: list[tuple[int, str, Any]] = []
+        for item in self.kb.items:
+            score = 0
+            if item.id in context_ids:
+                score += 12
+            if categories and item.category in categories:
+                score += 6
+            if any(keyword and (keyword in item.title or keyword in item.family) for keyword in title_keywords):
+                score += 10
+            if forms and any(form in forms for form in item.display_forms):
+                score += 2
+            if scenarios and any(scenario in scenarios for scenario in item.suitable_scenarios):
+                score += 1
+            if item.level == "人类":
+                score += 3
+            elif item.level == "国家级":
+                score += 2
+            if score <= 0:
+                continue
+            scored.append((score, item.title, item))
+
+        scored.sort(key=lambda row: (-row[0], row[1]))
+        return [item for _, _, item in scored[:INITIAL_TITLE_CANDIDATE_LIMIT]]
+
+    def _contextual_candidate_note(self, items: list[Any]) -> str:
+        return (
+            f"服务器根据历史项目附带 {len(items)} 个相关候选标题；"
+            "是否承接上一轮由你根据对话历史判断。如果需要新增项目详情，请在 search_queries 中给出项目标题。"
+        )
+
+    def _structured_initial_candidates(self, query: str, limit: int) -> list[Any]:
+        province = self._query_province(query)
+        scenario = self._query_scenario(query)
+        wants_recommendation = bool(re.search(r"推荐|适合|哪些|有哪些|找|筛选|展示|活动|体验|互动|亲子", query))
+        if not wants_recommendation or not (province or scenario):
+            return []
+
+        scored: list[tuple[int, str, Any]] = []
+        for item in self.kb.items:
+            if province and item.province != province:
+                continue
+            score = 0
+            if province:
+                score += 8
+            if scenario and scenario in item.suitable_scenarios:
+                score += 8
+            if scenario and any(scenario in form for form in item.display_forms):
+                score += 5
+            if "展示" in query and any("展示" in form or "讲解" in form for form in item.display_forms):
+                score += 4
+            if "活动" in query and any("活动" in form or "表演" in form for form in item.display_forms):
+                score += 4
+            if item.level == "人类":
+                score += 4
+            elif item.level == "国家级":
+                score += 3
+            elif item.level == "省级":
+                score += 1
+            if item.display_forms:
+                score += min(len(item.display_forms), 3)
+            if score <= 0:
+                continue
+            scored.append((score, item.title, item))
+
+        scored.sort(key=lambda row: (-row[0], row[1]))
+        return [item for _, _, item in scored[:limit]]
+
+    def _query_province(self, query: str) -> str:
+        short_map = {
+            "河南": "河南省",
+            "河北": "河北省",
+            "山东": "山东省",
+            "山西": "山西省",
+            "陕西": "陕西省",
+            "湖北": "湖北省",
+            "湖南": "湖南省",
+            "广东": "广东省",
+            "广西": "广西壮族自治区",
+            "江苏": "江苏省",
+            "浙江": "浙江省",
+            "福建": "福建省",
+            "四川": "四川省",
+            "云南": "云南省",
+            "贵州": "贵州省",
+            "甘肃": "甘肃省",
+            "青海": "青海省",
+            "辽宁": "辽宁省",
+            "吉林": "吉林省",
+            "黑龙江": "黑龙江省",
+            "安徽": "安徽省",
+            "江西": "江西省",
+            "海南": "海南省",
+            "台湾": "台湾省",
+            "北京": "北京市",
+            "天津": "天津市",
+            "上海": "上海市",
+            "重庆": "重庆市",
+            "内蒙古": "内蒙古自治区",
+            "西藏": "西藏自治区",
+            "宁夏": "宁夏回族自治区",
+            "新疆": "新疆维吾尔自治区",
+        }
+        for province in {item.province for item in self.kb.items if item.province}:
+            if province and province in query:
+                return province
+        for short, province in short_map.items():
+            if short in query:
+                return province
+        return ""
+
+    def _query_scenario(self, query: str) -> str:
+        if "社区" in query:
+            return "社区活动"
+        if "校园" in query or "学校" in query or "学生" in query:
+            return "校园展示"
+        if "研学" in query or "课堂" in query or "亲子" in query or "互动" in query or "体验" in query:
+            return "研学体验"
+        if "文创" in query or "包装" in query or "设计" in query:
+            return "文创设计"
+        if "展馆" in query or "讲解" in query:
+            return "展馆讲解"
+        return ""
+
+    def _search_subsequent_items(self, queries: list[str], category: str) -> tuple[list[Any], int]:
+        from ..search import search_items_lexical
+
+        items: list[Any] = []
+        seen: set[str] = set()
+        total = 0
+        for search_query in queries[:6]:
+            exact_items = self._exact_items_for_query(search_query, category)
+            if exact_items:
+                result = exact_items
+                result_total = len(exact_items)
+            else:
+                result, result_total = search_items_lexical(
+                    self.kb,
+                    query=search_query,
+                    category=category,
+                    limit=DETAIL_SEARCH_LIMIT_PER_QUERY,
+                )
+            total += result_total
+            for item in result:
+                if item.id in seen:
+                    continue
+                seen.add(item.id)
+                items.append(item)
+        return items, total
+
+    def _exact_items_for_query(self, query: str, category: str) -> list[Any]:
+        ref = normalize_text(query)
+        if not ref:
+            return []
+
+        matches: list[Any] = []
+        seen: set[str] = set()
+        for item in self.kb.items:
+            if category and item.category != category:
+                continue
+            item_refs = {
+                item.id,
+                item.title,
+                _title_with_family(item),
+                item.family,
+            }
+            if ref not in item_refs or item.id in seen:
+                continue
+            seen.add(item.id)
+            matches.append(item)
+        return matches
+
+    def _merge_items(self, existing: list[Any], incoming: list[Any]) -> list[Any]:
+        merged = list(existing)
+        seen = {item.id for item in merged if hasattr(item, "id")}
+        for item in incoming:
+            item_id = getattr(item, "id", "")
+            if not item_id or item_id in seen:
+                continue
+            seen.add(item_id)
+            merged.append(item)
+        return merged
+
+    def _subsequent_answer_result(
+        self,
+        payload: dict[str, Any],
+        answer: str,
+        context: dict,
+        collected_items: list[Any],
+        used_queries: list[str],
+        total_count: int,
+        warnings: list[str],
+    ) -> tuple[AgentResult, AgentDecision]:
+        task_type = task_type_from_str(str(payload.get("task_type") or TaskType.FACT_QA.value))
+        confidence = clamp_float(payload.get("confidence"), default=0.78)
+        reason = normalize_text(payload.get("reason") or "模型根据最近五轮上下文完成回答。")
+        answer = _normalize_comparison_answer(answer, task_type)
+        display_pool = self._merge_items(self._context_items(context), collected_items)
+        raw_display_items = payload.get("display_items")
+        if isinstance(raw_display_items, list):
+            display_refs = self._payload_str_list(raw_display_items)
+            display_items = self._select_display_items(
+                display_refs,
+                display_pool,
+                fallback_items=[],
+            )
         else:
-            result = self._build_fact_result(analysis, query, category, decision)
-        yield from self._stream_completed_result(result, decision, include_speech, query=query)
+            display_items = self._select_display_items(
+                [],
+                display_pool,
+                fallback_items=collected_items,
+            )
+        cards = [_enriched_item_card(item) for item in display_items[:8]]
+        sources = [_source_payload(item) for item in display_items[:5]]
+
+        decision = AgentDecision(
+            task_type=task_type,
+            confidence=confidence,
+            needs_retrieval=bool(used_queries),
+            needs_llm=True,
+            reason=reason,
+            mode="llm_context",
+            warnings=list(warnings),
+            planner="llm_decision",
+            search_queries=list(used_queries),
+        )
+        result = AgentResult(
+            task_type=task_type,
+            answer=answer,
+            items=cards,
+            sources=sources,
+            mode="llm_context",
+            confidence=confidence,
+            warnings=list(warnings),
+            total_count=len(display_items),
+        )
+        return result, decision
+
+    def _select_display_items(
+        self,
+        refs: list[str],
+        pool: list[Any],
+        fallback_items: list[Any],
+    ) -> list[Any]:
+        selected: list[Any] = []
+        seen: set[str] = set()
+
+        def add(item: Any) -> None:
+            item_id = getattr(item, "id", "")
+            if item_id and item_id not in seen:
+                seen.add(item_id)
+                selected.append(item)
+
+        for ref in refs:
+            for item in pool:
+                if self._item_matches_ref(item, ref):
+                    add(item)
+                    break
+
+        if not selected:
+            for item in fallback_items[:8]:
+                add(item)
+        return selected
+
+    def _item_matches_ref(self, item: Any, ref: str) -> bool:
+        ref = normalize_text(ref)
+        if not ref:
+            return False
+        return ref in {
+            item.id,
+            item.title,
+            _title_with_family(item),
+            item.family,
+        }
+
+    def _subsequent_fallback_result(
+        self,
+        query: str,
+        context: dict,
+        collected_items: list[Any],
+        used_queries: list[str],
+        total_count: int,
+        warnings: list[str],
+    ) -> tuple[AgentResult, AgentDecision]:
+        display_items = collected_items[:5] or self._context_items(context)[:5]
+        if display_items:
+            lines = ["我先基于当前已有资料回答："]
+            for item in display_items[:3]:
+                loc = " · ".join(part for part in [item.province, item.city] if part)
+                meta = " | ".join(part for part in [item.category, item.level, loc] if part)
+                lines.append(f"- **{_title_with_family(item)}**：{meta}")
+                if item.summary:
+                    lines.append(f"  {item.summary[:140]}")
+            if used_queries:
+                lines.append(f"\n已尝试检索：{'、'.join(used_queries)}。")
+            answer = "\n".join(lines)
+        else:
+            answer = (
+                "这轮我没有拿到足够可靠的资料来回答。可以换成更具体的项目名、类别或地区再问一次。"
+            )
+
+        decision = AgentDecision(
+            task_type=TaskType.FACT_QA,
+            confidence=0.4,
+            needs_retrieval=bool(used_queries),
+            needs_llm=False,
+            reason="后续轮模型未能给出可用 answer，服务器使用上下文兜底。",
+            mode="llm_context_fallback",
+            warnings=list(warnings),
+            planner="llm_decision",
+            search_queries=list(used_queries),
+        )
+        result = AgentResult(
+            task_type=TaskType.FACT_QA,
+            answer=answer,
+            items=[_enriched_item_card(item) for item in display_items],
+            sources=[_source_payload(item) for item in display_items[:5]],
+            mode="llm_context_fallback",
+            confidence=0.4,
+            warnings=list(warnings),
+            total_count=len(display_items),
+        )
+        return result, decision
 
     def _progress_event(self, step: str, title: str, detail: str) -> dict[str, str]:
         return {
@@ -355,10 +1118,11 @@ class Agent:
         category = target_item.category
         summary = target_item.summary[:200]
 
-        features = target_item.features[:200] if target_item.features else summary
-        history = target_item.history[:200] if target_item.history else ""
+        ai = get_ai_fields(target_item.id)
+        features = ai["features"][:200] if ai["features"] else summary
+        history = ai["history"][:200] if ai["history"] else ""
         display = "、".join(target_item.display_forms) if target_item.display_forms else "展板 + 讲解"
-        cultural_value = target_item.cultural_value[:200] if target_item.cultural_value else ""
+        cultural_value = ai["cultural_value"][:200] if ai["cultural_value"] else ""
 
         answer = _render_template(
             "study_task.md.j2",
@@ -441,6 +1205,7 @@ class Agent:
                 transform_type = "改写"
 
         # Build context from the item
+        ai = get_ai_fields(target_item.id)
         context_lines = [
             f"标题：{target_item.title}",
             f"类别：{target_item.category}",
@@ -451,12 +1216,12 @@ class Agent:
             context_lines.append(f"城市：{target_item.city}")
         if target_item.level:
             context_lines.append(f"级别：{target_item.level}")
-        if target_item.features:
-            context_lines.append(f"主要特色：{target_item.features}")
-        if target_item.history:
-            context_lines.append(f"历史背景：{target_item.history}")
-        if target_item.cultural_value:
-            context_lines.append(f"重要价值：{target_item.cultural_value}")
+        if ai["features"]:
+            context_lines.append(f"主要特色：{ai['features']}")
+        if ai["history"]:
+            context_lines.append(f"历史背景：{ai['history']}")
+        if ai["cultural_value"]:
+            context_lines.append(f"重要价值：{ai['cultural_value']}")
         context_lines.append(f"简介：{target_item.summary}")
         context_lines.append(f"正文片段：{target_item.content[:800]}")
         context = "\n".join(context_lines)
@@ -622,58 +1387,129 @@ class Agent:
         )
 
     def _handle_recommend(self, analysis) -> AgentResult:
-        """RECOMMENDATION: SoftLabels matching + rule-based scoring."""
+        """RECOMMENDATION: LLM selects best items from candidate pool."""
+        from ..search import search_items_lexical
+        from ..http_client import chat_completion
+
         scenario = analysis.scenario
         audience = analysis.audience
-        constraints = analysis.constraints
-        limit = analysis.retrieval_count
+        limit = min(analysis.retrieval_count or 5, 10)
 
-        scored: list[tuple[int, Any]] = []
-        for item in self.kb.items:
-            # Scenario filter (soft -- skip if scenario specified and not matched)
-            if scenario and scenario not in item.suitable_scenarios:
-                continue
-            # Audience filter (soft)
-            if audience and audience not in item.target_audience:
-                continue
-            score = _score_for_recommendation(item, constraints)
-            scored.append((score, item))
+        # Step 1: Search candidates using planner's queries
+        query = analysis.rewritten_query or " ".join(analysis.entities)
+        candidates, _ = search_items_lexical(self.kb, query=query, limit=30)
 
-        scored.sort(key=lambda x: -x[0])
-        top = scored[:limit]
+        # Deduplicate
+        seen_ids: set[str] = set()
+        unique: list[Any] = []
+        for item in candidates:
+            if item.id not in seen_ids:
+                seen_ids.add(item.id)
+                unique.append(item)
+
+        if not unique:
+            return AgentResult(
+                task_type=TaskType.RECOMMENDATION,
+                answer="未找到相关非遗项目，请尝试调整问题。",
+                mode="local",
+                confidence=0.3,
+                warnings=["检索候选池为空"],
+            )
+
+        # Step 2: Build candidate summaries for LLM
+        candidate_text = _candidate_summaries_for_llm(unique[:20], limit)
+
+        # Step 3: Ask LLM to select the best ones
+        scene_desc = f"场景：{scenario}" if scenario else ""
+        audience_desc = f"受众：{audience}" if audience else ""
+        try:
+            response = chat_completion(
+                [
+                    {
+                        "role": "system",
+                        "content": (
+                            "你是一个非遗推荐助手。用户要求推荐非遗项目，你要从候选池中选出最合适的项目。\n"
+                            "选择原则：\n"
+                            "1. 优先选择与用户指定项目同类别的项目\n"
+                            "2. 优先选择同省份/地区的项目\n"
+                            "3. 优先选择级别高的项目（国家级 > 省级）\n"
+                            "4. 展示形式多样的优先\n"
+                            "5. 避免重复选择同名项目（不同地区版本选一个即可）\n"
+                            f"请选出恰好 {limit} 个项目，输出 JSON："
+                            '{"selected": ["item_id_1", "item_id_2", ...], "reason": "选择理由"}\n'
+                            "只输出 JSON，不要其他内容。"
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"用户需求：{analysis.original_query}\n"
+                            f"{scene_desc}{audience_desc}\n\n"
+                            f"候选项目（共 {len(unique)} 个）：\n{candidate_text}\n\n"
+                            f"请从中选出最好的 {limit} 个。"
+                        ),
+                    },
+                ],
+                temperature=0.3,
+            )
+            selected = _parse_llm_selection(response, limit)
+        except Exception:
+            # Fallback: top by level
+            unique.sort(key=lambda x: (
+                5 if x.level == "人类" else 3 if x.level == "国家级" else 1 if x.level == "省级" else 0
+            ), reverse=True)
+            selected = [item.id for item in unique[:limit]]
+
+        # Step 4: Collect selected items
+        top = [self.kb.get(item_id) for item_id in selected if self.kb.get(item_id)]
+        if len(top) < limit:
+            # Pad from candidates
+            used = set(selected)
+            for item in unique:
+                if item.id not in used:
+                    top.append(item)
+                    used.add(item.id)
+                    if len(top) >= limit:
+                        break
 
         # Build answer
         parts: list[str] = []
         scene_desc = scenario or "通用"
         parts.append(f"为您推荐 {len(top)} 个适合「{scene_desc}」的非遗项目：\n")
 
-        for i, (score, item) in enumerate(top, 1):
+        for i, item in enumerate(top, 1):
             parts.append(f"**{i}. {_title_with_family(item)}**")
             parts.append(f"  - 类别：{item.category} | 级别：{item.level}")
             if item.display_forms:
                 parts.append(f"  - 展示形式：{'、'.join(item.display_forms)}")
-            parts.append(f"  - 教育价值：{item.education_value} | 互动潜力：{item.interaction_potential}")
             parts.append(f"  - 简介：{item.summary[:120]}")
             parts.append("")
 
-        selection_reason = _build_selection_reason(scenario, audience, constraints, len(top))
+        selection_reason = f"共推荐 {len(top)} 个项目，排序依据：模型智能选择"
+
+        # Build per-item cards with reason tags
+        cards = []
+        for item in top:
+            card = _enriched_item_card(item)
+            card["reason_tags"] = _item_reason_tags(item, scenario)
+            cards.append(card)
 
         evidence: list[dict[str, Any]] = []
-        for _, item in top:
+        for item in top:
             evidence.append({
                 "type": "inferred",
                 "claim": "推荐排序",
-                "basis": f"scenario={scenario}, education={item.education_value}",
+                "basis": f"scenario={scenario}, level={item.level}",
                 "item_id": item.id,
             })
 
         return AgentResult(
             task_type=TaskType.RECOMMENDATION,
             answer="\n".join(parts),
-            items=[_enriched_item_card(item) for _, item in top],
+            items=cards,
             evidence=evidence,
             selection_reason=selection_reason,
-            mode="fallback",
+            mode="local",
             confidence=0.7,
             warnings=[] if top else [f"未找到适合「{scene_desc}」的项目，建议放宽条件"],
         )
@@ -790,23 +1626,10 @@ def _describe_filters(category: str, province: str, level: str) -> str:
     return "".join(parts) if parts else ""
 
 
-def _score_for_recommendation(item, constraints: list[str]) -> int:
+def _score_for_recommendation(item, constraints: list[str],
+                              anchor_category: str = "", anchor_province: str = "") -> int:
     """Score an item for recommendation. Higher = better fit."""
     score = 0
-
-    # Education value
-    edu = item.education_value
-    if edu == "高":
-        score += 4
-    elif edu == "中":
-        score += 2
-
-    # Interaction potential
-    inter = item.interaction_potential
-    if inter == "高":
-        score += 3
-    elif inter == "中":
-        score += 1
 
     # Level bonus
     lvl = item.level
@@ -817,13 +1640,44 @@ def _score_for_recommendation(item, constraints: list[str]) -> int:
     elif lvl == "省级":
         score += 1
 
-    # Constraint matching
-    if "展示难度低" in constraints and item.display_difficulty == "低":
-        score += 3
-    if "互动性强" in constraints and item.interaction_potential == "高":
-        score += 3
+    # Display forms diversity bonus
+    if item.display_forms:
+        score += min(len(item.display_forms), 3)
+
+    # Category proximity — same category as anchor gets big bonus
+    if anchor_category and item.category == anchor_category:
+        score += 4
+
+    # Province proximity — same province as anchor
+    if anchor_province and item.province == anchor_province:
+        score += 2
 
     return score
+
+
+def _item_reason_tags(item, scenario: str = "") -> list[str]:
+    """Build per-item reason tags for recommendation cards."""
+    tags = []
+
+    # Level badge
+    lvl = item.level
+    if lvl == "人类":
+        tags.append("🏛 人类非遗")
+    elif lvl == "国家级":
+        tags.append("🏅 国家级")
+    elif lvl == "省级":
+        tags.append("📌 省级")
+
+    # Display forms
+    if item.display_forms:
+        forms = item.display_forms[:3]
+        tags.append(f"📐 {'·'.join(forms)}")
+
+    # Scenario match
+    if scenario and scenario in item.suitable_scenarios:
+        tags.append(f"🎯 {scenario}")
+
+    return tags
 
 
 def _build_selection_reason(scenario: str, audience: str, constraints: list[str], count: int) -> str:
@@ -832,7 +1686,7 @@ def _build_selection_reason(scenario: str, audience: str, constraints: list[str]
         parts.append(f"匹配场景「{scenario}」")
     if audience:
         parts.append(f"适合「{audience}」受众")
-    parts.append("排序依据：教育价值 + 互动潜力 + 非遗级别")
+    parts.append("排序依据：非遗级别 + 展示形式多样性")
     return "，".join(parts)
 
 
@@ -993,7 +1847,8 @@ def _build_transform_local(transform_type: str, target_item, meta) -> str:
     title = _title_with_family(target_item)
     category = target_item.category
     summary = target_item.summary
-    features = meta.features if meta and meta.features else summary
+    ai = get_ai_fields(target_item.id)
+    features = ai["features"] if ai["features"] else summary
     level = meta.level if meta else ""
 
     return _render_template(
@@ -1005,3 +1860,116 @@ def _build_transform_local(transform_type: str, target_item, meta) -> str:
         features=features,
         level=level,
     ).strip()
+
+
+def _candidate_summaries_for_llm(items, limit: int) -> str:
+    """Build item summaries for LLM selection."""
+    lines = []
+    for item in items:
+        forms = "、".join(item.display_forms) if item.display_forms else "无"
+        location = " · ".join(p for p in [item.province, item.city] if p)
+        lines.append(
+            f"[{item.id}] {_title_with_family(item)} | "
+            f"{item.category} | {item.level} | "
+            f"{location} | 展示：{forms} | "
+            f"{item.summary[:80]}"
+        )
+    return "\n".join(lines)
+
+
+def _parse_llm_selection(response: str, limit: int) -> list[str]:
+    """Parse LLM JSON selection output. Returns list of item IDs."""
+    import json
+    text = response.strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        payload = json.loads(text[start:end + 1])
+        selected = payload.get("selected", [])
+        if isinstance(selected, list):
+            return [str(s) for s in selected[:limit] if s]
+    return []
+
+
+def _items_to_llm_context(items, total: int) -> str:
+    """Format search results as compact context for the answer LLM."""
+    lines = [f"从资料库中检索到 {total} 条相关非遗项目，以下是其中最相关的：\n"]
+    for i, item in enumerate(items[:30], 1):
+        loc = " · ".join(p for p in [item.province, item.city] if p)
+        forms = "、".join(item.display_forms) if item.display_forms else ""
+        lines.append(
+            f"{i}. [{item.id}] {_title_with_family(item)}\n"
+            f"   类别：{item.category} | 级别：{item.level} | 地区：{loc}\n"
+            f"   简介：{item.summary[:200]}"
+        )
+        if forms:
+            lines.append(f"   展示形式：{forms}")
+        # Include content snippet
+        content_snippet = item.content[:300].replace("\n", " ")
+        if content_snippet:
+            lines.append(f"   正文：{content_snippet}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _items_to_title_context(items, total: int) -> str:
+    """Format broad first-round candidates as title-only planning context."""
+    lines = [f"第 1 轮候选标题共 {total} 项，以下为标题和基础元数据：\n"]
+    for i, item in enumerate(items[:INITIAL_TITLE_CONTEXT_LIMIT], 1):
+        loc = " · ".join(part for part in [item.province, item.city, item.district] if part)
+        forms = "、".join(item.display_forms[:4]) if item.display_forms else ""
+        scenarios = "、".join(item.suitable_scenarios[:4]) if item.suitable_scenarios else ""
+        meta = " | ".join(part for part in [item.category, item.level, loc] if part)
+        extra = "；".join(part for part in [f"展示：{forms}" if forms else "", f"场景：{scenarios}" if scenarios else ""] if part)
+        suffix = f" | {extra}" if extra else ""
+        lines.append(f"{i}. [{item.id}] {_title_with_family(item)} | {meta}{suffix}")
+    return "\n".join(lines)
+
+
+def _context_title_keywords(items: list[Any]) -> list[str]:
+    keywords: list[str] = []
+    suffixes = ("绣", "剪纸", "年画", "皮影", "泥塑", "木雕", "石雕", "瓷", "陶", "茶", "酒", "医药", "戏", "曲")
+    for item in items:
+        texts = [getattr(item, "family", ""), getattr(item, "title", "")]
+        for text in texts:
+            text = normalize_text(text)
+            if not text:
+                continue
+            for suffix in suffixes:
+                if suffix in text and suffix not in keywords:
+                    keywords.append(suffix)
+            if len(text) <= 4 and text not in keywords:
+                keywords.append(text)
+        if len(keywords) >= 6:
+            break
+    return keywords[:6]
+
+
+def _normalize_comparison_answer(answer: str, task_type: TaskType) -> str:
+    if task_type is not TaskType.COMPARISON:
+        return answer
+    if "|" in answer and re.search(r"\|\s*-{2,}", answer):
+        return answer
+
+    row_matches = list(re.finditer(
+        r"(?:^|\s)(\d+)[.、]\s*([^：:。；;\n]+)[：:]\s*(.*?)(?=(?:\s+\d+[.、]\s*[^：:。；;\n]+[：:])|$)",
+        answer,
+        flags=re.S,
+    ))
+    if len(row_matches) < 2:
+        return answer
+
+    table = [
+        "| 项目 | 比较要点 |",
+        "| --- | --- |",
+    ]
+    for match in row_matches:
+        _index, title, detail = match.groups()
+        clean_title = normalize_text(title).strip(" ：:")
+        clean_detail = normalize_text(detail).strip(" 。；;")
+        table.append(f"| {clean_title} | {clean_detail} |")
+
+    prefix = answer[:row_matches[0].start()].strip()
+    if prefix:
+        return f"{prefix}\n\n" + "\n".join(table)
+    return "\n".join(table)

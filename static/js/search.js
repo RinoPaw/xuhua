@@ -1,18 +1,11 @@
 import { state, els } from './state.js';
 import { escapeHtml } from './markdown.js';
 
-let relatedTimer = 0;
-let relatedRequestKey = "";
-let inFlightKey = "";
-
-export function cancelRelatedSearch() {
-  window.clearTimeout(relatedTimer);
-}
+let rightSearchTimer = 0;
+let rightSearchRequestKey = "";
 
 export function beginAskSessionRelated(requestId) {
-  cancelRelatedSearch();
-  relatedRequestKey = `ask:${requestId}`;
-  inFlightKey = "";
+  rightSearchRequestKey = `ask:${requestId}`;
 }
 
 export async function fetchJson(url) {
@@ -27,13 +20,15 @@ export function itemTitle(item) {
   return item?.title || "未命名项目";
 }
 
-export function itemMetaParts(item) {
+export function itemMetaParts(item, opts = {}) {
   const parts = [];
-  for (const value of [item?.category, item?.family, item?.level]) {
+  const location = [item?.province, item?.city, item?.district].filter(Boolean).join(" · ");
+  if (location) parts.push(location);
+  const fields = [item?.category];
+  if (!opts.skipLevel) fields.push(item?.level);
+  for (const value of fields) {
     if (value && !parts.includes(value)) parts.push(value);
   }
-  const location = [item?.province, item?.city].filter(Boolean).join(" · ");
-  if (location) parts.push(location);
   return parts;
 }
 
@@ -43,27 +38,23 @@ export function itemTagList(item, limit = 4) {
     if (form && !tags.includes(form)) tags.push(form);
     if (tags.length >= limit) break;
   }
-  for (const keyword of item?.cultural_keywords || []) {
-    if (keyword && !tags.includes(keyword)) tags.push(keyword);
-    if (tags.length >= limit) break;
-  }
   return tags;
 }
 
-export async function loadRelatedItems(requestKey = relatedRequestKey) {
-  inFlightKey = requestKey;
+export async function loadRightSearchResults(requestKey, category = "") {
   try {
-    const query = state.query;
+    const query = els.rightSearchInput?.value?.trim() || "";
     const params = new URLSearchParams({
       q: query,
-      limit: "8",
+      limit: "1000",
       stream: "1",
     });
+    if (category) params.set("category", category);
 
     try {
       const response = await fetch(`/api/items?${params}`);
       if (!response.ok) throw new Error(`${response.status}`);
-      if (requestKey !== relatedRequestKey || query !== state.query) return;
+      if (requestKey !== rightSearchRequestKey) return;
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -72,7 +63,7 @@ export async function loadRelatedItems(requestKey = relatedRequestKey) {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        if (requestKey !== relatedRequestKey || query !== state.query) {
+        if (requestKey !== rightSearchRequestKey) {
           reader.cancel();
           return;
         }
@@ -95,33 +86,60 @@ export async function loadRelatedItems(requestKey = relatedRequestKey) {
       }
     } catch {
       // SSE failed — fall back to plain JSON
-      const plainParams = new URLSearchParams({ q: query, limit: "8" });
+      const plainParams = new URLSearchParams({ q: query, limit: "1000" });
+      if (category) plainParams.set("category", category);
       try {
         const data = await fetchJson(`/api/items?${plainParams}`);
-        if (requestKey !== relatedRequestKey || query !== state.query) return;
+        if (requestKey !== rightSearchRequestKey) return;
         renderRelatedItems(data.items, data.total);
       } catch {
-        if (requestKey === relatedRequestKey && query === state.query) {
+        if (requestKey === rightSearchRequestKey) {
           renderRelatedItems([]);
         }
       }
     }
   } finally {
-    if (inFlightKey === requestKey) {
-      inFlightKey = "";
-    }
+    // done
   }
 }
 
+export function searchByCategory(category) {
+  // Clear search input
+  if (els.rightSearchInput) els.rightSearchInput.value = "";
+  // Highlight active chip
+  document.querySelectorAll(".marginalia-categories button").forEach((btn) => {
+    btn.classList.toggle("is-active", btn.dataset.category === category);
+  });
+  const requestKey = `cat:${category}`;
+  rightSearchRequestKey = requestKey;
+  els.relatedCount.textContent = "检索中";
+  els.relatedList.innerHTML = `<p class="marginalia-empty is-live">正在检索「${category}」</p>`;
+  loadRightSearchResults(requestKey, category);
+}
+
+export function searchRightPanel() {
+  const query = els.rightSearchInput?.value?.trim() || "";
+  // Clear category active state
+  document.querySelectorAll(".marginalia-categories button").forEach((btn) => btn.classList.remove("is-active"));
+  if (!query) {
+    renderRelatedItems([]);
+    return;
+  }
+  const requestKey = query;
+  rightSearchRequestKey = requestKey;
+  els.relatedCount.textContent = "检索中";
+  els.relatedList.innerHTML = `<p class="marginalia-empty is-live">正在检索</p>`;
+  loadRightSearchResults(requestKey);
+}
+
 export function renderRelatedItems(items, total = items.length) {
-  updateRelatedPanelTitle();
-  els.relatedCount.textContent = state.query ? `${total} 条` : "";
+  els.relatedCount.textContent = total ? `${total} 条` : "";
   els.relatedList.innerHTML = items.length
     ? items.map(itemButtonHtml).join("")
-    : `<p class="marginalia-empty">${state.query ? "没有匹配条目" : "暂无相关条目"}</p>`;
-  els.relatedList.querySelectorAll("button").forEach((button) => {
-    button.classList.toggle("active", button.dataset.id === state.selectedId);
-    button.addEventListener("click", () => loadDetail(button.dataset.id, true));
+    : `<p class="marginalia-empty">没有匹配项目</p>`;
+  // Click handler for items in the list
+  els.relatedList.querySelectorAll(".item-entry[data-id]").forEach((el) => {
+    el.addEventListener("click", () => showDetail(el.dataset.id));
   });
 }
 
@@ -131,141 +149,67 @@ export function itemButtonHtml(item) {
   const tags = itemTagList(item, 4);
   const title = itemTitle(item);
   return `
-    <button class="item-entry" type="button" data-id="${escapeHtml(item.id)}" data-category="${escapeHtml(item.category)}">
+    <div class="item-entry" data-id="${escapeHtml(item.id)}" data-category="${escapeHtml(item.category)}">
       <div class="item-entry-head">
         <div class="item-entry-title">${escapeHtml(title)}</div>
-        <div class="item-entry-action">查看详情</div>
       </div>
       ${meta ? `<div class="item-entry-meta">${escapeHtml(meta)}</div>` : ""}
       <div class="item-entry-summary">${escapeHtml(summary.slice(0, 74))}</div>
       ${tags.length ? `<div class="item-entry-tags">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>` : ""}
-    </button>
+    </div>
   `;
 }
 
-export async function loadDetail(id, shouldFocus = false) {
-  state.selectedId = id;
-  els.relatedList.querySelectorAll("button").forEach((button) => {
-    button.classList.toggle("active", button.dataset.id === id);
-  });
-
-  const item = await fetchJson(`/api/items/${encodeURIComponent(id)}`);
-  els.detailEmpty.hidden = true;
-  els.detailContent.hidden = false;
-  els.detailCategory.textContent = item.category;
-  els.detailCategory.setAttribute("data-category", item.category);
-  els.detailTitle.textContent = itemTitle(item);
-  els.detailMeta.innerHTML = detailCardMeta(item);
-  const support = detailSupportText(item);
-  els.detailSupport.hidden = !support;
-  els.detailSupport.textContent = support;
-  els.detailSummary.textContent = item.summary || "暂无摘要。";
-  els.detailBody.textContent = item.content || "暂无原文。";
-
-  if (shouldFocus && window.matchMedia("(max-width: 760px)").matches) {
-    els.detailPanel.scrollIntoView({ block: "start" });
+export async function showDetail(id) {
+  try {
+    const item = await fetchJson(`/api/items/${encodeURIComponent(id)}`);
+    els.detailCategory.textContent = item.category;
+    els.detailTitle.textContent = itemTitle(item);
+    els.detailMeta.innerHTML = detailMetaHtml(item);
+    const support = detailSupportText(item);
+    els.detailSupport.hidden = !support;
+    els.detailSupport.textContent = support;
+    els.detailBody.textContent = item.content || "暂无原文。";
+    els.searchMode.hidden = true;
+    els.detailMode.hidden = false;
+  } catch {
+    // silently fail if item not found
   }
 }
 
-export function clearDetail() {
-  els.detailEmpty.hidden = false;
-  els.detailContent.hidden = true;
+export function hideDetail() {
+  els.detailMode.hidden = true;
+  els.searchMode.hidden = false;
   els.detailCategory.textContent = "";
   els.detailTitle.textContent = "";
   els.detailMeta.innerHTML = "";
   els.detailSupport.hidden = true;
-  els.detailSupport.textContent = "";
-  els.detailSummary.textContent = "";
   els.detailBody.textContent = "";
 }
 
-export function updateRelatedItems() {
-  const newQuery = els.questionInput.value.trim();
-  state.query = newQuery;
-  state.selectedId = "";
-  state.currentTaskType = "";
-  els.relatedList.querySelectorAll("button").forEach((button) => button.classList.remove("active"));
-  clearDetail();
-  updateRelatedPanelTitle();
-
-  window.clearTimeout(relatedTimer);
-  if (!newQuery) {
-    relatedRequestKey = "";
-    renderRelatedItems([]);
-    return;
-  }
-
-  if (newQuery === inFlightKey) {
-    relatedRequestKey = newQuery;
-    return;
-  }
-
-  relatedRequestKey = newQuery;
-  els.relatedCount.textContent = "思考中";
-  els.relatedList.innerHTML = `<p class="marginalia-empty is-live">正在思考</p>`;
-  relatedTimer = window.setTimeout(() => {
-    loadRelatedItems(newQuery);
-  }, 1000);
-}
-
-export function relatedPanelTitle(taskType = state.currentTaskType) {
-  if (!state.query) {
-    return "相关资料";
-  }
-  const titles = {
-    browse_query: "匹配项目",
-    comparison: "对比项目",
-    recommendation: "候选项目",
-    exhibition_plan: "候选项目",
-    study_task: "候选项目",
-    content_transform: "相关项目",
-    fact_qa: "相关资料",
-    chitchat: "相关资料",
-  };
-  return titles[taskType] || "匹配项目";
-}
-
-export function updateRelatedPanelTitle(taskType = state.currentTaskType) {
-  if (els.relatedTitle) {
-    els.relatedTitle.textContent = relatedPanelTitle(taskType);
-  }
-}
-
-export function detailCardMeta(item) {
-  const tags = [];
-  for (const value of [item?.category, item?.family, item?.level, item?.province, item?.city]) {
-    if (value && !tags.includes(value)) {
-      tags.push(value);
-    }
-  }
-  for (const form of item?.display_forms || []) {
-    if (form && !tags.includes(form)) {
-      tags.push(form);
-    }
-    if (tags.length >= 7) break;
-  }
-  for (const keyword of item?.cultural_keywords || []) {
-    if (keyword && !tags.includes(keyword)) {
-      tags.push(keyword);
-    }
-    if (tags.length >= 10) break;
-  }
-  return tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("");
-}
-
-export function detailSupportText(item) {
+function detailMetaHtml(item) {
   const parts = [];
+  const location = [item?.province, item?.city, item?.district].filter(Boolean).join(" · ");
+  if (location) parts.push(location);
+  for (const value of [item?.category, item?.level]) {
+    if (value && !parts.includes(value)) parts.push(value);
+  }
+  return parts.map((p) => `<span>${escapeHtml(p)}</span>`).join("");
+}
+
+function detailSupportText(item) {
   if (item?.suitable_scenarios?.length) {
-    parts.push(`适用场景：${item.suitable_scenarios.slice(0, 3).join("、")}`);
+    return `适用场景：${item.suitable_scenarios.slice(0, 3).join("、")}`;
   }
-  if (item?.target_audience?.length) {
-    parts.push(`适合人群：${item.target_audience.slice(0, 3).join("、")}`);
+  return "";
+}
+
+export function relatedPanelTitle() {
+  return "资料检索";
+}
+
+export function updateRelatedPanelTitle() {
+  if (els.relatedTitle) {
+    els.relatedTitle.textContent = "资料检索";
   }
-  if (item?.education_value) {
-    parts.push(`教育价值：${item.education_value}`);
-  }
-  if (item?.interaction_potential) {
-    parts.push(`互动潜力：${item.interaction_potential}`);
-  }
-  return parts.join(" · ");
 }

@@ -59,6 +59,25 @@ export function renderMarkdownFallback(value) {
     inCodeBlock = false;
   };
 
+  let tableRows = [];
+  let inTable = false;
+
+  const flushTable = () => {
+    if (!tableRows.length) return;
+    const hasSep = tableRows.length >= 2 && tableRows[1].every(cell => /^-{2,}:?-{0,}$/.test(cell.trim()));
+    const thead = hasSep
+      ? `<thead><tr>${tableRows[0].map(c => `<th>${renderInlineMarkdown(c)}</th>`).join("")}</tr></thead>`
+      : "";
+    const bodyStart = hasSep ? 2 : 0;
+    const bodyRows = tableRows.slice(bodyStart);
+    const tbody = bodyRows.length
+      ? `<tbody>${bodyRows.map(row => `<tr>${row.map(c => `<td>${renderInlineMarkdown(c)}</td>`).join("")}</tr>`).join("")}</tbody>`
+      : "";
+    html.push(`<table>${thead}${tbody}</table>`);
+    tableRows = [];
+    inTable = false;
+  };
+
   for (const line of lines) {
     const trimmed = line.trim();
 
@@ -82,7 +101,24 @@ export function renderMarkdownFallback(value) {
     if (!trimmed) {
       closeParagraph();
       closeList();
+      if (inTable) flushTable();
       continue;
+    }
+
+    // Table row detection
+    if (trimmed.startsWith("|") && trimmed.endsWith("|")) {
+      if (!inTable) {
+        closeParagraph();
+        closeList();
+        inTable = true;
+        tableRows = [];
+      }
+      const cells = trimmed.slice(1, -1).split("|").map(c => c.trim());
+      tableRows.push(cells);
+      continue;
+    }
+    if (inTable) {
+      flushTable();
     }
 
     const heading = trimmed.match(/^(#{1,4})\s+(.+)$/u);
@@ -115,6 +151,7 @@ export function renderMarkdownFallback(value) {
   closeCodeBlock();
   closeParagraph();
   closeList();
+  if (inTable) flushTable();
   return html.join("") || escapeHtml(value);
 }
 

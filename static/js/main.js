@@ -3,7 +3,7 @@ import { speechSupported } from './consts.js';
 import { initHuman, configureHumanVideoPlayback, scheduleHumanVideoAdvance, restoreHumanVideoAfterVisibility } from './human.js';
 import { stopSpeech, unlockSpeech, setVoiceStatus, voiceState, replayLastSpeech, hasReplayableSpeech, pauseSpeechForVisibility, resumeSpeechAfterVisibility } from './speech.js';
 import { renderQuerySuggestions, loadMeta, resizeQuestionInput, syncRestoredQuestion, handleQuestionInput } from './ui.js';
-import { updateRelatedItems, renderRelatedItems, updateRelatedPanelTitle } from './search.js';
+import { renderRelatedItems, updateRelatedPanelTitle, searchRightPanel, searchByCategory, showDetail, hideDetail } from './search.js';
 import { askQuestion } from './ask.js';
 
 function init() {
@@ -12,15 +12,6 @@ function init() {
     relatedCount: document.querySelector("#relatedCount"),
     relatedTitle: document.querySelector("#relatedTitle"),
     metaText: document.querySelector("#metaText"),
-    detailEmpty: document.querySelector("#detailEmpty"),
-    detailContent: document.querySelector("#detailContent"),
-    detailPanel: document.querySelector(".marginalia"),
-    detailCategory: document.querySelector("#detailCategory"),
-    detailTitle: document.querySelector("#detailTitle"),
-    detailMeta: document.querySelector("#detailMeta"),
-    detailSupport: document.querySelector("#detailSupport"),
-    detailSummary: document.querySelector("#detailSummary"),
-    detailBody: document.querySelector("#detailBody"),
     questionInput: document.querySelector("#questionInput"),
     querySuggestions: document.querySelector("#querySuggestions"),
     askButton: document.querySelector("#askButton"),
@@ -33,6 +24,16 @@ function init() {
     digitalHumanVideoNext: document.querySelector("#digitalHumanVideoNext"),
     digitalHumanStatus: document.querySelector("#digitalHumanStatus"),
     digitalHumanSpeech: document.querySelector("#digitalHumanSpeech"),
+    rightSearchInput: document.querySelector("#rightSearchInput"),
+    rightSearchButton: document.querySelector("#rightSearchButton"),
+    searchMode: document.querySelector("#searchMode"),
+    detailMode: document.querySelector("#detailMode"),
+    backToSearch: document.querySelector("#backToSearch"),
+    detailCategory: document.querySelector("#detailCategory"),
+    detailTitle: document.querySelector("#detailTitle"),
+    detailMeta: document.querySelector("#detailMeta"),
+    detailSupport: document.querySelector("#detailSupport"),
+    detailBody: document.querySelector("#detailBody"),
   });
 
   initHuman();
@@ -54,6 +55,20 @@ function init() {
       askQuestion();
     }
   });
+
+  // Right panel search
+  els.rightSearchButton?.addEventListener("click", searchRightPanel);
+  els.rightSearchInput?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") searchRightPanel();
+  });
+
+  // Category chips
+  document.querySelectorAll("#categoryChips button").forEach((btn) => {
+    btn.addEventListener("click", () => searchByCategory(btn.dataset.category));
+  });
+
+  // Detail back button
+  els.backToSearch?.addEventListener("click", hideDetail);
 
   // Voice toggle — on/off switch
   els.voiceToggle?.addEventListener("click", () => {
@@ -84,7 +99,6 @@ function init() {
     if (document.hidden) {
       pauseSpeechForVisibility();
     } else {
-      // Browser may have suspended video playback while tab was hidden
       restoreHumanVideoAfterVisibility();
       resumeSpeechAfterVisibility();
     }

@@ -207,23 +207,30 @@ class QueryAnalyzer:
 
     def analyze(
         self, query: str, task_type: TaskType | None = None, context: dict | None = None,
+        planner_queries: list[str] | None = None,
     ) -> QueryAnalysis:
         # ── task identity supplied by the model planner ──
         primary_task = task_type.name if task_type else TaskType.FACT_QA.name
 
         # ── entity & location extraction ──
-        entities = self._extract_entities(query)
-        # Boost with context item titles when query has no entities
-        if not entities and context and isinstance(context, dict):
-            context_items = context.get("items") or []
-            if isinstance(context_items, list):
-                for item in context_items:
-                    if not isinstance(item, dict):
-                        continue
-                    title = str(item.get("title") or "").strip()
-                    if title and title not in entities:
-                        entities.append(title)
-                        break  # one context entity is enough to anchor the query
+        # Use planner's search queries if available (LLM-driven, no regex)
+        if planner_queries:
+            entities = list(planner_queries)
+            rewritten = " ".join(planner_queries)
+        else:
+            entities = self._extract_entities(query)
+            # Boost with context item titles when query has no entities
+            if not entities and context and isinstance(context, dict):
+                context_items = context.get("items") or []
+                if isinstance(context_items, list):
+                    for item in context_items:
+                        if not isinstance(item, dict):
+                            continue
+                        title = str(item.get("title") or "").strip()
+                        if title and title not in entities:
+                            entities.append(title)
+                            break
+            rewritten = self._rewrite_query(query, task_type)
         categories = self._extract_categories(query)
         provinces = self._extract_provinces(query)
         cities = self._extract_cities(query)
@@ -266,12 +273,8 @@ class QueryAnalyzer:
         if scenario:
             soft_constraints["scenario"] = scenario
 
-        # ── comparison override ──
-        if task_type is TaskType.COMPARISON:
-            comparison_entities = self._extract_comparison_entities(query)
-            if comparison_entities:
-                entities = comparison_entities
-                rewritten = " ".join(comparison_entities)
+        # ── expansion ──
+        expansion = self._build_expansions_for_analysis(provinces, rewritten)
 
         return QueryAnalysis(
             original_query=query,
@@ -336,6 +339,12 @@ class QueryAnalyzer:
 
     def _extract_comparison_entities(self, original: str) -> list[str]:
         cleaned = original.strip()
+        # Strip leading noise words (may be stacked: "对比一下")
+        while True:
+            new_cleaned = re.sub(r"^(比较|对比|一下下|一下|帮我|来看看|请问)\s*", "", cleaned)
+            if new_cleaned == cleaned:
+                break
+            cleaned = new_cleaned
         cleaned = _COMPARISON_SPLIT_PATTERN.sub(" | ", cleaned)
         cleaned = _COUNT_PATTERN.sub("", cleaned)
         cleaned = re.sub(
@@ -344,11 +353,19 @@ class QueryAnalyzer:
             cleaned,
         )
         cleaned = re.sub(r"\s+", " ", cleaned).strip()
-        parts = [p.strip() for p in cleaned.split("|")]
+        # Split on both "|" and "、"
+        raw_parts = []
+        for chunk in cleaned.split("|"):
+            for sub in chunk.split("、"):
+                raw_parts.append(sub.strip())
+        parts = [p for p in raw_parts if p]
         names = []
         for part in parts:
             candidate = part.strip(_TRAILING_PUNCTUATION)
             candidate = _COMPARISON_TRAILING_PATTERN.sub("", candidate).strip(_TRAILING_PUNCTUATION)
+            # Also strip common trailing noise patterns not caught by the regex
+            candidate = re.sub(r"(的风格?差异|有何异同|的异同|有什么不同)\s*$", "", candidate)
+            candidate = candidate.strip(_TRAILING_PUNCTUATION)
             if candidate and len(candidate) >= 2:
                 names.append(candidate)
         return names or parts

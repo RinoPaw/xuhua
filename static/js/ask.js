@@ -320,7 +320,7 @@ function renderBilingualCard(payload) {
         <h2 class="bilingual-title">${escapeHtml(title)}</h2>
         <p class="bilingual-subtitle">${escapeHtml(enTitle)}</p>
       </div>
-      <p class="bilingual-intro">${escapeHtml(payload?.answer || "")}</p>
+      ${payload?.answer ? `<p class="bilingual-intro">${escapeHtml(payload.answer)}</p>` : ""}
       <div class="bilingual-fields">
         ${fields.map(f => `
         <div class="bilingual-field-row">

@@ -14,6 +14,8 @@ from .config import DATASET_PATH
 if TYPE_CHECKING:
     from .extractor import SoftLabels, StructuredMeta
 
+_AI_FIELDS_PATH = DATASET_PATH.parent / "ai_fields.json"
+
 
 def normalize_text(value: str) -> str:
     return re.sub(r"\s+", " ", value.replace("\u00a0", " ")).strip()
@@ -34,6 +36,13 @@ def _parse_tuple(value: Any) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class HeritageItem:
+    """Core heritage item with 13 stable fields.
+
+    Soft labels (education_value, interaction_potential, etc.) and
+    LLM-enriched fields (history, features, cultural_value) are
+    loaded on demand from ai_fields.json or computed via RuleExtractor.
+    """
+
     id: str
     title: str
     family: str
@@ -41,23 +50,35 @@ class HeritageItem:
     summary: str
     content: str
     search_text: str
-    source: dict[str, Any]
-    # ── structured metadata ──
+    # ── geo / level ──
     level: str = ""
     province: str = ""
     city: str = ""
     district: str = ""
+    # ── display ──
     display_forms: tuple[str, ...] = ()
-    history: str = ""
-    features: str = ""
-    cultural_value: str = ""
-    # ── soft labels ──
     suitable_scenarios: tuple[str, ...] = ()
-    target_audience: tuple[str, ...] = ()
-    display_difficulty: str = ""
-    interaction_potential: str = ""
-    education_value: str = ""
-    cultural_keywords: tuple[str, ...] = ()
+
+
+@lru_cache(maxsize=1)
+def _load_ai_fields() -> dict[str, dict[str, str]]:
+    """Load LLM-enriched fields (features, history, cultural_value)."""
+    if not _AI_FIELDS_PATH.exists():
+        return {}
+    with _AI_FIELDS_PATH.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def get_ai_fields(item_id: str) -> dict[str, str]:
+    """Get LLM-enriched fields for an item. Returns dict with keys:
+    features, history, cultural_value (may be empty strings if missing).
+    """
+    fields = _load_ai_fields().get(item_id, {})
+    return {
+        "features": fields.get("features", ""),
+        "history": fields.get("history", ""),
+        "cultural_value": fields.get("cultural_value", ""),
+    }
 
 
 class KnowledgeBase:
@@ -82,21 +103,12 @@ class KnowledgeBase:
                 summary=str(item.get("summary") or ""),
                 content=str(item.get("content") or ""),
                 search_text=str(item.get("search_text") or ""),
-                source=dict(item.get("source") or {}),
                 level=str(item.get("level") or ""),
                 province=str(item.get("province") or ""),
                 city=str(item.get("city") or ""),
                 district=str(item.get("district") or ""),
                 display_forms=_parse_tuple(item.get("display_forms")),
-                history=str(item.get("history") or ""),
-                features=str(item.get("features") or ""),
-                cultural_value=str(item.get("cultural_value") or ""),
                 suitable_scenarios=_parse_tuple(item.get("suitable_scenarios")),
-                target_audience=_parse_tuple(item.get("target_audience")),
-                display_difficulty=str(item.get("display_difficulty") or ""),
-                interaction_potential=str(item.get("interaction_potential") or ""),
-                education_value=str(item.get("education_value") or ""),
-                cultural_keywords=_parse_tuple(item.get("cultural_keywords")),
             )
             for item in payload.get("items", [])
         ]
@@ -120,41 +132,37 @@ def get_knowledge_base() -> KnowledgeBase:
 
 
 def get_structured_meta(item_id: str) -> "StructuredMeta | None":
-    """Backward-compatible adapter: build StructuredMeta from HeritageItem fields."""
+    """Backward-compatible adapter: build StructuredMeta from HeritageItem + ai_fields."""
     from .extractor import StructuredMeta
 
     kb = get_knowledge_base()
     item = kb.get(item_id)
     if item is None:
         return None
+    ai = get_ai_fields(item_id)
     return StructuredMeta(
         level=item.level,
         province=item.province,
         city=item.city,
         district=item.district,
         display_forms=item.display_forms,
-        history=item.history,
-        features=item.features,
-        cultural_value=item.cultural_value,
+        history=ai["history"],
+        features=ai["features"],
+        cultural_value=ai["cultural_value"],
     )
 
 
 def get_soft_labels(item_id: str) -> "SoftLabels | None":
-    """Backward-compatible adapter: build SoftLabels from HeritageItem fields."""
-    from .extractor import SoftLabels
+    """Compute soft labels on-the-fly via RuleExtractor."""
+    from .extractor import RuleExtractor, infer_soft_labels
 
     kb = get_knowledge_base()
     item = kb.get(item_id)
     if item is None:
         return None
-    return SoftLabels(
-        suitable_scenarios=item.suitable_scenarios,
-        target_audience=item.target_audience,
-        display_difficulty=item.display_difficulty,
-        interaction_potential=item.interaction_potential,
-        education_value=item.education_value,
-        cultural_keywords=item.cultural_keywords,
-    )
+    extractor = RuleExtractor()
+    meta = extractor.extract(item)
+    return infer_soft_labels(item, meta)
 
 
 def item_to_dict(item: HeritageItem, include_content: bool = False) -> dict[str, Any]:
@@ -164,16 +172,18 @@ def item_to_dict(item: HeritageItem, include_content: bool = False) -> dict[str,
         "family": item.family,
         "category": item.category,
         "summary": item.summary,
-        "source": item.source,
         "level": item.level,
         "province": item.province,
         "city": item.city,
         "district": item.district,
         "display_forms": list(item.display_forms),
-        "history": item.history,
-        "features": item.features,
-        "cultural_value": item.cultural_value,
+        "suitable_scenarios": list(item.suitable_scenarios),
     }
+    # Merge ai_fields for API consumers
+    ai = get_ai_fields(item.id)
+    data["features"] = ai["features"]
+    data["history"] = ai["history"]
+    data["cultural_value"] = ai["cultural_value"]
     if include_content:
         data["content"] = item.content
     return data

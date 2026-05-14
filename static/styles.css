@@ -1309,13 +1309,14 @@ mark.search-highlight {
 .result-markdown th,
 .result-markdown td {
   padding: 8px 10px;
-  border: 1px solid rgba(58, 47, 40, 0.12);
+  border: 1px solid rgba(58, 47, 40, 0.22);
+  color: rgba(26, 22, 20, 0.84);
   vertical-align: top;
 }
 
 .result-markdown th {
-  background: rgba(107, 144, 128, 0.1);
-  color: var(--celadon-dark);
+  background: rgba(107, 144, 128, 0.14);
+  color: rgba(26, 22, 20, 0.92);
   font-weight: 900;
 }
 
@@ -2005,18 +2006,19 @@ mark.search-highlight {
 .result-markdown th,
 .result-markdown td {
   padding: 8px 10px;
-  border: 1px solid rgba(0, 0, 0, 0.1);
+  border: 1px solid rgba(58, 47, 40, 0.22);
+  color: rgba(26, 22, 20, 0.84);
   text-align: left;
   vertical-align: top;
 }
 
 .result-markdown th {
-  background: rgba(107, 144, 128, 0.08);
+  background: rgba(107, 144, 128, 0.14);
   font-weight: 900;
   letter-spacing: 1px;
-  color: var(--ink);
+  color: rgba(26, 22, 20, 0.92);
 }
 
 .result-markdown td {
-  color: var(--ink-soft);
+  color: rgba(26, 22, 20, 0.84);
 }

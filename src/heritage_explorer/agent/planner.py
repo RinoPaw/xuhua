@@ -34,29 +34,51 @@ def build_agent_planner_messages(
     categories = '、'.join(category.name for category in kb.categories[:12])
     user_content = (
         f'用户问题：{query}\n'
-        f'显式分类筛选：{category or '无'}\n'
+        f"显式分类筛选：{category or '无'}\n"
         f'资料库概况：{len(kb.items)} 个非遗项目，{len(kb.categories)} 类，类别包括：{categories}\n'
     )
     if context and isinstance(context, dict):
-        prev_question = str(context.get('question') or '').strip()
-        prev_items = _context_item_titles(context.get('items'))
-        prev_answer = str(context.get('answer') or '').strip()
-        if prev_question or prev_items:
-            user_content += '\n上一轮对话上下文：\n'
-            if prev_question:
-                user_content += f'上一轮用户问题：{prev_question}\n'
-            if prev_items:
-                user_content += f"上一轮涉及项目：{'、'.join(prev_items)}\n"
-            user_content += "请根据上下文理解本轮问题中的指代（如「它」「这个」「这份」），"
-            user_content += '将其解析为具体项目名，并在 reason 中说明你的理解。\n'
-            if prev_answer:
-                prev_answer_short = prev_answer[:300]
-                user_content += f'上一轮回答概要（仅供参考，请勿在 direct_answer 中复述）：{prev_answer_short}\n'
+        # Multi-turn conversation history (new format)
+        history = context.get("history")
+        if isinstance(history, list) and history:
+            user_content += "\\n对话历史（最近几轮）：\\n"
+            for idx, turn in enumerate(history[-5:], 1):
+                q = str(turn.get("q") or "").strip()
+                a = str(turn.get("a") or "").strip()
+                if q:
+                    user_content += f"第{idx}轮 - 用户：{q}\\n"
+                if a:
+                    user_content += f"第{idx}轮 - 助手：{a[:200]}\\n"
+            user_content += "请根据对话历史理解本轮问题中的指代（如「它」「这个」「刚才说的」），"
+            user_content += "将其解析为具体项目名，并输出合理的 search_queries。\\n"
+        else:
+            # Legacy single-turn context
+            prev_question = str(context.get('question') or '').strip()
+            prev_items = _context_item_titles(context.get('items'))
+            prev_answer = str(context.get('answer') or '').strip()
+            if prev_question or prev_items:
+                user_content += '\\n上一轮对话上下文：\\n'
+                if prev_question:
+                    user_content += f'上一轮用户问题：{prev_question}\\n'
+                if prev_items:
+                    user_content += f"上一轮涉及项目：{'、'.join(prev_items)}\\n"
+                user_content += "请根据上下文理解本轮问题中的指代（如「它」「这个」「这份」），"
+                user_content += '将其解析为具体项目名，并在 reason 中说明你的理解。\\n'
+                if prev_answer:
+                    prev_answer_short = prev_answer[:300]
+                    user_content += f'上一轮回答概要（仅供参考，请勿在 direct_answer 中复述）：{prev_answer_short}\\n'
     user_content += (
         "\n请输出 JSON："
         '{"task_type":"...", "confidence":0.0, "needs_retrieval":true, '
         '"needs_llm":true, "reason":"...", "direct_answer":"", '
-        '"mode":"local", "warnings":[]}'
+        '"mode":"local", "warnings":[], "search_queries":[]}'
+        '\n\nsearch_queries 是你认为检索资料库的最佳关键词列表。'
+        '\n规则：'
+        '\n- 如果问题涉及具体项目名（含上下文指代如「它」），列出项目名作为检索词'
+        '\n- 如果问题是浏览/推荐类，列出类别名或特征词（如["传统技艺","河南"]）'
+        '\n- comparison 任务列出待对比的各项目名'
+        '\n- chitchat / direct_answer 留空数组'
+        '\n请确保 search_queries 中的每个词都是可以直接用来检索资料库的。'
     )
     return [
         {
@@ -74,8 +96,9 @@ def build_agent_planner_messages(
                 'exhibition_plan 用于展览策划、展陈方案、展区动线、互动环节、物料配置等展示方案。'
                 '如果用户要求为单个项目生成讲解词或解说词，优先选择 content_transform，'
                 "不要因为出现「讲解」就归为 study_task，也不要因为用于展馆就归为 exhibition_plan。"
-                "如果有上一轮对话上下文，你必须理解其中的指代关系，"
+                "如果有对话历史上下文，你必须理解其中的指代关系，"
                 "例如「它」指代上一轮的项目、要把「它和同类对比」理解为「项目A和同类对比」。"
+                "多轮对话时，优先从历史中找到用户真正关心的项目，再生成 search_queries。"
                 '请根据用户最终意图自主选择最合适的任务类型和动作。'
                 'direct_answer 必须使用用户可见角色「叙华」的口吻回答。'
                 '不要在 direct_answer 中提到内部规划器、后台、决策层、路由、JSON、工具选择等实现细节。'
@@ -157,7 +180,14 @@ def decision_from_planner_payload(
         mode=mode,
         warnings=[str(item) for item in warnings],
         planner="model",
+        search_queries=_safe_str_list(payload.get("search_queries")),
     )
+
+
+def _safe_str_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
 
 
 def clamp_float(value: Any, default: float = 0.7) -> float:

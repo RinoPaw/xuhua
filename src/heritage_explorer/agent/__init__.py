@@ -370,7 +370,20 @@ class Agent:
             "display_items 由你决定：只选择答案真正围绕、用户需要看到的项目；单项目问题通常只选 1 个；推荐、列表、对比才选择多个，最多 8 个；不需要展示卡片时输出空列表。\n"
             "当 task_type=\"comparison\" 或用户要求比较多个项目时，answer 必须使用 Markdown 表格；"
             "至少包含“项目、地区/流派、制作/表演特点、题材/剧目或用途、适合展示的差异点”等列。"
+            "表格必须是真正的多行 Markdown：表头、分隔行、每个项目的数据行都必须单独换行；"
+            "在 JSON 的 answer 字符串中用换行符保留这些行。"
+            "禁止输出单行表格，例如“| 项目 | ... | | --- | ... | | A | ... |”。"
+            "正确格式示例：\n"
+            "| 项目 | 地区/流派 | 特点 |\n"
+            "| --- | --- | --- |\n"
+            "| A | 地区 | 特点 |\n"
+            "| B | 地区 | 特点 |\n"
             "表格后可加一小段结论，但不要把多个项目压成同一段编号文字。\n"
+            "当用户要求“中英双语、双语介绍、英文介绍+中文介绍”等内容转化时，"
+            "不要把中文和英文混在同一个段落里。必须额外输出 bilingual_fields 数组，"
+            "每一项包含 label_cn、label_en、value_cn、value_en，让前端按左中文、右英文展示。"
+            "answer 只写一句很短的中文导语或留空，不要放整段双语正文。"
+            "推荐字段为：名称/Name、类别/Category、简介/Summary、主要特色/Key Features。\n"
             "不要编造资料库没有提供的事实；不要在没有资料支撑时凭常识列项目。"
             "如果没有可用资料且搜索预算已用尽，请明确说明资料不足，而不是给无依据推荐。"
             "只输出 JSON，不要输出 Markdown 或解释文字。\n"
@@ -381,7 +394,8 @@ class Agent:
             "\"confidence\":0.0,\"reason\":\"一句内部理由\","
             "\"search_queries\":[\"关键词\"]或null,"
             "\"answer\":\"回答文本\"或null,"
-            "\"display_items\":[\"item_id\"]}"
+            "\"display_items\":[\"item_id\"],"
+            "\"bilingual_fields\":[{\"label_cn\":\"名称\",\"label_en\":\"Name\",\"value_cn\":\"中文\",\"value_en\":\"English\"}]或null}"
         )
         user_prompt = (
             f"搜索状态：已连续搜索 {search_rounds_used} 轮，剩余 {remaining} 轮。\n\n"
@@ -868,8 +882,30 @@ class Agent:
             confidence=confidence,
             warnings=list(warnings),
             total_count=len(display_items),
+            bilingual_fields=self._payload_bilingual_fields(payload.get("bilingual_fields")),
         )
         return result, decision
+
+    def _payload_bilingual_fields(self, value: Any) -> list[dict[str, str]] | None:
+        if not isinstance(value, list):
+            return None
+        fields: list[dict[str, str]] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            label_cn = normalize_text(item.get("label_cn") or "")
+            label_en = normalize_text(item.get("label_en") or "")
+            value_cn = normalize_text(item.get("value_cn") or "")
+            value_en = normalize_text(item.get("value_en") or "")
+            if not (label_cn and label_en and (value_cn or value_en)):
+                continue
+            fields.append({
+                "label_cn": label_cn,
+                "label_en": label_en,
+                "value_cn": value_cn,
+                "value_en": value_en,
+            })
+        return fields or None
 
     def _select_display_items(
         self,
@@ -1948,6 +1984,7 @@ def _context_title_keywords(items: list[Any]) -> list[str]:
 def _normalize_comparison_answer(answer: str, task_type: TaskType) -> str:
     if task_type is not TaskType.COMPARISON:
         return answer
+    answer = _repair_single_line_markdown_table(answer)
     if "|" in answer and re.search(r"\|\s*-{2,}", answer):
         return answer
 
@@ -1973,3 +2010,64 @@ def _normalize_comparison_answer(answer: str, task_type: TaskType) -> str:
     if prefix:
         return f"{prefix}\n\n" + "\n".join(table)
     return "\n".join(table)
+
+
+def _repair_single_line_markdown_table(answer: str) -> str:
+    if "|" not in answer or "\n|" in answer:
+        return answer
+
+    table_start = answer.find("|")
+    prefix = answer[:table_start].strip()
+    table_text = answer[table_start:].strip()
+    tokens = [part.strip() for part in table_text.split("|")]
+
+    rows: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if not token:
+            if current:
+                rows.append(current)
+                current = []
+            continue
+        current.append(token)
+    if current:
+        rows.append(current)
+
+    if len(rows) < 3:
+        return answer
+    separator_index = next(
+        (
+            index for index, row in enumerate(rows[:3])
+            if row and all(re.fullmatch(r":?-{2,}:?", cell) for cell in row)
+        ),
+        -1,
+    )
+    if separator_index <= 0:
+        return answer
+
+    header = rows[separator_index - 1]
+    separator = rows[separator_index]
+    body = rows[separator_index + 1:]
+    column_count = len(header)
+    if column_count < 2 or len(separator) != column_count:
+        return answer
+
+    def normalize_row(row: list[str]) -> list[str]:
+        cells = row[:column_count]
+        if len(cells) < column_count:
+            cells.extend("" for _ in range(column_count - len(cells)))
+        return cells
+
+    repaired = [
+        "| " + " | ".join(header) + " |",
+        "| " + " | ".join("---" for _ in header) + " |",
+    ]
+    for row in body:
+        if len(row) < 2:
+            continue
+        repaired.append("| " + " | ".join(normalize_row(row)) + " |")
+
+    if len(repaired) <= 2:
+        return answer
+    table = "\n".join(repaired)
+    return f"{prefix}\n\n{table}" if prefix else table

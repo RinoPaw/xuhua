@@ -149,18 +149,6 @@ def handle_comparison(kb: KnowledgeBase, analysis) -> AgentResult:
         *("、".join(meta.display_forms) if meta and meta.display_forms else "—" for _, _, meta, _ in resolved),
     ))
 
-    # Education value
-    lines.append(_row(
-        "教育价值",
-        *(labels.education_value if labels else "—" for _, _, _, labels in resolved),
-    ))
-
-    # Interaction potential
-    lines.append(_row(
-        "互动潜力",
-        *(labels.interaction_potential if labels else "—" for _, _, _, labels in resolved),
-    ))
-
     # ── Narrative sections ──
     lines.append("")
     for entity_name, item, meta, labels in resolved:
@@ -194,14 +182,6 @@ def handle_comparison(kb: KnowledgeBase, analysis) -> AgentResult:
         summary_parts.append(f"分属{'和'.join(unique_cats)}不同类别")
     else:
         summary_parts.append(f"同属{unique_cats[0]}类别")
-
-    # Education comparison
-    if labels_data := [(name, labels) for name, _, _, labels in resolved if labels]:
-        edu_values = [labels.education_value for _, labels in labels_data]
-        if len(set(edu_values)) > 1:
-            summary_parts.append("教育价值存在差异")
-        else:
-            summary_parts.append(f"教育价值均为{edu_values[0]}")
 
     lines.append("；".join(summary_parts) + "。")
 

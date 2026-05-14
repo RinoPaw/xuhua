@@ -316,14 +316,15 @@ def _extract_cultural_keywords(item: HeritageItem, features: str) -> tuple[str, 
 
 
 def infer_soft_labels(item: HeritageItem, meta: StructuredMeta) -> SoftLabels:
+    """Compute soft labels (suitable_scenarios + creative_product_potential only).
+
+    display_difficulty, interaction_potential, education_value, target_audience,
+    and cultural_keywords have been removed from HeritageItem — use the standalone
+    helpers (_infer_* functions) directly if needed for scoring.
+    """
     category = item.category
     scenarios = _CATEGORY_SCENARIO_MAP.get(category, _DEFAULT_SCENARIOS)
-    audience = _infer_audience_from_scenarios(scenarios)
-    difficulty = _infer_display_difficulty(meta.display_forms)
-    interaction = _infer_interaction_potential(meta.display_forms)
-    education = _infer_education_value(meta.level)
     creative = _CATEGORY_CREATIVE_MAP.get(category, "")
-    keywords = _extract_cultural_keywords(item, meta.features)
 
     evidence: dict[str, dict[str, Any]] = {}
     evidence["suitable_scenarios"] = _evidence_dict(
@@ -331,20 +332,10 @@ def infer_soft_labels(item: HeritageItem, meta: StructuredMeta) -> SoftLabels:
         method="rule_infer",
         confidence=0.6 if scenarios else 0.0,
     )
-    evidence["target_audience"] = _evidence_dict(
-        source_text=f"scenarios={scenarios}",
-        method="rule_infer",
-        confidence=0.5 if audience else 0.0,
-    )
 
     return SoftLabels(
         suitable_scenarios=scenarios,
-        target_audience=audience,
-        display_difficulty=difficulty,
-        interaction_potential=interaction,
         creative_product_potential=creative,
-        education_value=education,
-        cultural_keywords=keywords,
         _evidence=evidence,
     )
 

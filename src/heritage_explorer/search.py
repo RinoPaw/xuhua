@@ -17,6 +17,7 @@ HYBRID_SEMANTIC_CANDIDATES = 80
 RRF_K = 60
 LEXICAL_RANK_WEIGHT = 1.3
 SEMANTIC_RANK_WEIGHT = 1.35
+LEXICAL_MIN_SCORE = 10  # minimum score for an item to count as a lexical match
 
 # Pinyin fuzzy search constants
 _PINYIN_MIN_QUERY_LEN = 2  # minimum query chars to try pinyin matching
@@ -154,8 +155,6 @@ def tokenize(query: str) -> list[str]:
         text = tokens[0]
         if len(text) > 2:
             tokens.extend(text[i : i + 2] for i in range(len(text) - 1))
-        elif len(text) == 2:
-            tokens.extend(ch for ch in text if "\u4e00" <= ch <= "\u9fff")
     return list(dict.fromkeys(tokens))
 
 
@@ -227,7 +226,7 @@ def search_items(
         except Exception:  # noqa: BLE001 - semantic retrieval should degrade to lexical search.
             pass
 
-    result = [item for _, item in ranked]
+    result = [item for score, item in ranked if score >= LEXICAL_MIN_SCORE]
     result = prepend_pinyin_matches(kb, result, search_query or query, candidates)
     return result[offset : offset + limit], len(result)
 
@@ -283,7 +282,7 @@ def search_items_lexical(
     lowered_query = search_query or query.lower()
     ranked = rank_lexical(candidates, lowered_query, tokens)
 
-    result = [item for _, item in ranked]
+    result = [item for score, item in ranked if score >= LEXICAL_MIN_SCORE]
     result = prepend_pinyin_matches(kb, result, search_query or query, candidates)
 
     return result[offset : offset + limit], len(result)
@@ -487,7 +486,7 @@ def score_item(item: HeritageItem, query: str, tokens: list[str]) -> float:
     if query and query in summary:
         score += 10
     if query and query in content:
-        score += 5
+        score += 12
 
     for token in tokens:
         if token in title:

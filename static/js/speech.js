@@ -500,7 +500,7 @@ export function requestServerSpeechFile(text, playbackSeq) {
     .catch(() => {
       if (speechPlaybackSeq !== playbackSeq || lastSpeechText !== text) return;
       if (!speakText(text, playbackSeq, { lang: lastSpeechLang })) {
-        finishSpeechPlayback("语音生成失败");
+        finishSpeechPlayback("语音整理失败");
       }
     });
   return true;

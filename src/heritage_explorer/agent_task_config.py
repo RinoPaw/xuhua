@@ -10,13 +10,13 @@ TASK_CONFIGS: dict[TaskType, TaskConfig] = {
         task_type=TaskType.CHITCHAT,
         retrieval_limit=0,
         context_schema="none",
-        generate_detail="正在整理上下文，生成简短回应",
+        generate_detail="正在整理上下文，准备简短回应",
     ),
     TaskType.FACT_QA: TaskConfig(
         task_type=TaskType.FACT_QA,
         retrieval_limit=5,
         context_schema="fact_sheet",
-        generate_detail="正在组织证据并生成依据式回答",
+        generate_detail="正在组织证据并撰写依据式回答",
     ),
     TaskType.BROWSE_QUERY: TaskConfig(
         task_type=TaskType.BROWSE_QUERY,
@@ -31,7 +31,7 @@ TASK_CONFIGS: dict[TaskType, TaskConfig] = {
         require_diversity=True,
         context_schema="comparison_table",
         handler_name="_handle_comparison",
-        generate_detail="正在提取差异点并生成对比表格",
+        generate_detail="正在提取差异点并整理对比表格",
     ),
     TaskType.RECOMMENDATION: TaskConfig(
         task_type=TaskType.RECOMMENDATION,

@@ -209,7 +209,7 @@ class Agent:
 
         while True:
             if search_rounds_used >= MAX_SEARCH_ROUNDS_PER_TURN:
-                yield self._progress_event("generate", "思考回答", "资料已齐，正在生成回答。")
+                yield self._progress_event("generate", "思考回答", "资料已齐，正在组织回答。")
             else:
                 yield self._progress_event(
                     "classify",
@@ -246,7 +246,7 @@ class Agent:
             search_queries = self._payload_str_list(payload.get("search_queries"))
 
             if action == "answer" and answer:
-                yield self._progress_event("generate", "思考回答", "资料已齐，正在生成回答。")
+                yield self._progress_event("generate", "思考回答", "资料已齐，正在组织回答。")
                 result, decision = self._subsequent_answer_result(
                     payload=payload,
                     answer=answer,
@@ -1214,7 +1214,7 @@ class Agent:
             evidence=evidence,
             mode="local",
             confidence=0.8,
-            warnings=["教案为模板生成，建议教师根据实际学情调整教学环节和时间分配。"],
+            warnings=["教案由模板辅助整理，建议教师根据实际学情调整教学环节和时间分配。"],
         )
 
     def _handle_content_transform(self, analysis) -> AgentResult:
@@ -1585,7 +1585,7 @@ class Agent:
             time_budget=time_budget,
             items=template_items,
         ).strip()
-        rec.warnings.append("展示方案为模板生成，互动环节与物料建议待人工补充。")
+        rec.warnings.append("展示方案由模板辅助整理，互动环节与物料建议待人工补充。")
         return rec
 
 

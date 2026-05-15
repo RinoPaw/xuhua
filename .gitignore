@@ -15,6 +15,7 @@ env/
 logs/
 tmp/
 data/embeddings/
+competition_docs/
 *.log
 skills-lock.json
 新形象/

@@ -329,7 +329,7 @@ function renderResultAnswer(question, payload) {
 function modeLabel(mode) {
   const labels = {
     local: "资料库回答",
-    llm: "模型生成",
+    llm: "智能体回答",
     fallback: "回退回答",
     no_context: "能力边界",
     empty: "等待问题",

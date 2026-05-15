@@ -1,4 +1,4 @@
-import { humanVideos, humanVideoIndexes, HUMAN_MIN_THINKING_MS, HUMAN_DISSOLVE_LEAD_MS } from './consts.js';
+import { humanVideos, humanVideoIndexes, HUMAN_MIN_THINKING_MS, HUMAN_DISSOLVE_MS, HUMAN_DISSOLVE_LEAD_MS } from './consts.js';
 import { els } from './state.js';
 import { stripMarkdown } from './markdown.js';
 
@@ -88,7 +88,7 @@ export function transitionHumanVideo(nextSrc, stateName = currentHumanState, opt
       incoming.classList.remove("is-dissolve-in");
       outgoing.classList.remove("is-dissolve-out");
       els.digitalHumanVideo.parentElement?.classList.remove("is-dissolving");
-    }, 980);
+    }, HUMAN_DISSOLVE_MS + 80);
     activeHumanVideo = incoming;
     standbyHumanVideo = outgoing;
     scheduleHumanVideoAdvance(incoming, stateName);
@@ -96,7 +96,7 @@ export function transitionHumanVideo(nextSrc, stateName = currentHumanState, opt
       outgoing.pause();
       outgoing.removeAttribute("src");
       outgoing.load();
-    }, 1020);
+    }, HUMAN_DISSOLVE_MS + 140);
   };
 
   incoming.addEventListener("loadeddata", startTransition, { once: true });

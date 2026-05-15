@@ -191,8 +191,8 @@ body::before {
   pointer-events: none;
   transform: translateZ(0);
   transition:
-    opacity 920ms cubic-bezier(0.45, 0, 0.2, 1),
-    filter 920ms ease;
+    opacity 1180ms cubic-bezier(0.33, 0, 0.18, 1),
+    filter 1180ms cubic-bezier(0.33, 0, 0.18, 1);
   will-change: opacity, filter;
   z-index: 0;
 }
@@ -203,7 +203,19 @@ body::before {
 }
 
 .scroll-body.is-dissolving .scroll-video {
-  filter: saturate(0.82) contrast(1.03) brightness(0.94) blur(0.35px);
+  filter: saturate(0.82) contrast(1.01) brightness(0.9) blur(0.2px);
+}
+
+.scroll-video.is-dissolve-in {
+  transition:
+    opacity 1180ms cubic-bezier(0.2, 0, 0.14, 1),
+    filter 1180ms cubic-bezier(0.2, 0, 0.14, 1);
+}
+
+.scroll-video.is-dissolve-out {
+  transition:
+    opacity 1180ms cubic-bezier(0.45, 0, 0.28, 1),
+    filter 1180ms cubic-bezier(0.45, 0, 0.28, 1);
 }
 
 /* 画面底部淡出 */

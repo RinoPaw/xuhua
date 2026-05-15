@@ -18,6 +18,7 @@ RRF_K = 60
 LEXICAL_RANK_WEIGHT = 1.3
 SEMANTIC_RANK_WEIGHT = 1.35
 LEXICAL_MIN_SCORE = 10  # minimum score for an item to count as a lexical match
+HYBRID_MIN_SCORE = 0.015  # RRF-based scores are small; this keeps weak tail matches out.
 
 # Pinyin fuzzy search constants
 _PINYIN_MIN_QUERY_LEN = 2  # minimum query chars to try pinyin matching
@@ -220,71 +221,17 @@ def search_items(
     lowered_query = search_query or query.lower()
     ranked = rank_lexical(candidates, lowered_query, tokens)
 
+    using_hybrid = False
     if config.SEARCH_USE_EMBEDDING:
         try:
             ranked = rank_hybrid(kb, candidates, lowered_query, tokens)
+            using_hybrid = True
         except Exception:  # noqa: BLE001 - semantic retrieval should degrade to lexical search.
             pass
 
-    result = [item for score, item in ranked if score >= LEXICAL_MIN_SCORE]
+    min_score = HYBRID_MIN_SCORE if using_hybrid else LEXICAL_MIN_SCORE
+    result = [item for score, item in ranked if score >= min_score]
     result = prepend_pinyin_matches(kb, result, search_query or query, candidates)
-    return result[offset : offset + limit], len(result)
-
-
-def search_items_lexical(
-    kb: KnowledgeBase,
-    query: str = "",
-    category: str = "",
-    province: str = "",
-    level: str = "",
-    district: str = "",
-    keywords: str = "",
-    limit: int = 30,
-    offset: int = 0,
-) -> tuple[list[HeritageItem], int]:
-    """Fast lexical-only search that never calls the embedding API."""
-    query = normalize_text(query)
-    category = normalize_text(category)
-    province = normalize_text(province)
-    level = normalize_text(level)
-    district = normalize_text(district)
-    keywords = normalize_text(keywords)
-    candidates: Iterable[HeritageItem] = kb.items
-
-    if category:
-        candidates = (item for item in candidates if item.category == category)
-    if province:
-        candidates = (
-            item for item in candidates
-            if item.province == province
-        )
-    if level:
-        candidates = (
-            item for item in candidates
-            if item.level == level
-        )
-    if district:
-        candidates = (
-            item for item in candidates
-            if district in item.district
-        )
-    if keywords:
-        query = f"{keywords} {query}".strip()
-
-    candidates = list(candidates)
-
-    if not query:
-        result = sorted(candidates, key=lambda item: (item.category, item.title))
-        return result[offset : offset + limit], len(result)
-
-    search_query = normalize_search_query(query)
-    tokens = tokenize(search_query)
-    lowered_query = search_query or query.lower()
-    ranked = rank_lexical(candidates, lowered_query, tokens)
-
-    result = [item for score, item in ranked if score >= LEXICAL_MIN_SCORE]
-    result = prepend_pinyin_matches(kb, result, search_query or query, candidates)
-
     return result[offset : offset + limit], len(result)
 
 

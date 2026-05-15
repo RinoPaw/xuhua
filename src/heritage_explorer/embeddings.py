@@ -100,7 +100,7 @@ class EmbeddingClient:
         return self.retry_backoff * (attempt + 1)
 
     def _embed_texts_once(self, texts: list[str]) -> list[list[float]]:
-        from ..http_client import embedding_request, describe_error
+        from .http_client import embedding_request, describe_error
 
         try:
             return embedding_request(texts)
@@ -226,6 +226,6 @@ def dot(left: Iterable[float], right: Iterable[float]) -> float:
 
 
 def describe_embedding_error(exc: Exception, api_key: str = "") -> str:
-    from ..http_client import describe_error
+    from .http_client import describe_error
 
     return describe_error(exc, api_key)

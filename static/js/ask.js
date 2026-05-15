@@ -99,7 +99,7 @@ function setAnswerLoading(activeIndex) {
       <div class="loading-steps">
         ${steps.map((step, index) => `
           <span class="loading-step ${index < activeIndex ? "is-done" : ""} ${index === activeIndex ? "is-active" : ""}">
-            ${escapeHtml(step.title)}
+            ${escapeHtml(step.label || step.title)}
           </span>
         `).join("")}
       </div>
@@ -307,55 +307,19 @@ function renderFollowups(payload) {
   `;
 }
 
-function renderBilingualCard(payload) {
-  const fields = payload?.bilingual_fields;
-  if (!fields?.length) return "";
-
-  const title = payload?.items?.[0]?.title || "";
-  const enTitle = fields.find(f => f.label_cn === "名称")?.value_en || "";
-
-  return `
-    <div class="bilingual-card">
-      <div class="bilingual-head">
-        <h2 class="bilingual-title">${escapeHtml(title)}</h2>
-        <p class="bilingual-subtitle">${escapeHtml(enTitle)}</p>
-      </div>
-      ${payload?.answer ? `<p class="bilingual-intro">${escapeHtml(payload.answer)}</p>` : ""}
-      <div class="bilingual-fields">
-        ${fields.map(f => `
-        <div class="bilingual-field-row">
-          <div class="bilingual-field-col">
-            <span class="bilingual-field-label">${escapeHtml(f.label_cn)}</span>
-            <span class="bilingual-field-value">${escapeHtml(f.value_cn)}</span>
-          </div>
-          <div class="bilingual-field-col">
-            <span class="bilingual-field-label">${escapeHtml(f.label_en)}</span>
-            <span class="bilingual-field-value">${escapeHtml(f.value_en)}</span>
-          </div>
-        </div>`).join("")}
-      </div>
-    </div>
-  `;
-}
 
 function renderResultAnswer(question, payload) {
   const taskLabel = payload?.task_label || modeLabel(payload?.mode);
-
-  const bilingualCard = renderBilingualCard(payload);
-  const answerSection = bilingualCard
-    ? bilingualCard
-    : `<section class="result-section">
-        <h3>${escapeHtml(taskLabel)}结果</h3>
-        <div class="result-markdown">${renderMarkdown(payload?.answer || "")}</div>
-      </section>`;
 
   return `
     <div class="result-shell" data-task="${escapeHtml(payload?.task_type || "fact_qa")}">
       ${renderPlannerEcho(payload)}
       ${renderResultStats(payload)}
       ${renderResultItems(payload)}
+      <section class="result-section">
+        <div class="result-markdown">${renderMarkdown(payload?.answer || "")}</div>
+      </section>
       ${renderSelectionReason(payload)}
-      ${answerSection}
       ${renderWarnings(payload)}
       ${renderFollowups(payload)}
     </div>

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "xuhua"
 version = "0.1.0"
-description = "叙华 — 面向牡丹非遗资料的本地 Web 知识库与 AI 问答系统"
+description = "叙华 — 面向全国非遗资料的本地 Web 知识库与任务型 AI 智能体"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

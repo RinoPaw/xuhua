@@ -76,7 +76,7 @@ export async function loadRightSearchResults(requestKey, category = "") {
           if (!line.startsWith("data: ")) continue;
           try {
             const event = JSON.parse(line.slice(6));
-            if (event.phase === "lexical" || event.phase === "hybrid") {
+            if (event.phase === "results") {
               renderRelatedItems(event.items, event.total);
             }
           } catch {

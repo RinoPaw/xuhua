@@ -87,9 +87,9 @@ export const PROGRESS_STEP_INDEX = {
   generate: 2,
 };
 export const loadingSteps = [
-  { title: "理解问题", detail: "正在判断任务类型，并识别项目名称、地区和输出要求" },
-  { title: "检索资料", detail: "正在检索资料库，优先匹配明确标题和结构化字段" },
-  { title: "思考回答", detail: "正在整理证据、取舍资料，并生成回答文本" },
+  { title: "理解需求", label: "理解", detail: "识别问题意图、项目名称和上下文指向" },
+  { title: "查找资料", label: "检索", detail: "先筛候选标题，必要时精查项目详情" },
+  { title: "组织回答", label: "生成", detail: "整理依据，生成可直接使用的回答" },
 ];
 export const HUMAN_MIN_THINKING_MS = 1120;
 export const HUMAN_DISSOLVE_LEAD_MS = 1050;

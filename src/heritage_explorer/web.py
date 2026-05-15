@@ -7,11 +7,13 @@ import re
 
 from flask import Flask, Response, abort, jsonify, render_template, request, send_file, stream_with_context
 
+from . import __version__
 from .agent import Agent, AgentResult, task_type_label
 from .config import DEBUG, HOST, PORT, TTS_CACHE_DIR
 from .conversation import store as conv_store
 from .dataset import get_knowledge_base, item_to_dict, normalize_text
-from .search import search_items, search_items_lexical
+from .scenario_evidence import scenario_is_hard_match, scenario_match_score
+from .search import search_items
 from .volc_tts import (
     openai_tts_available,
     server_tts_available,
@@ -54,6 +56,7 @@ def create_app() -> Flask:
     def meta():
         kb = get_knowledge_base()
         return jsonify({
+            "app_version": __version__,
             "schema_version": kb.schema_version,
             "generated_at": kb.generated_at,
             "source": kb.source,
@@ -185,7 +188,6 @@ def create_app() -> Flask:
                         'warnings': event.warnings,
                         'total_count': event.total_count,
                         'decision': event.decision,
-                        'bilingual_fields': event.bilingual_fields,
                     }
                     yield f"data: {json.dumps(result_payload, ensure_ascii=False)}\n\n"
                 elif isinstance(event, dict) and event.get("type") == "speech":
@@ -302,41 +304,22 @@ def _stream_items(
     kb, query: str, category: str, province: str, level: str, district: str,
     keywords: str, limit: int, offset: int,
 ):
-    """SSE helper: push lexical results immediately, hybrid results when ready."""
+    """SSE helper: stream unified search results."""
 
     def generate():
         # Establish SSE connection to force first chunk flush
         yield ":ready\n\n"
 
-        # Phase 1 — lexical (instant)
-        lex_result, lex_total, structured = _search_items_for_api(
+        result, total, _structured = _search_items_for_api(
             kb, query=query, category=category,
             province=province, level=level, district=district, keywords=keywords,
-            limit=limit, offset=offset, use_hybrid=False,
+            limit=limit, offset=offset,
         )
         yield _sse_event({
-            "phase": "lexical",
-            "total": lex_total,
-            "items": [_item_payload(item) for item in lex_result],
+            "phase": "results",
+            "total": total,
+            "items": [_item_payload(item) for item in result],
         })
-
-        # Phase 2 — hybrid (with embedding, may be slower)
-        from . import config as cfg
-
-        if cfg.SEARCH_USE_EMBEDDING and query and not structured:
-            try:
-                hybrid_result, hybrid_total, _ = _search_items_for_api(
-                    kb, query=query, category=category,
-                    province=province, level=level, district=district, keywords=keywords,
-                    limit=limit, offset=offset,
-                )
-                yield _sse_event({
-                    "phase": "hybrid",
-                    "total": hybrid_total,
-                    "items": [_item_payload(item) for item in hybrid_result],
-                })
-            except Exception:
-                pass
 
     return Response(
         generate(),
@@ -358,7 +341,6 @@ def _search_items_for_api(
     keywords: str = "",
     limit: int = 30,
     offset: int = 0,
-    use_hybrid: bool = True,
 ):
     structured = _structured_search_parts(kb, query, province, level)
     scenario = structured["scenario"]
@@ -380,8 +362,7 @@ def _search_items_for_api(
         )
         return result, total, True
 
-    search_func = search_items if use_hybrid else search_items_lexical
-    result, total = search_func(
+    result, total = search_items(
         kb,
         query=query,
         category=category,
@@ -442,7 +423,7 @@ def _search_structured_items(
         candidates.append(item)
 
     if query:
-        result, _ = search_items_lexical(
+        result, _ = search_items(
             _FilteredKnowledgeBase(kb, candidates),
             query=query,
             limit=len(candidates) or limit,
@@ -524,6 +505,8 @@ def _query_level(query: str) -> str:
 
 
 def _query_scenario(query: str) -> str:
+    if "亲子" in query:
+        return "亲子互动"
     if "社区" in query:
         return "社区活动"
     if "校园" in query or "学校" in query or "学生" in query:
@@ -550,6 +533,7 @@ def _clean_structured_query(query: str, province: str, level: str, scenario: str
         "研学体验": ("研学体验", "研学", "课堂", "体验", "适合"),
         "文创设计": ("文创设计", "文创", "包装", "设计", "适合"),
         "展馆讲解": ("展馆讲解", "展馆", "讲解", "介绍", "适合"),
+        "亲子互动": ("亲子互动", "亲子", "互动", "体验", "适合"),
     }
     for term in scenario_terms.get(scenario, ()):
         cleaned = cleaned.replace(term, " ")
@@ -559,18 +543,12 @@ def _clean_structured_query(query: str, province: str, level: str, scenario: str
 
 
 def _item_matches_scenario(item, scenario: str) -> bool:
-    return (
-        scenario in item.suitable_scenarios
-        or any(scenario in form for form in item.display_forms)
-    )
+    return scenario_is_hard_match(item, scenario)
 
 
 def _structured_item_score(item, scenario: str) -> int:
     score = 0
-    if scenario in item.suitable_scenarios:
-        score += 8
-    if any(scenario in form for form in item.display_forms):
-        score += 5
+    score += scenario_match_score(item, scenario)
     if item.level == "人类":
         score += 4
     elif item.level == "国家级":

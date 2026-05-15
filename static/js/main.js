@@ -12,6 +12,7 @@ function init() {
     relatedCount: document.querySelector("#relatedCount"),
     relatedTitle: document.querySelector("#relatedTitle"),
     metaText: document.querySelector("#metaText"),
+    versionBadge: document.querySelector("#versionBadge"),
     questionInput: document.querySelector("#questionInput"),
     querySuggestions: document.querySelector("#querySuggestions"),
     askButton: document.querySelector("#askButton"),

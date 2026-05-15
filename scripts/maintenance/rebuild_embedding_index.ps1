@@ -10,12 +10,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $ProjectRoot
 
 $PythonCandidates = @(
     (Join-Path $ProjectRoot ".venv\Scripts\python.exe"),
-    "D:\Projects\panda_mudan\.venv\Scripts\python.exe",
     "python"
 )
 
@@ -32,7 +31,7 @@ foreach ($Candidate in $PythonCandidates) {
 }
 
 $Arguments = @(
-    ".\scripts\build_embeddings.py",
+    ".\scripts\maintenance\rebuild_embedding_index.py",
     "--batch-size", $BatchSize,
     "--workers", $Workers,
     "--request-timeout", $RequestTimeout,

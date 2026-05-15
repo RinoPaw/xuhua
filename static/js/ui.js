@@ -50,7 +50,15 @@ export async function loadMeta() {
   try {
     const data = await fetchJson("/api/meta");
     els.metaText.textContent = `${data.item_count} 项 · ${data.category_count} 类`;
+    if (els.versionBadge) {
+      const appVersion = data.app_version ? `v${data.app_version}` : "v?";
+      const schemaVersion = data.schema_version ? `s${data.schema_version}` : "";
+      els.versionBadge.textContent = [appVersion, schemaVersion].filter(Boolean).join(" · ");
+    }
   } catch {
     els.metaText.textContent = "资料库已就绪";
+    if (els.versionBadge) {
+      els.versionBadge.textContent = "v?";
+    }
   }
 }

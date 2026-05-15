@@ -18,7 +18,7 @@ _COMPARISON_TARGET_TRAILING_RE = re.compile(
 
 def handle_comparison(kb: KnowledgeBase, analysis) -> AgentResult:
     """Handle a multi-entity structured comparison without fabricating matches."""
-    from .search import search_items_lexical
+    from .search import search_items
 
     # Resolve target entities — try explicit entities first, fall back to splitting
     targets: list[str] = []
@@ -65,7 +65,7 @@ def handle_comparison(kb: KnowledgeBase, analysis) -> AgentResult:
         suggestion_query = _comparison_suggestion_query(targets)
         suggestions: list[Any] = []
         if suggestion_query and not _has_explicit_region_targets(targets):
-            suggestions, _ = search_items_lexical(kb, query=suggestion_query, limit=4)
+            suggestions, _ = search_items(kb, query=suggestion_query, limit=4)
         suggestion_cards = [_enriched_item_card(item) for item in suggestions]
         suggestion_sources = [_source_payload(item) for item in suggestions]
         missing = unmatched or targets
@@ -191,7 +191,7 @@ def handle_comparison(kb: KnowledgeBase, analysis) -> AgentResult:
         evidence.append({
             "type": "source",
             "claim": f"对比项：{entity_name}",
-            "basis": f"lexical_search query={entity_name!r}",
+            "basis": f"search query={entity_name!r}",
             "item_id": item.id,
         })
 
@@ -248,7 +248,7 @@ def _comparison_target_parts(target: str) -> tuple[str, str]:
 
 
 def _resolve_comparison_target(kb: KnowledgeBase, target: str, used_item_ids: set[str]):
-    from .search import search_items_lexical
+    from .search import search_items
 
     cleaned = _clean_comparison_target(target)
     province, core = _comparison_target_parts(cleaned)
@@ -262,7 +262,7 @@ def _resolve_comparison_target(kb: KnowledgeBase, target: str, used_item_ids: se
     for query in candidate_queries:
         if not query:
             continue
-        result, _ = search_items_lexical(kb, query=query, limit=8)
+        result, _ = search_items(kb, query=query, limit=8)
         for item in result:
             if item.id in used_item_ids or item.id in seen_ids:
                 continue

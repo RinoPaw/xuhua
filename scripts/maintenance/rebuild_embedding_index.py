@@ -1,4 +1,4 @@
-"""Build a local semantic search index through an OpenAI-compatible embedding API."""
+"""Rebuild the local semantic search index after the dataset changes."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import time
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
@@ -28,7 +28,12 @@ from heritage_explorer.embeddings import (  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        description=(
+            "Build or rebuild data/embeddings/heritage_embeddings.json. "
+            "Use --no-resume after data/processed/heritage_items.json changes."
+        )
+    )
     parser.add_argument("--output", type=Path, default=config.EMBEDDING_INDEX_PATH)
     parser.add_argument("--limit", type=int, default=0, help="Only index the first N items.")
     parser.add_argument("--batch-size", type=int, default=config.EMBEDDING_BATCH_SIZE)
@@ -52,7 +57,7 @@ def main() -> None:
     indexed = {}
 
     if args.output.exists() and not args.no_resume:
-        payload = load_existing_payload(args.output)
+        payload = load_existing_payload(args.output, kb)
         indexed = {
             str(row["id"]): row
             for row in payload.get("embeddings", [])
@@ -150,11 +155,21 @@ def initial_payload(kb) -> dict[str, Any]:
     }
 
 
-def load_existing_payload(path: Path) -> dict[str, Any]:
+def load_existing_payload(path: Path, kb) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
         payload = json.load(f)
     if payload.get("model") != config.EMBEDDING_MODEL:
         raise SystemExit("Existing embedding index uses another model. Use --no-resume.")
+    dataset = payload.get("dataset") or {}
+    if (
+        dataset.get("schema_version") != kb.schema_version
+        or dataset.get("generated_at") != kb.generated_at
+        or dataset.get("item_count") != len(kb.items)
+    ):
+        raise SystemExit(
+            "Existing embedding index was built for a different dataset. "
+            "Run again with --no-resume to rebuild every item."
+        )
     return payload
 
 

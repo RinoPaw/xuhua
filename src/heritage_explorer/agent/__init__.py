@@ -29,6 +29,7 @@ from ..dataset import (
     normalize_text,
 )
 from ..item_cards import _enriched_item_card, _source_payload, _title_with_family
+from ..scenario_evidence import scenario_is_hard_match, scenario_match_score
 from ..transform_config import (
     DEFAULT_TRANSFORM_TYPE,
     TRANSFORM_MAX_TOKENS,
@@ -155,7 +156,7 @@ class Agent:
         """Generator: yields progress dicts, then AgentResult.
 
         Each turn uses the same model decision loop: answer from available
-        context, or request another lexical search.  The server caps each
+        context, or request another search.  The server caps each
         turn at two consecutive searches.
         """
         query = query.strip()
@@ -191,7 +192,7 @@ class Agent:
         context = context or {}
         yield self._progress_event(
             "search", "检索资料",
-            "正在按原问题检索候选标题...",
+            "按原问题筛选候选标题。",
         )
         title_candidates, initial_total_count, initial_note = self._search_initial_candidates(
             query,
@@ -207,12 +208,14 @@ class Agent:
         warnings: list[str] = []
 
         while True:
-            detail = (
-                "正在读取上下文和候选资料，判断这轮是否需要补充检索。"
-                if search_rounds_used <= 1
-                else "搜索预算已用完，正在基于已有资料生成回答。"
-            )
-            yield self._progress_event("classify", "理解问题", detail)
+            if search_rounds_used >= MAX_SEARCH_ROUNDS_PER_TURN:
+                yield self._progress_event("generate", "思考回答", "资料已齐，正在生成回答。")
+            else:
+                yield self._progress_event(
+                    "classify",
+                    "理解问题",
+                    "结合上下文和候选标题，判断是否需要精查。",
+                )
 
             try:
                 payload = self._call_subsequent_turn_model(
@@ -239,11 +242,11 @@ class Agent:
                 return
 
             action = self._payload_action(payload)
-            answer = normalize_text(payload.get("answer") or "")
+            answer = _normalize_answer_text(payload.get("answer") or "")
             search_queries = self._payload_str_list(payload.get("search_queries"))
 
             if action == "answer" and answer:
-                yield self._progress_event("generate", "思考回答", "已根据上下文和资料生成回答。")
+                yield self._progress_event("generate", "思考回答", "资料已齐，正在生成回答。")
                 result, decision = self._subsequent_answer_result(
                     payload=payload,
                     answer=answer,
@@ -290,7 +293,7 @@ class Agent:
             yield self._progress_event(
                 "search",
                 "检索资料",
-                f"第 {search_rounds_used}/{MAX_SEARCH_ROUNDS_PER_TURN} 轮检索："
+                "精查资料："
                 f"{'、'.join(search_queries[:4])}",
             )
             new_items, total = self._search_subsequent_items(search_queries, category)
@@ -368,10 +371,38 @@ class Agent:
             "本轮最多允许 2 次连续搜索，服务器已经执行过的标题候选检索也会计入 search_rounds_used。"
             "search_rounds_remaining 为 0 时，必须输出 action=\"answer\"；如果仍不确定，要说明不确定点，不能继续请求搜索。\n"
             "display_items 由你决定：只选择答案真正围绕、用户需要看到的项目；单项目问题通常只选 1 个；推荐、列表、对比才选择多个，最多 8 个；不需要展示卡片时输出空列表。\n"
+            "answer 字符串就是前端直接渲染的 Markdown 成稿，后端不会替你修复格式。"
+            "你必须在 JSON 字符串中保留换行符，不要把 Markdown 压成一行。"
+            "除寒暄外，回答必须多段排版：标题/小标题独占一行，标题前后空一行，列表逐项换行。"
+            "编号列表只能用 `1. `、`2. `、`3. `；项目符号只能用 `- `；禁止把多个编号或多个 `-` 写在同一行。"
+            "资料型、策划型、研学型、内容转化型回答要给到可直接使用的完整内容，通常 500-1200 中文字；只有事实短问才可以控制在 250-500 字。\n"
+            "study_task 必须使用以下骨架，不能省略换行：\n"
+            "## 研学任务：标题\n\n"
+            "**适用对象：**对象\n\n"
+            "**课时安排：**时长\n\n"
+            "### 任务目标\n\n"
+            "1. 目标一\n"
+            "2. 目标二\n"
+            "3. 目标三\n\n"
+            "### 活动步骤\n\n"
+            "1. 步骤一\n"
+            "- 具体活动\n"
+            "- 观察或讨论问题\n\n"
+            "2. 步骤二\n"
+            "- 具体活动\n\n"
+            "### 注意事项\n\n"
+            "- 安全或组织提醒\n"
+            "- 资料依据边界\n\n"
+            "当 task_type=\"recommendation\" 或用户要求推荐项目时，answer 必须使用 Markdown 表格；"
+            "推荐表至少包含“项目、地区、可互动/展示形式、推荐理由、注意事项”列。"
+            "每个推荐项目必须能从资料中的展示形式、适合场景或正文找到支撑；"
+            "粗标签“研学体验”只能说明有学习体验潜力，不等同于适合亲子互动。"
+            "如果用户明确说“亲子”，优先选择低门槛、可动手、可观看、可带走成果或适合儿童共同参与的项目；"
+            "不要仅因“研学体验”就推荐烧制、茶制作、武术训练、医药等项目。"
+            "除非资料明确提供相应活动，不要编写“可上釉、可烧制、可采茶、可练功”等互动环节。\n"
             "当 task_type=\"comparison\" 或用户要求比较多个项目时，answer 必须使用 Markdown 表格；"
             "至少包含“项目、地区/流派、制作/表演特点、题材/剧目或用途、适合展示的差异点”等列。"
-            "表格必须是真正的多行 Markdown：表头、分隔行、每个项目的数据行都必须单独换行；"
-            "在 JSON 的 answer 字符串中用换行符保留这些行。"
+            "表格必须是真正的多行 Markdown：表头、分隔行、每个项目的数据行都必须单独换行；在 JSON 的 answer 字符串中用换行符保留这些行。"
             "禁止输出单行表格，例如“| 项目 | ... | | --- | ... | | A | ... |”。"
             "正确格式示例：\n"
             "| 项目 | 地区/流派 | 特点 |\n"
@@ -379,11 +410,15 @@ class Agent:
             "| A | 地区 | 特点 |\n"
             "| B | 地区 | 特点 |\n"
             "表格后可加一小段结论，但不要把多个项目压成同一段编号文字。\n"
-            "当用户要求“中英双语、双语介绍、英文介绍+中文介绍”等内容转化时，"
-            "不要把中文和英文混在同一个段落里。必须额外输出 bilingual_fields 数组，"
-            "每一项包含 label_cn、label_en、value_cn、value_en，让前端按左中文、右英文展示。"
-            "answer 只写一句很短的中文导语或留空，不要放整段双语正文。"
-            "推荐字段为：名称/Name、类别/Category、简介/Summary、主要特色/Key Features。\n"
+            "当用户要求中英双语、双语介绍等内容转化时，仍然只输出外层 JSON，"
+            "但 answer 字符串里必须填写多行 Markdown 横读双语表格。"
+            "answer 格式：一段中文导语，然后空一行，然后表格；表格第一行是中文完整介绍，第二行是英文完整介绍：\n"
+            "| 语言 | 名称 | 类别 | 简介 | 主要特色 |\n"
+            "| --- | --- | --- | --- | --- |\n"
+            "| 中文 | 规范中文名 | 规范中文类别 | 中文简介 | 中文特色 |\n"
+            "| English | English name | English category | English summary | English key features |\n"
+            "表格后不加结论文字。不要做成“中文列 / English列”的上下阅读表；不要把表格行拆散，也不要把所有行挤在同一行。\n"
+            "输出前自检：如果 answer 中包含 `| --- |`，它前后必须有真实换行；如果包含 `1.` 和 `2.`，它们不能在同一行。\n"
             "不要编造资料库没有提供的事实；不要在没有资料支撑时凭常识列项目。"
             "如果没有可用资料且搜索预算已用尽，请明确说明资料不足，而不是给无依据推荐。"
             "只输出 JSON，不要输出 Markdown 或解释文字。\n"
@@ -394,8 +429,7 @@ class Agent:
             "\"confidence\":0.0,\"reason\":\"一句内部理由\","
             "\"search_queries\":[\"关键词\"]或null,"
             "\"answer\":\"回答文本\"或null,"
-            "\"display_items\":[\"item_id\"],"
-            "\"bilingual_fields\":[{\"label_cn\":\"名称\",\"label_en\":\"Name\",\"value_cn\":\"中文\",\"value_en\":\"English\"}]或null}"
+            "\"display_items\":[\"item_id\"]}"
         )
         user_prompt = (
             f"搜索状态：已连续搜索 {search_rounds_used} 轮，剩余 {remaining} 轮。\n\n"
@@ -607,9 +641,11 @@ class Agent:
         ]
         structured_items = self._structured_initial_candidates(query, limit=INITIAL_TITLE_CANDIDATE_LIMIT)
         ranked = rank_lexical(candidates, lowered_query, tokenize(search_query))
+        scenario = self._query_scenario(query)
         lexical_items = [
             item for score, item in ranked
             if score >= LEXICAL_MIN_SCORE
+            and (not scenario or scenario_is_hard_match(item, scenario))
         ][:INITIAL_TITLE_CANDIDATE_LIMIT]
 
         title_candidates = self._merge_items(
@@ -690,12 +726,13 @@ class Agent:
             if province and item.province != province:
                 continue
             score = 0
+            if scenario:
+                scenario_score = scenario_match_score(item, scenario)
+                if scenario_score < 4:
+                    continue
+                score += scenario_score
             if province:
                 score += 8
-            if scenario and scenario in item.suitable_scenarios:
-                score += 8
-            if scenario and any(scenario in form for form in item.display_forms):
-                score += 5
             if "展示" in query and any("展示" in form or "讲解" in form for form in item.display_forms):
                 score += 4
             if "活动" in query and any("活动" in form or "表演" in form for form in item.display_forms):
@@ -759,11 +796,13 @@ class Agent:
         return ""
 
     def _query_scenario(self, query: str) -> str:
+        if "亲子" in query:
+            return "亲子互动"
         if "社区" in query:
             return "社区活动"
         if "校园" in query or "学校" in query or "学生" in query:
             return "校园展示"
-        if "研学" in query or "课堂" in query or "亲子" in query or "互动" in query or "体验" in query:
+        if "研学" in query or "课堂" in query:
             return "研学体验"
         if "文创" in query or "包装" in query or "设计" in query:
             return "文创设计"
@@ -772,7 +811,7 @@ class Agent:
         return ""
 
     def _search_subsequent_items(self, queries: list[str], category: str) -> tuple[list[Any], int]:
-        from ..search import search_items_lexical
+        from ..search import search_items
 
         items: list[Any] = []
         seen: set[str] = set()
@@ -783,7 +822,7 @@ class Agent:
                 result = exact_items
                 result_total = len(exact_items)
             else:
-                result, result_total = search_items_lexical(
+                result, result_total = search_items(
                     self.kb,
                     query=search_query,
                     category=category,
@@ -843,7 +882,6 @@ class Agent:
         task_type = task_type_from_str(str(payload.get("task_type") or TaskType.FACT_QA.value))
         confidence = clamp_float(payload.get("confidence"), default=0.78)
         reason = normalize_text(payload.get("reason") or "模型根据最近五轮上下文完成回答。")
-        answer = _normalize_comparison_answer(answer, task_type)
         display_pool = self._merge_items(self._context_items(context), collected_items)
         raw_display_items = payload.get("display_items")
         if isinstance(raw_display_items, list):
@@ -882,30 +920,8 @@ class Agent:
             confidence=confidence,
             warnings=list(warnings),
             total_count=len(display_items),
-            bilingual_fields=self._payload_bilingual_fields(payload.get("bilingual_fields")),
         )
         return result, decision
-
-    def _payload_bilingual_fields(self, value: Any) -> list[dict[str, str]] | None:
-        if not isinstance(value, list):
-            return None
-        fields: list[dict[str, str]] = []
-        for item in value:
-            if not isinstance(item, dict):
-                continue
-            label_cn = normalize_text(item.get("label_cn") or "")
-            label_en = normalize_text(item.get("label_en") or "")
-            value_cn = normalize_text(item.get("value_cn") or "")
-            value_en = normalize_text(item.get("value_en") or "")
-            if not (label_cn and label_en and (value_cn or value_en)):
-                continue
-            fields.append({
-                "label_cn": label_cn,
-                "label_en": label_en,
-                "value_cn": value_cn,
-                "value_en": value_en,
-            })
-        return fields or None
 
     def _select_display_items(
         self,
@@ -1002,7 +1018,7 @@ class Agent:
         }
 
     def _stream_direct_answer(self, decision: AgentDecision, include_speech: bool):
-        yield self._progress_event("search", "检索资料", "智能体决策为直接回应，已跳过资料库检索。")
+        yield self._progress_event("search", "检索资料", "当前问题可直接回应，已跳过资料库检索。")
         yield self._progress_event("generate", "思考回答", TASK_CONFIGS[TaskType.CHITCHAT].generate_detail)
         result = AgentResult(
             task_type=decision.task_type,
@@ -1059,7 +1075,9 @@ class Agent:
         yield with_agent_decision(replace(result, speech=""), decision, include_speech)
         if result.answer:
             result = self._ensure_speech(result, query=query)
-            yield {"type": "speech", "text": result.speech}
+            # Strip markdown table artifacts from speech (pipes, bold markers)
+            speech_text = _clean_speech_text(result.speech)
+            yield {"type": "speech", "text": speech_text}
 
     def _ensure_speech(self, result: AgentResult, query: str = "") -> AgentResult:
         if result.speech:
@@ -1097,13 +1115,13 @@ class Agent:
 
     def _handle_study_task(self, analysis) -> AgentResult:
         """STUDY_TASK: curriculum/teaching plan generation, no LLM."""
-        from ..search import search_items_lexical
+        from ..search import search_items
 
         target_item = None
         # Try to resolve a specific target entity
         if analysis.entities:
             entity = analysis.entities[0]
-            result, _ = search_items_lexical(self.kb, query=entity, limit=1)
+            result, _ = search_items(self.kb, query=entity, limit=1)
             if result:
                 target_item = result[0]
 
@@ -1195,14 +1213,14 @@ class Agent:
 
     def _handle_content_transform(self, analysis) -> AgentResult:
         """CONTENT_TRANSFORM: translate / rewrite / creative brief."""
-        from ..search import search_items_lexical
+        from ..search import search_items
         from ..ai import Answer, answer_question
 
         # Resolve target entity
         target_item = None
         if analysis.entities:
             entity = analysis.entities[0]
-            result, _ = search_items_lexical(self.kb, query=entity, limit=1)
+            result, _ = search_items(self.kb, query=entity, limit=1)
             if result:
                 target_item = result[0]
 
@@ -1263,12 +1281,6 @@ class Agent:
         context = "\n".join(context_lines)
 
         if config.AI_API_KEY:
-            if transform_type == "翻译":
-                return self._handle_bilingual_transform(
-                    context=context,
-                    query=analysis.original_query,
-                    target_item=target_item,
-                )
             try:
                 answer_text = _call_transform_model(
                     transform_type=transform_type,
@@ -1307,75 +1319,16 @@ class Agent:
             warnings=["模型接口不可用，已切回本地模板。如需更丰富的内容，请配置 API Key。"],
         )
 
-    def _handle_bilingual_transform(self, context: str, query: str, target_item) -> AgentResult:
-        """Handle bilingual (翻译) transform using LLM JSON output."""
-        try:
-            raw = _call_transform_model(
-                transform_type="翻译",
-                context=context,
-                query=query,
-            )
-        except Exception:
-            return AgentResult(
-                task_type=TaskType.CONTENT_TRANSFORM,
-                answer="双语翻译请求失败，请稍后重试。",
-                items=[_enriched_item_card(target_item)],
-                sources=[_source_payload(target_item)],
-                mode="llm",
-                confidence=0.0,
-                warnings=["LLM 调用失败"],
-            )
-
-        parsed = _parse_bilingual_json(raw)
-        if parsed is None:
-            return AgentResult(
-                task_type=TaskType.CONTENT_TRANSFORM,
-                answer=raw,
-                items=[_enriched_item_card(target_item)],
-                sources=[_source_payload(target_item)],
-                mode="llm",
-                confidence=0.5,
-                warnings=["双语解析失败，已显示原始模型输出。格式为 JSON 时效果最佳。"],
-            )
-
-        field_order = [
-            ("名称", "Name"),
-            ("类别", "Category"),
-            ("简介", "Summary"),
-            ("主要特色", "Key Features"),
-        ]
-        bilingual_fields = [
-            {
-                "label_cn": label_cn,
-                "label_en": label_en,
-                "value_cn": parsed["fields"].get(label_cn, {}).get("zh", ""),
-                "value_en": parsed["fields"].get(label_cn, {}).get("en", ""),
-            }
-            for label_cn, label_en in field_order
-        ]
-        speech = str(parsed.get("speech_en") or "").strip()
-
-        return AgentResult(
-            task_type=TaskType.CONTENT_TRANSFORM,
-            answer=parsed.get("answer", ""),
-            speech=speech,
-            bilingual_fields=bilingual_fields,
-            items=[_enriched_item_card(target_item)],
-            sources=[_source_payload(target_item)],
-            mode="llm",
-            confidence=0.8,
-        )
-
     def _handle_browse(self, analysis) -> AgentResult:
         """BROWSE_QUERY: structured filters + local listing, no LLM."""
-        from ..search import search_items_lexical
+        from ..search import search_items
 
         province = analysis.metadata_filters.get("province", "")
         level = analysis.metadata_filters.get("level", "")
         category = analysis.metadata_filters.get("category", "")
 
         limit = analysis.retrieval_count
-        result, total = search_items_lexical(
+        result, total = search_items(
             self.kb,
             query=analysis.rewritten_query,
             category=category,
@@ -1424,7 +1377,7 @@ class Agent:
 
     def _handle_recommend(self, analysis) -> AgentResult:
         """RECOMMENDATION: LLM selects best items from candidate pool."""
-        from ..search import search_items_lexical
+        from ..search import search_items
         from ..http_client import chat_completion
 
         scenario = analysis.scenario
@@ -1433,7 +1386,7 @@ class Agent:
 
         # Step 1: Search candidates using planner's queries
         query = analysis.rewritten_query or " ".join(analysis.entities)
-        candidates, _ = search_items_lexical(self.kb, query=query, limit=30)
+        candidates, _ = search_items(self.kb, query=query, limit=30)
 
         # Deduplicate
         seen_ids: set[str] = set()
@@ -1819,63 +1772,26 @@ def _select_exhibition_core_item(
         return 0, f"先筛出 {len(candidate_items)} 个候选，再按当前排序取第 1 个核心项目。"
 
 
-def _parse_bilingual_json(raw_text: str) -> dict | None:
-    """Extract bilingual fields JSON from LLM output.
-
-    Handles markdown code fences and extra text around the JSON block.
-    Returns None if parsing fails or required keys are missing.
-    """
-    import json as _json
-
-    text = (raw_text or "").strip()
-    if not text:
-        return None
-
-    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
-    if fence:
-        text = fence.group(1).strip()
-    else:
-        obj_start = text.find("{")
-        obj_end = text.rfind("}")
-        if obj_start == -1 or obj_end == -1 or obj_start >= obj_end:
-            return None
-        text = text[obj_start:obj_end + 1]
-
-    try:
-        data = _json.loads(text)
-    except Exception:
-        return None
-
-    if not isinstance(data, dict):
-        return None
-
-    required_fields = ("名称", "类别", "简介", "主要特色")
-    fields = data.get("fields")
-    if not isinstance(fields, dict):
-        return None
-    if not all(key in fields for key in required_fields):
-        return None
-    normalized_fields: dict[str, dict[str, str]] = {}
-    for key in required_fields:
-        normalized = _coerce_bilingual_field(fields.get(key))
-        if normalized is None:
-            return None
-        normalized_fields[key] = normalized
-
-    data["fields"] = normalized_fields
-    if "speech_en" in data and not isinstance(data.get("speech_en"), str):
-        return None
-    return data
+def _normalize_answer_text(value: Any) -> str:
+    """Clean an answer while preserving intentional Markdown line breaks."""
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n").replace("\u00a0", " ")
+    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n")]
+    cleaned = "\n".join(lines).strip()
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned
 
 
-def _coerce_bilingual_field(value: Any) -> dict[str, str] | None:
-    if isinstance(value, dict):
-        zh = str(value.get("zh") or "").strip()
-        en = str(value.get("en") or "").strip()
-        if zh and en:
-            return {"zh": zh, "en": en}
-        return None
-    return None
+def _clean_speech_text(text: str) -> str:
+    """Strip markdown table syntax and artifacts from speech output."""
+    import re
+    text = re.sub(r'\|[-:\s|]+\|', '', text)  # separator row
+    text = re.sub(r'\|\s*', '，', text)        # pipe → comma
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)  # bold
+    text = re.sub(r'\*([^*]+)\*', r'\1', text)      # italic
+    text = re.sub(r'_{2,}', '', text)
+    text = re.sub(r'[，,]{2,}', '，', text)
+    text = re.sub(r'\s{2,}', ' ', text)
+    return text.strip(' ，。')
 
 
 def _build_transform_local(transform_type: str, target_item, meta) -> str:
@@ -1933,6 +1849,7 @@ def _items_to_llm_context(items, total: int) -> str:
     for i, item in enumerate(items[:30], 1):
         loc = " · ".join(p for p in [item.province, item.city] if p)
         forms = "、".join(item.display_forms) if item.display_forms else ""
+        scenarios = "、".join(item.suitable_scenarios) if item.suitable_scenarios else ""
         lines.append(
             f"{i}. [{item.id}] {_title_with_family(item)}\n"
             f"   类别：{item.category} | 级别：{item.level} | 地区：{loc}\n"
@@ -1940,6 +1857,8 @@ def _items_to_llm_context(items, total: int) -> str:
         )
         if forms:
             lines.append(f"   展示形式：{forms}")
+        if scenarios:
+            lines.append(f"   适合场景：{scenarios}")
         # Include content snippet
         content_snippet = item.content[:300].replace("\n", " ")
         if content_snippet:
@@ -1980,94 +1899,3 @@ def _context_title_keywords(items: list[Any]) -> list[str]:
             break
     return keywords[:6]
 
-
-def _normalize_comparison_answer(answer: str, task_type: TaskType) -> str:
-    if task_type is not TaskType.COMPARISON:
-        return answer
-    answer = _repair_single_line_markdown_table(answer)
-    if "|" in answer and re.search(r"\|\s*-{2,}", answer):
-        return answer
-
-    row_matches = list(re.finditer(
-        r"(?:^|\s)(\d+)[.、]\s*([^：:。；;\n]+)[：:]\s*(.*?)(?=(?:\s+\d+[.、]\s*[^：:。；;\n]+[：:])|$)",
-        answer,
-        flags=re.S,
-    ))
-    if len(row_matches) < 2:
-        return answer
-
-    table = [
-        "| 项目 | 比较要点 |",
-        "| --- | --- |",
-    ]
-    for match in row_matches:
-        _index, title, detail = match.groups()
-        clean_title = normalize_text(title).strip(" ：:")
-        clean_detail = normalize_text(detail).strip(" 。；;")
-        table.append(f"| {clean_title} | {clean_detail} |")
-
-    prefix = answer[:row_matches[0].start()].strip()
-    if prefix:
-        return f"{prefix}\n\n" + "\n".join(table)
-    return "\n".join(table)
-
-
-def _repair_single_line_markdown_table(answer: str) -> str:
-    if "|" not in answer or "\n|" in answer:
-        return answer
-
-    table_start = answer.find("|")
-    prefix = answer[:table_start].strip()
-    table_text = answer[table_start:].strip()
-    tokens = [part.strip() for part in table_text.split("|")]
-
-    rows: list[list[str]] = []
-    current: list[str] = []
-    for token in tokens:
-        if not token:
-            if current:
-                rows.append(current)
-                current = []
-            continue
-        current.append(token)
-    if current:
-        rows.append(current)
-
-    if len(rows) < 3:
-        return answer
-    separator_index = next(
-        (
-            index for index, row in enumerate(rows[:3])
-            if row and all(re.fullmatch(r":?-{2,}:?", cell) for cell in row)
-        ),
-        -1,
-    )
-    if separator_index <= 0:
-        return answer
-
-    header = rows[separator_index - 1]
-    separator = rows[separator_index]
-    body = rows[separator_index + 1:]
-    column_count = len(header)
-    if column_count < 2 or len(separator) != column_count:
-        return answer
-
-    def normalize_row(row: list[str]) -> list[str]:
-        cells = row[:column_count]
-        if len(cells) < column_count:
-            cells.extend("" for _ in range(column_count - len(cells)))
-        return cells
-
-    repaired = [
-        "| " + " | ".join(header) + " |",
-        "| " + " | ".join("---" for _ in header) + " |",
-    ]
-    for row in body:
-        if len(row) < 2:
-            continue
-        repaired.append("| " + " | ".join(normalize_row(row)) + " |")
-
-    if len(repaired) <= 2:
-        return answer
-    table = "\n".join(repaired)
-    return f"{prefix}\n\n{table}" if prefix else table

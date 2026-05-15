@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>叙华</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20260514-detail') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css', v='20260515-version') }}" />
   </head>
   <body>
     <div class="scroll-surface">
@@ -44,6 +44,7 @@
         <header class="leaf-head">
           <span class="leaf-kicker">问</span>
           <span class="leaf-title">向叙华提问</span>
+          <span id="versionBadge" class="version-badge">v0.1.0</span>
           <span id="answerMode" class="leaf-badge" hidden></span>
         </header>
         <div class="leaf-body">
@@ -109,6 +110,6 @@
 
     <script src="{{ url_for('static', filename='vendor/purify.min.js', v='3.4.2') }}"></script>
     <script src="{{ url_for('static', filename='vendor/marked.umd.js', v='18.0.3') }}"></script>
-    <script type="module" src="{{ url_for('static', filename='js/main.js', v='20260514-detail') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='js/main.js', v='20260515-progress') }}"></script>
   </body>
 </html>

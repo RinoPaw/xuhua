@@ -5,6 +5,7 @@ import { stripMarkdown } from './markdown.js';
 
 let currentUtterance = null;
 let currentSpeechAudio = null;
+let currentWarmupAudio = null;
 let currentSpeechSegments = [];
 export let lastSpeechText = "";
 export let lastSpeechAudioUrl = "";
@@ -20,6 +21,8 @@ export let lastSpeechHumanState = "speaking";
 let pendingSpeechRewrite = false;
 let visibilityInterruptedPlayback = false;
 let visibilityInterruptedMode = "";
+const THINKING_VOICE_URL = "/static/media/thinking.mp3?v=20260515-thinking";
+const REWRITE_VOICE_URL = "/static/media/rewrite.mp3?v=20260515-rewrite";
 
 function syncVoiceStatusVisuals(value = "") {
   if (!els.voiceToggle) {
@@ -85,10 +88,16 @@ export function clearSpeechCache() {
 
 export function markSpeechRewritePending(pending = true) {
   pendingSpeechRewrite = pending;
+  if (!pending) {
+    stopWarmupAudio();
+  }
   if (!voiceEnabled || voiceState === "speaking") {
     return;
   }
   setVoiceStatus(pending ? "正在润色播报" : "");
+  if (pending) {
+    playWarmupAudio(REWRITE_VOICE_URL, 0.75);
+  }
 }
 
 export function pauseSpeechForVisibility() {
@@ -226,6 +235,7 @@ export function stopSpeech(options = {}) {
     speechPlaybackSeq += 1;
   }
   clearSpeechStartGuard();
+  stopWarmupAudio();
   if (currentSpeechAudio) {
     currentSpeechAudio.pause();
     currentSpeechAudio.currentTime = 0;
@@ -252,21 +262,81 @@ export function stopSpeech(options = {}) {
 }
 
 export function unlockSpeech(withThinkingVoice = false) {
-  if (!browserSpeechSupported || speechUnlocked) {
+  if (speechUnlocked) {
     return;
   }
   speechUnlocked = true;
+  if (withThinkingVoice) {
+    playWarmupAudio(THINKING_VOICE_URL, 0.75);
+    warmBrowserSpeech("语音播报已准备", 0.01);
+    return;
+  }
+  if (!warmBrowserSpeech("语音播报已准备", 0.01)) {
+    speechUnlocked = false;
+  }
+}
+
+function playWarmupAudio(url, volume = 0.75) {
+  if (!audioSpeechSupported || !url) {
+    return false;
+  }
+  stopWarmupAudio();
   try {
-    const text = withThinkingVoice ? "正在检索" : "语音播报已准备";
+    const audio = new Audio(url);
+    currentWarmupAudio = audio;
+    audio.preload = "auto";
+    audio.volume = volume;
+    audio.onended = () => {
+      if (currentWarmupAudio === audio) {
+        currentWarmupAudio = null;
+      }
+    };
+    audio.onerror = () => {
+      if (currentWarmupAudio === audio) {
+        currentWarmupAudio = null;
+      }
+    };
+    const playPromise = audio.play();
+    if (playPromise?.catch) {
+      playPromise.catch(() => {
+        if (currentWarmupAudio === audio) {
+          currentWarmupAudio = null;
+        }
+      });
+    }
+    return true;
+  } catch {
+    currentWarmupAudio = null;
+    return false;
+  }
+}
+
+function stopWarmupAudio() {
+  if (!currentWarmupAudio) {
+    return;
+  }
+  currentWarmupAudio.pause();
+  currentWarmupAudio.currentTime = 0;
+  currentWarmupAudio.removeAttribute("src");
+  currentWarmupAudio.load();
+  currentWarmupAudio = null;
+}
+
+function warmBrowserSpeech(text, volume = 0.01) {
+  if (!browserSpeechSupported) {
+    return false;
+  }
+  try {
     const warmup = new SpeechSynthesisUtterance(text);
     warmup.lang = "zh-CN";
     warmup.rate = 1;
     warmup.pitch = 1;
-    warmup.volume = withThinkingVoice ? 0.75 : 0.01;
+    warmup.volume = volume;
     window.speechSynthesis.resume();
     window.speechSynthesis.speak(warmup);
+    return true;
   } catch {
-    speechUnlocked = false;
+    return false;
   }
 }
 

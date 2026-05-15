@@ -1,11 +1,13 @@
 {%- if transform_type == "翻译" %}
-## English Translation: {{ title }}
+以下是 {{ title }} 的基础双语展示稿。本地模板只做简版整理；配置 API Key 后可生成更完整的传播文案。
 
-**Category:** {{ category }}
+| 中文 | English |
+| --- | --- |
+| **名称：**{{ title }}。 | **Name:** {{ title }}. |
+| **项目定位：**{{ title }} 属于{{ category }}{% if level %}，为{{ level }}项目{% endif %}。 | **Positioning:** {{ title }} is a form of {{ category }}{% if level %} and is listed as {{ level }}{% endif %}. |
+| **简介：**{{ summary }} | **Introduction:** Configure an LLM API key to generate a polished English introduction. |
+| **主要特色：**{{ features[:220] }}{% if features|length > 220 %}......{% endif %} | **Key Features:** Configure an LLM API key to generate a matching English feature paragraph. |
 
-{{ summary }}
-
-*This is a local template. Configure an LLM API key for a full translation.*
 {%- elif transform_type in ("年轻化", "朋友圈") %}
 ## {{ title }} . 轻松版介绍
 

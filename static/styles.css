@@ -21,8 +21,8 @@
   --gold: #b8a07a;
   --gold-dim: #8c7656;
   --mist: #e8e3da;
-  --scroll-rod: #3a2f28;
-  --scroll-rod-light: #5c4b40;
+  --scroll-rod: #7a6045;
+  --scroll-rod-light: #a88a62;
   --radius: 4px;
   --radius-soft: 2px;
 
@@ -52,7 +52,7 @@ html, body {
 }
 
 html {
-  background: #0d0a08;
+  background: #d9cfb8;
 }
 
 body {
@@ -63,8 +63,9 @@ body {
     "Noto Serif SC", "Source Han Serif SC", "STSong", "SimSun",
     "Songti SC", "KaiTi", "STKaiti", serif;
   background:
-    /* 墨韵底色 */
-    radial-gradient(ellipse 80% 60% at 30% 45%, #1f1a16 0%, #0d0b09 60%, #080605 100%);
+    radial-gradient(ellipse 72% 58% at 18% 42%, rgba(188, 154, 104, 0.28) 0%, transparent 62%),
+    radial-gradient(ellipse 80% 70% at 84% 54%, rgba(107, 144, 128, 0.12) 0%, transparent 60%),
+    linear-gradient(90deg, #c9baa0 0%, #e2d8c4 22%, #f1eadc 50%, #e0d4bf 78%, #c7b79c 100%);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
 }
@@ -99,7 +100,7 @@ body::before {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: minmax(300px, 26vw) minmax(460px, 1fr) minmax(320px, 24vw);
+  grid-template-columns: minmax(285px, 24.7vw) minmax(460px, 1fr) minmax(320px, 24vw);
   gap: 8px;
   width: 100%;
   max-width: 100vw;
@@ -122,28 +123,27 @@ body::before {
 }
 
 .scroll-rod {
-  width: calc(100% + 24px);
-  height: 8px;
+  width: calc(100% + 10px);
+  height: 5px;
   flex: 0 0 auto;
-  border-radius: 4px;
+  border-radius: 999px;
   background: linear-gradient(
     180deg,
-    var(--scroll-rod-light) 0%,
-    var(--scroll-rod) 30%,
-    #221d19 50%,
-    var(--scroll-rod) 70%,
-    var(--scroll-rod-light) 100%
+    rgba(255, 243, 216, 0.5) 0%,
+    var(--scroll-rod-light) 24%,
+    var(--scroll-rod) 56%,
+    #4f3c2c 100%
   );
   box-shadow:
-    0 1px 0 rgba(255, 250, 240, 0.06),
-    0 2px 6px rgba(0, 0, 0, 0.5);
+    0 1px 0 rgba(255, 250, 240, 0.22),
+    0 2px 4px rgba(58, 42, 26, 0.24);
 }
 
 .scroll-rod.bottom-rod {
   margin-top: 0;
   box-shadow:
-    0 -1px 0 rgba(255, 250, 240, 0.05),
-    0 -2px 6px rgba(0, 0, 0, 0.5);
+    0 -1px 0 rgba(255, 250, 240, 0.16),
+    0 -2px 4px rgba(58, 42, 26, 0.2);
 }
 
 .scroll-body {
@@ -478,7 +478,15 @@ textarea:focus {
   font-family: "Noto Serif SC", "STSong", serif;
 }
 
-.query-suggestions,
+.query-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-content: flex-start;
+  max-height: 76px;
+  overflow: hidden;
+}
+
 .result-followups {
   display: flex;
   flex-wrap: wrap;
@@ -488,6 +496,8 @@ textarea:focus {
 .query-chip {
   display: inline-flex;
   align-items: center;
+  max-width: 100%;
+  min-width: 0;
   min-height: 34px;
   padding: 6px 12px;
   border: 1px solid rgba(107, 144, 128, 0.26);
@@ -499,6 +509,9 @@ textarea:focus {
   letter-spacing: 0.5px;
   font-family: "Noto Serif SC", "STSong", serif;
   cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: background 0.25s ease, border-color 0.25s ease, transform 0.25s ease, color 0.25s ease;
 }
 
@@ -1873,6 +1886,10 @@ mark.search-highlight {
   .query-suggestions,
   .result-followups {
     gap: 6px;
+  }
+
+  .query-suggestions {
+    max-height: 66px;
   }
 
   .query-chip {

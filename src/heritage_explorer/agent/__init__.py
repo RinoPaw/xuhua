@@ -374,8 +374,8 @@ class Agent:
             "answer 字符串就是前端直接渲染的 Markdown 成稿，后端不会替你修复格式。"
             "你必须在 JSON 字符串中保留换行符，不要把 Markdown 压成一行。"
             "除寒暄外，回答必须多段排版：标题/小标题独占一行，标题前后空一行，列表逐项换行。"
-            "编号列表只能用 `1. `、`2. `、`3. `；项目符号只能用 `- `；禁止把多个编号或多个 `-` 写在同一行。"
-            "资料型、策划型、研学型、内容转化型回答要给到可直接使用的完整内容，通常 500-1200 中文字；只有事实短问才可以控制在 250-500 字。\n"
+            "编号列表使用 `1. `、`2. `、`3. `，每个编号独占一行；项目符号使用 `- `，每个项目符号独占一行。"
+            "资料型、策划型、研学型、内容转化型回答要给到可直接使用的完整内容，通常 600-1400 中文字；只有事实短问才可以控制在 250-500 字。\n"
             "study_task 必须使用以下骨架，不能省略换行：\n"
             "## 研学任务：标题\n\n"
             "**适用对象：**对象\n\n"
@@ -393,34 +393,40 @@ class Agent:
             "### 注意事项\n\n"
             "- 安全或组织提醒\n"
             "- 资料依据边界\n\n"
-            "当 task_type=\"recommendation\" 或用户要求推荐项目时，answer 必须使用 Markdown 表格；"
-            "推荐表至少包含“项目、地区、可互动/展示形式、推荐理由、注意事项”列。"
+            "当 task_type=\"recommendation\" 或用户要求推荐项目、适合某场景的项目时，answer 使用自然分段推荐格式。"
+            "开头用 2-3 句说明筛选标准，然后每个项目使用一个 `### 编号. 项目名` 小标题。"
+            "每个项目下面写 1 个 80-160 字的完整段落，内容包含：为什么适合该场景、可怎样观看/互动/展示、需要注意的边界。"
+            "推荐项目之间空一行，最后加一段简短的总体建议。"
             "每个推荐项目必须能从资料中的展示形式、适合场景或正文找到支撑；"
             "粗标签“研学体验”只能说明有学习体验潜力，不等同于适合亲子互动。"
             "如果用户明确说“亲子”，优先选择低门槛、可动手、可观看、可带走成果或适合儿童共同参与的项目；"
-            "不要仅因“研学体验”就推荐烧制、茶制作、武术训练、医药等项目。"
-            "除非资料明确提供相应活动，不要编写“可上釉、可烧制、可采茶、可练功”等互动环节。\n"
+            "亲子推荐需要资料中有明确的儿童、家庭、玩具、动手、观看、民俗参与等支撑。"
+            "互动环节只写资料明确支持的观看、讲解、把玩、表演、民俗参与或轻量体验方式。\n"
             "当 task_type=\"comparison\" 或用户要求比较多个项目时，answer 必须使用 Markdown 表格；"
             "至少包含“项目、地区/流派、制作/表演特点、题材/剧目或用途、适合展示的差异点”等列。"
-            "表格必须是真正的多行 Markdown：表头、分隔行、每个项目的数据行都必须单独换行；在 JSON 的 answer 字符串中用换行符保留这些行。"
-            "禁止输出单行表格，例如“| 项目 | ... | | --- | ... | | A | ... |”。"
-            "正确格式示例：\n"
+            "表格使用真正的多行 Markdown：表头、分隔行、每个项目的数据行都单独换行；在 JSON 的 answer 字符串中用换行符保留这些行。"
+            "使用这个格式示例：\n"
             "| 项目 | 地区/流派 | 特点 |\n"
             "| --- | --- | --- |\n"
             "| A | 地区 | 特点 |\n"
             "| B | 地区 | 特点 |\n"
-            "表格后可加一小段结论，但不要把多个项目压成同一段编号文字。\n"
-            "当用户要求中英双语、双语介绍等内容转化时，仍然只输出外层 JSON，"
-            "但 answer 字符串里必须填写多行 Markdown 横读双语表格。"
-            "answer 格式：一段中文导语，然后空一行，然后表格；表格第一行是中文完整介绍，第二行是英文完整介绍：\n"
-            "| 语言 | 名称 | 类别 | 简介 | 主要特色 |\n"
-            "| --- | --- | --- | --- | --- |\n"
-            "| 中文 | 规范中文名 | 规范中文类别 | 中文简介 | 中文特色 |\n"
-            "| English | English name | English category | English summary | English key features |\n"
-            "表格后不加结论文字。不要做成“中文列 / English列”的上下阅读表；不要把表格行拆散，也不要把所有行挤在同一行。\n"
-            "输出前自检：如果 answer 中包含 `| --- |`，它前后必须有真实换行；如果包含 `1.` 和 `2.`，它们不能在同一行。\n"
-            "不要编造资料库没有提供的事实；不要在没有资料支撑时凭常识列项目。"
-            "如果没有可用资料且搜索预算已用尽，请明确说明资料不足，而不是给无依据推荐。"
+            "表格后可加一小段结论，多个项目分别占用独立数据行。\n"
+            "当用户要求中英双语、双语介绍、双语传播文案等内容转化时，仍然只输出外层 JSON，"
+            "但 answer 字符串里必须填写多行 Markdown 双列表格。"
+            "answer 格式：一段中文导语，然后空一行，然后表格；表格只能有两列，左列中文，右列 English。"
+            "每一行是一组对应段落，阅读顺序是先读这一行左侧中文，再读这一行右侧英文，然后进入下一行：\n"
+            "| 中文 | English |\n"
+            "| --- | --- |\n"
+            "| **名称：**规范中文名。 | **Name:** English name. |\n"
+            "| **项目定位：**中文类别、地区或级别说明。 | **Positioning:** Matching English sentence. |\n"
+            "| **简介：**2-3 句中文介绍来源、传承和核心内容。 | **Introduction:** 2-3 matching English sentences. |\n"
+            "| **主要特色：**2-3 句中文概括技艺、题材、审美或展示价值。 | **Key Features:** 2-3 matching English sentences. |\n"
+            "| **传播文案：**1-2 句中文展示文案。 | **Promotional Copy:** 1-2 matching English sentences. |\n"
+            "表格后不加结论文字。双语表格使用“中文 / English”两列，并让每一行成为一组中英对应段落。"
+            "所有表格行都独占一行，中文段落和英文段落在同一行左右对应。\n"
+            "输出前自检：recommendation 使用 `## 场景推荐` 和 `### 编号. 项目名` 分段；comparison 和 bilingual 表格使用真实换行；编号列表中 `1.`、`2.` 分别独占一行。\n"
+            "依据资料库提供的事实回答；资料支撑不足时说明不确定点。"
+            "如果没有可用资料且搜索预算已用尽，请明确说明资料不足，并给出可继续检索的方向。"
             "只输出 JSON，不要输出 Markdown 或解释文字。\n"
             "JSON 格式："
             "{\"action\":\"answer|search\","
@@ -1464,15 +1470,42 @@ class Agent:
         # Build answer
         parts: list[str] = []
         scene_desc = scenario or "通用"
-        parts.append(f"为您推荐 {len(top)} 个适合「{scene_desc}」的非遗项目：\n")
+        audience_desc = audience or "目标人群"
+        parts.append("## 场景推荐")
+        parts.append("")
+        parts.append(
+            f"下面推荐 {len(top)} 个更适合「{scene_desc}」的非遗项目。"
+            f"我优先看它们是否有明确的展示形式、是否便于{audience_desc}理解和参与，"
+            "以及资料中是否能支撑具体的观看或互动方式。"
+        )
+        parts.append("")
 
         for i, item in enumerate(top, 1):
-            parts.append(f"**{i}. {_title_with_family(item)}**")
-            parts.append(f"  - 类别：{item.category} | 级别：{item.level}")
-            if item.display_forms:
-                parts.append(f"  - 展示形式：{'、'.join(item.display_forms)}")
-            parts.append(f"  - 简介：{item.summary[:120]}")
+            title = _title_with_family(item)
+            location = "、".join(part for part in [item.province, item.city, item.district] if part)
+            display = "、".join(item.display_forms) if item.display_forms else "作品展示、讲解"
+            ai = get_ai_fields(item.id)
+            feature_text = ai["features"] or item.summary
+            feature_text = _short_text(feature_text, 150)
+            summary = _short_text(item.summary, 120)
+            boundary = _recommendation_boundary(item, scene_desc)
+
+            parts.append(f"### {i}. {title}")
+            parts.append(
+                f"{title}属于{item.category}"
+                f"{f'，流传于{location}' if location else ''}"
+                f"{f'，级别为{item.level}' if item.level else ''}。"
+                f"它适合放在「{scene_desc}」里，是因为资料中明确呈现了“{display}”等展示方式，"
+                f"观众可以先通过讲解了解项目背景，再围绕作品、技艺或表演特点进行观察。"
+                f"{feature_text or summary}"
+                f"{boundary}"
+            )
             parts.append("")
+
+        parts.append(
+            "总体上，这类推荐更适合做成“先看见、再听懂、最后轻量参与”的活动结构："
+            "先用实物、图片或片段建立兴趣，再由讲解员补充来源和技艺，互动环节只写资料能够支撑的部分。"
+        )
 
         selection_reason = f"共推荐 {len(top)} 个项目，排序依据：模型智能选择"
 
@@ -1642,6 +1675,32 @@ def _score_for_recommendation(item, constraints: list[str],
         score += 2
 
     return score
+
+
+def _short_text(text: str, limit: int) -> str:
+    text = normalize_text(text)
+    if not text:
+        return ""
+    if len(text) <= limit:
+        return text if text.endswith(("。", "！", "？", ".", "!", "?")) else f"{text}。"
+    clipped = text[:limit].rstrip("，、；;：: ")
+    return f"{clipped}。"
+
+
+def _recommendation_boundary(item, scene: str) -> str:
+    forms = "、".join(item.display_forms) if item.display_forms else ""
+    scene_text = normalize_text(scene)
+    if "亲子" in scene_text:
+        if any(key in forms for key in ("手作", "体验", "互动", "玩具")):
+            return "活动设计上可以保留轻量动手环节，但仍要由传承人或老师控制材料、安全和节奏。"
+        return "需要注意的是，资料更支持观看、讲解或轻量体验，不宜擅自扩展成复杂制作课。"
+    if "社区" in scene_text:
+        return "落地时建议控制时长和噪音，把互动设计成围观、问答或简短体验，方便不同年龄居民参与。"
+    if "校园" in scene_text:
+        return "用于校园时可配合展板、讲解卡和观察任务，互动部分应以安全、低门槛、易组织为准。"
+    if "展馆" in scene_text:
+        return "用于展馆时适合配合图文展板、实物或影像资料，不宜把未被资料支撑的制作步骤写进方案。"
+    return "具体活动可以从资料明确写到的展示形式出发，避免把没有依据的制作或体验环节强行加进去。"
 
 
 def _item_reason_tags(item, scenario: str = "") -> list[str]:
@@ -1898,4 +1957,3 @@ def _context_title_keywords(items: list[Any]) -> list[str]:
         if len(keywords) >= 6:
             break
     return keywords[:6]
-

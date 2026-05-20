@@ -185,24 +185,42 @@ python .\scripts\maintenance\rebuild_embedding_index.py --no-resume
 ```text
 xuhua/
 ├── app.py
+├── docs/                      # 设计说明、路线图与补充文档
 ├── src/heritage_explorer/
-│   ├── agent/                  # 搜索优先 Agent、规划器、检索轮次控制
-│   ├── ai/                     # RAG 问答、提示词、语音稿生成
+│   ├── agent/                  # Agent 主流程、任务分发、规划器
+│   │   ├── handlers/           # 任务处理扩展点（当前保留）
+│   │   ├── __init__.py         # Agent、意图路由、SSE 调度
+│   │   └── planner.py          # 模型规划器与决策解析
+│   ├── ai/                     # 模型调用、提示词、RAG 回答、语音稿
+│   ├── agent_comparison.py     # 对比任务处理
+│   ├── agent_models.py         # AgentResult / TaskType 等共享数据结构
+│   ├── agent_task_config.py    # 各任务的检索与生成配置
 │   ├── config.py               # 环境变量配置
-│   ├── conversation.py         # 最近 5 轮上下文
-│   ├── dataset.py              # 数据加载与序列化
+│   ├── conversation.py         # 最近 5 轮上下文存储
+│   ├── dataset.py              # 数据加载、序列化与标准化
 │   ├── embeddings.py           # 本地 embedding 索引
-│   ├── retriever.py            # 查询分析、实体/结构化线索提取
+│   ├── extractor.py            # 查询分析与结构化线索提取
+│   ├── http_client.py          # AI / TTS 共用 HTTP 请求封装
+│   ├── item_cards.py           # 条目卡片与来源 payload 组装
+│   ├── retriever.py            # 检索辅助逻辑
+│   ├── scenario_evidence.py    # 场景适配硬证据打分
 │   ├── search.py               # 混合检索与排序
 │   ├── transform_config.py     # 内容转化提示词
 │   ├── volc_tts.py             # 服务端 TTS
-│   └── web.py                  # Flask API
-├── data/processed/             # 已处理数据
-├── scripts/maintenance/        # 数据维护脚本
-├── static/js/                  # 前端模块
-├── static/media/               # 数字人视频和提示音频
+│   └── web.py                  # Flask API 与 SSE / TTS 路由
+├── data/
+│   └── processed/              # 已处理数据
+├── scripts/
+│   ├── maintenance/            # embedding 索引维护脚本
+│   └── ...                     # 数据构建、导入、补录与辅助工具
+├── static/
+│   ├── js/                     # 前端模块
+│   ├── media/                  # 数字人视频和提示音频
+│   ├── vendor/                 # 前端第三方库
+│   └── styles.css              # 页面样式
 ├── templates/                  # 页面和本地回答模板
 ├── requirements.txt
+├── requirements-dev.txt
 └── pyproject.toml
 ```
 

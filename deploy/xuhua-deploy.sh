@@ -245,13 +245,13 @@ restore_commit=""
 restore_compose=""
 
 select_restore_target() {
-  local candidate="" snapshot="" pointer="" persisted_current="" persisted_snapshot=""
+  local candidate="" snapshot="" pointer="" persisted_current="" persisted_snapshot="" state_error=0
 
   if [[ "$previous_was_healthy" == "1" && "$previous_commit" =~ ^[0-9a-f]{40}$ && "$previous_commit" != "$commit_sha" ]] && docker image inspect "xuhua:$previous_commit" >/dev/null 2>&1; then
     snapshot="${last_good_compose}.${previous_commit}"
     if [[ ! -f "$snapshot" ]]; then
-      [[ -f "$last_good_compose" ]] || return 1
-      atomic_copy "$last_good_compose" "$snapshot" || return 1
+      [[ -f "$last_good_compose" ]] || return 2
+      atomic_copy "$last_good_compose" "$snapshot" || return 2
     fi
 
     if [[ -r "$last_good_sha_file" ]]; then
@@ -260,11 +260,11 @@ select_restore_target() {
     if [[ "$persisted_current" =~ ^[0-9a-f]{40}$ && "$persisted_current" != "$previous_commit" ]]; then
       persisted_snapshot="${last_good_compose}.${persisted_current}"
       if [[ -f "$persisted_snapshot" ]]; then
-        atomic_write_line "$previous_good_sha_file" "$persisted_current" || return 1
+        atomic_write_line "$previous_good_sha_file" "$persisted_current" || return 2
       fi
-      atomic_write_line "$last_good_sha_file" "$previous_commit" || return 1
+      atomic_write_line "$last_good_sha_file" "$previous_commit" || return 2
     elif [[ "$persisted_current" != "$previous_commit" ]]; then
-      atomic_write_line "$last_good_sha_file" "$previous_commit" || return 1
+      atomic_write_line "$last_good_sha_file" "$previous_commit" || return 2
     fi
 
     restore_commit="$previous_commit"
@@ -282,8 +282,14 @@ select_restore_target() {
       restore_compose="$snapshot"
       return 0
     fi
+    if [[ "$candidate" =~ ^[0-9a-f]{40}$ && "$candidate" != "$commit_sha" ]]; then
+      state_error=1
+    fi
   done
 
+  if [[ "$state_error" == "1" ]]; then
+    return 2
+  fi
   return 1
 }
 
@@ -316,7 +322,12 @@ if [[ "$recent_failure" == "1" && "$previous_was_healthy" == "1" ]]; then
   exit 0
 fi
 
-select_restore_target || true
+restore_selection_status=0
+select_restore_target || restore_selection_status=$?
+if [[ "$restore_selection_status" == "2" ]]; then
+  echo "Rollback state is inconsistent; preserving the current container and refusing deployment." >&2
+  exit 1
+fi
 
 if [[ "$previous_was_healthy" != "1" && "$restore_commit" =~ ^[0-9a-f]{40}$ ]]; then
   echo "No healthy container is running; restoring the last verified version before building." >&2

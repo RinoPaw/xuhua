@@ -8,6 +8,7 @@ services:
       args:
         NPM_CONFIG_REGISTRY: "${XUHUA_NPM_REGISTRY:-https://registry.npmjs.org}"
         UV_DEFAULT_INDEX: "${XUHUA_UV_DEFAULT_INDEX:-https://pypi.org/simple}"
+        UV_FILES_BASE_URL: "${XUHUA_UV_FILES_BASE_URL:-https://files.pythonhosted.org/packages}"
     container_name: xuhua
     restart: unless-stopped
     stop_grace_period: 30s

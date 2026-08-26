@@ -23,6 +23,7 @@ Environment=XUHUA_APP_PORT=5050
 Environment=XUHUA_REQUIRE_VOICE=1
 Environment=XUHUA_NPM_REGISTRY=https://mirrors.cloud.tencent.com/npm/
 Environment=XUHUA_UV_DEFAULT_INDEX=https://mirrors.cloud.tencent.com/pypi/simple
+Environment=XUHUA_UV_FILES_BASE_URL=https://mirrors.cloud.tencent.com/pypi/packages
 Environment=HOME=/var/lib/xuhua
 ExecStart=/usr/bin/bash /opt/xuhua/repo/deploy/xuhua-deploy.sh
 TimeoutStartSec=30min

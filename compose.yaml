@@ -5,8 +5,12 @@ services:
     image: "xuhua:${XUHUA_COMMIT:-latest}"
     build:
       context: .
+      args:
+        NPM_CONFIG_REGISTRY: "${XUHUA_NPM_REGISTRY:-https://registry.npmjs.org}"
+        UV_DEFAULT_INDEX: "${XUHUA_UV_DEFAULT_INDEX:-https://pypi.org/simple}"
     container_name: xuhua
     restart: unless-stopped
+    stop_grace_period: 30s
     init: true
     read_only: true
     security_opt:
@@ -27,6 +31,7 @@ services:
       - "127.0.0.1:${XUHUA_APP_PORT:-5050}:5050"
     labels:
       io.xuhua.commit: "${XUHUA_COMMIT:-unknown}"
+      io.xuhua.env-revision: "${XUHUA_ENV_REVISION:-unknown}"
     healthcheck:
       test:
         - CMD

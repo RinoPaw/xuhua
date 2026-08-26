@@ -15,12 +15,18 @@ Environment=XUHUA_ENV_FILE=/etc/xuhua/xuhua.env
 Environment=XUHUA_LOCK_FILE=/var/lib/xuhua/deploy.lock
 Environment=XUHUA_FAILED_SHA_FILE=/var/lib/xuhua/failed-sha
 Environment=XUHUA_LAST_GOOD_COMPOSE=/var/lib/xuhua/last-good-compose.yaml
+Environment=XUHUA_LAST_GOOD_SHA_FILE=/var/lib/xuhua/last-good-sha
+Environment=XUHUA_PREVIOUS_GOOD_SHA_FILE=/var/lib/xuhua/previous-good-sha
 Environment=XUHUA_FAILURE_COOLDOWN=600
+Environment=XUHUA_FETCH_TIMEOUT=180
 Environment=XUHUA_APP_PORT=5050
 Environment=XUHUA_REQUIRE_VOICE=1
+Environment=XUHUA_NPM_REGISTRY=https://mirrors.cloud.tencent.com/npm/
+Environment=XUHUA_UV_DEFAULT_INDEX=https://mirrors.cloud.tencent.com/pypi/simple
 Environment=HOME=/var/lib/xuhua
 ExecStart=/usr/bin/bash /opt/xuhua/repo/deploy/xuhua-deploy.sh
 TimeoutStartSec=30min
+TimeoutStopSec=3min
 StateDirectory=xuhua
 StateDirectoryMode=0750
 UMask=0027

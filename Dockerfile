@@ -1,5 +1,7 @@
 FROM node:22-slim AS frontend-builder
 
+ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org
+
 WORKDIR /app/frontend
 
 COPY frontend/package.json frontend/package-lock.json ./
@@ -13,6 +15,8 @@ FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
+ARG UV_DEFAULT_INDEX=https://pypi.org/simple
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOME=/home/app \
@@ -24,7 +28,7 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
-RUN uv sync --frozen --no-dev
+RUN UV_DEFAULT_INDEX="$UV_DEFAULT_INDEX" uv sync --frozen --no-dev
 
 COPY . .
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist

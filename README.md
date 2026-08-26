@@ -203,27 +203,54 @@ docker run --rm -p 5050:5050 --env-file .env -e HOST=0.0.0.0 xuhua
 独立的 `xuhua` 系统用户运行部署任务，配置保存在仓库外的
 `/etc/xuhua/xuhua.env`。`xuhua-deploy.timer` 每 30 秒检查一次 `main`，仅接受快进更新；
 工作区出现本地修改时会停止部署，构建或健康检查失败时不会继续发布，并在可能时恢复上一镜像。
+环境文件的元数据发生变化时，即使代码提交未变，也会用已验证镜像重建容器以加载新配置。
 同一失败提交会冷却 10 分钟后再试，新提交不受冷却影响。部署先完成镜像构建，再短暂重建
 运行容器并执行数据、API、首页和语音配置冒烟检查；检查失败时会尝试恢复上一份已验证镜像与
 Compose 清单。切换期间可能出现短暂连接中断。
 
-首次部署需预先安装 Docker、Compose 与 Nginx，并建立运行账户及目录：
+腾讯云服务器若无法直连 Docker Hub，可将 `deploy/docker-daemon-tencent.json` 安装为
+`/etc/docker/daemon.json` 并重启 Docker。该配置使用腾讯云内网镜像加速地址。
+
+首次部署需预先安装 Docker、Compose、Git、Python、`flock`、Nginx 与 Certbot，并建立运行账户及目录。
+以下顺序先安装生产配置和 systemd 单元，再手动完成一次发布；只有首次发布验证成功后才启用自动更新：
 
 ```bash
+sudo apt-get update
+sudo apt-get install -y git python3 util-linux coreutils nginx certbot
 sudo useradd --system --user-group --home-dir /var/lib/xuhua --create-home --shell /usr/sbin/nologin xuhua
 sudo usermod -aG docker xuhua
 sudo install -d -o xuhua -g xuhua -m 0750 /opt/xuhua /var/lib/xuhua
 sudo install -d -o root -g xuhua -m 0750 /etc/xuhua
-sudo -u xuhua git clone --branch main --single-branch https://github.com/RinoPaw/xuhua.git /opt/xuhua/repo
+sudo -u xuhua git -c http.version=HTTP/1.1 clone -4 --branch main --single-branch https://github.com/RinoPaw/xuhua.git /opt/xuhua/repo
+# 先把生产环境变量写入 /etc/xuhua/xuhua.env，并设置为 root:xuhua、0640。
 sudo install -o root -g root -m 0644 /opt/xuhua/repo/deploy/xuhua-deploy.service /etc/systemd/system/
 sudo install -o root -g root -m 0644 /opt/xuhua/repo/deploy/xuhua-deploy.timer /etc/systemd/system/
+sudo systemd-analyze verify /etc/systemd/system/xuhua-deploy.service /etc/systemd/system/xuhua-deploy.timer
 sudo systemctl daemon-reload
+sudo systemctl start xuhua-deploy.service
 sudo systemctl enable --now xuhua-deploy.timer
 ```
 
 将生产配置写入 `/etc/xuhua/xuhua.env` 并设为 `root:xuhua`、`0640`。容器只绑定
-`127.0.0.1:5050`，公网入口由 Nginx 提供；`deploy/` 中包含首次申请证书前的 HTTP 配置，
-以及证书签发后的 HTTPS 配置。
+`127.0.0.1:5050`，公网入口由 Nginx 提供。域名 `xuhua.520207.xyz` 的 DNS 必须指向源站；
+使用 Cloudflare 代理时，SSL/TLS 模式应设为“完全（严格）”。仓库中的 HTTP 配置先提供应用和
+ACME 校验路径，证书签发后再切换到 HTTPS：
+
+```bash
+sudo install -d -o www-data -g www-data -m 0755 /var/www/letsencrypt
+sudo install -o root -g root -m 0644 /opt/xuhua/repo/deploy/nginx-xuhua-http.conf /etc/nginx/sites-available/xuhua
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo ln -sfn /etc/nginx/sites-available/xuhua /etc/nginx/sites-enabled/xuhua
+sudo nginx -t
+sudo systemctl enable --now nginx
+sudo certbot certonly --webroot -w /var/www/letsencrypt --cert-name xuhua.520207.xyz -d xuhua.520207.xyz --agree-tos --non-interactive --register-unsafely-without-email
+sudo install -o root -g root -m 0644 /opt/xuhua/repo/deploy/nginx-xuhua-https.conf /etc/nginx/sites-available/xuhua
+sudo install -o root -g root -m 0755 /opt/xuhua/repo/deploy/reload-nginx.sh /etc/letsencrypt/renewal-hooks/deploy/reload-nginx
+sudo nginx -t
+sudo systemctl reload nginx
+sudo systemctl enable --now certbot.timer
+sudo certbot renew --dry-run
+```
 
 首次安装后可查看状态与日志：
 
@@ -233,8 +260,8 @@ sudo journalctl -u xuhua-deploy.service -n 100 --no-pager
 sudo docker ps --filter name=xuhua
 ```
 
-仓库里的 systemd 单元不会自动覆盖 `/etc/systemd/system`。单元文件发生变更时，需要管理员
-先审阅，再重新执行 `install` 和 `systemctl daemon-reload`。维护期间应先执行：
+仓库里的 systemd 单元、Nginx 配置和证书续期钩子不会自动覆盖系统配置。相关文件发生变更时，
+需要管理员先审阅，再重新执行对应的 `install`、配置检查和重载。维护期间应先执行：
 
 ```bash
 sudo systemctl disable --now xuhua-deploy.timer

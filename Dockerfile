@@ -15,6 +15,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    HOME=/home/app \
+    UV_CACHE_DIR=/tmp/uv-cache \
     HOST=0.0.0.0 \
     PORT=5050
 
@@ -26,6 +28,12 @@ RUN uv sync --frozen --no-dev
 
 COPY . .
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+
+RUN groupadd --system app \
+    && useradd --system --gid app --home-dir /home/app --create-home app \
+    && chown -R app:app /app /home/app
+
+USER app
 
 EXPOSE 5050
 

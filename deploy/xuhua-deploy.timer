@@ -1,0 +1,11 @@
+[Unit]
+Description=Check GitHub for Xuhua updates every 30 seconds
+
+[Timer]
+OnBootSec=1min
+OnUnitInactiveSec=30s
+AccuracySec=5s
+Unit=xuhua-deploy.service
+
+[Install]
+WantedBy=timers.target

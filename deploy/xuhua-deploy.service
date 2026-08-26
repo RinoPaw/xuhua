@@ -1,0 +1,35 @@
+[Unit]
+Description=Update and deploy Xuhua from GitHub
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=xuhua
+Group=xuhua
+SupplementaryGroups=docker
+WorkingDirectory=/opt/xuhua/repo
+Environment=XUHUA_REPO_DIR=/opt/xuhua/repo
+Environment=XUHUA_ENV_FILE=/etc/xuhua/xuhua.env
+Environment=XUHUA_LOCK_FILE=/var/lib/xuhua/deploy.lock
+Environment=XUHUA_FAILED_SHA_FILE=/var/lib/xuhua/failed-sha
+Environment=XUHUA_LAST_GOOD_COMPOSE=/var/lib/xuhua/last-good-compose.yaml
+Environment=XUHUA_FAILURE_COOLDOWN=600
+Environment=XUHUA_APP_PORT=5050
+Environment=XUHUA_REQUIRE_VOICE=1
+Environment=HOME=/var/lib/xuhua
+ExecStart=/usr/bin/bash /opt/xuhua/repo/deploy/xuhua-deploy.sh
+TimeoutStartSec=30min
+StateDirectory=xuhua
+StateDirectoryMode=0750
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/xuhua/repo /var/lib/xuhua
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

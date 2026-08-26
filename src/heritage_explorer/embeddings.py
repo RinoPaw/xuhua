@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 
@@ -21,6 +21,19 @@ from .dataset import HeritageItem, KnowledgeBase, normalize_text
 
 class EmbeddingUnavailable(RuntimeError):
     """Raised when semantic retrieval is not configured or cannot be used."""
+
+
+class _EmbeddingHTTPClient(Protocol):
+    """Small subset of ``httpx.Client`` needed by the embedding boundary."""
+
+    def post(
+        self,
+        url: str,
+        *,
+        json: Any,
+        headers: Any,
+        timeout: httpx.Timeout,
+    ) -> httpx.Response: ...
 
 
 @dataclass(frozen=True)
@@ -64,6 +77,7 @@ class EmbeddingClient:
         timeout: int | None = None,
         max_retries: int | None = None,
         retry_backoff: float | None = None,
+        http_client: _EmbeddingHTTPClient | None = None,
     ):
         self.api_key = config.EMBEDDING_API_KEY if api_key is None else api_key
         self.base_url = (config.EMBEDDING_BASE_URL if base_url is None else base_url).rstrip("/")
@@ -71,6 +85,7 @@ class EmbeddingClient:
         self.timeout = config.EMBEDDING_TIMEOUT if timeout is None else timeout
         self.max_retries = config.EMBEDDING_MAX_RETRIES if max_retries is None else max_retries
         self.retry_backoff = config.EMBEDDING_RETRY_BACKOFF if retry_backoff is None else retry_backoff
+        self._http_client = http_client
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not self.api_key:
@@ -100,12 +115,33 @@ class EmbeddingClient:
         return self.retry_backoff * (attempt + 1)
 
     def _embed_texts_once(self, texts: list[str]) -> list[list[float]]:
-        from .http_client import embedding_request, describe_error
-
         try:
-            return embedding_request(texts)
+            client = self._http_client
+            if client is None:
+                with httpx.Client() as owned_client:
+                    return self._request_embeddings(owned_client, texts)
+            return self._request_embeddings(client, texts)
         except Exception as exc:
-            raise EmbeddingUnavailable(describe_error(exc, self.api_key)) from exc
+            raise EmbeddingUnavailable(describe_embedding_error(exc, self.api_key)) from exc
+
+    def _request_embeddings(
+        self,
+        client: _EmbeddingHTTPClient,
+        texts: list[str],
+    ) -> list[list[float]]:
+        response = client.post(
+            f"{self.base_url}/embeddings",
+            json={"model": self.model, "input": texts},
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=httpx.Timeout(float(self.timeout)),
+        )
+        response.raise_for_status()
+        body = response.json()
+        rows = sorted(body["data"], key=lambda row: int(row.get("index", 0)))
+        return [list(map(float, row["embedding"])) for row in rows]
 
 
 def build_embedding_text(item: HeritageItem, max_chars: int | None = None) -> str:
@@ -194,7 +230,13 @@ def embedding_scores(
     if index is None or not index.records:
         raise EmbeddingUnavailable("Embedding index does not exist.")
 
-    client = client or EmbeddingClient()
+    # Interactive retrieval has a hard latency budget. Index-building callers
+    # pass their own retrying client; live queries get one short attempt and
+    # immediately fall back to lexical search on failure.
+    client = client or EmbeddingClient(
+        timeout=config.EMBEDDING_REQUEST_TIMEOUT,
+        max_retries=0,
+    )
     query_vector = normalize_vector(client.embed_texts([query])[0])
     if not query_vector:
         return {}
@@ -226,6 +268,37 @@ def dot(left: Iterable[float], right: Iterable[float]) -> float:
 
 
 def describe_embedding_error(exc: Exception, api_key: str = "") -> str:
-    from .http_client import describe_error
+    """Describe an embedding failure without exposing credentials or response noise."""
+    if isinstance(exc, httpx.HTTPStatusError):
+        detail = f"HTTPError {exc.response.status_code}"
+        body = _truncate_response_body(exc.response, max_chars=200, api_key=api_key)
+        if body:
+            detail += f": {body}"
+    elif isinstance(exc, (httpx.RequestError, OSError)):
+        detail = f"RequestError: {exc}"
+    else:
+        detail = str(exc) or type(exc).__name__
 
-    return describe_error(exc, api_key)
+    if api_key:
+        detail = detail.replace(api_key, "***")
+    return textwrap.shorten(_normalize_error_text(detail), width=220, placeholder="...")
+
+
+def _truncate_response_body(
+    response: httpx.Response,
+    max_chars: int = 200,
+    api_key: str = "",
+) -> str:
+    try:
+        text = response.text
+    except Exception:  # noqa: BLE001 - best effort diagnostics only.
+        return ""
+    if api_key:
+        text = text.replace(api_key, "***")
+    if len(text) > max_chars:
+        return text[:max_chars].rstrip() + "..."
+    return text
+
+
+def _normalize_error_text(value: str) -> str:
+    return " ".join(value.split())

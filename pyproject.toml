@@ -4,25 +4,36 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xuhua"
-version = "0.1.0"
-description = "叙华 — 面向全国非遗资料的本地 Web 知识库与任务型 AI 智能体"
+version = "0.2.0"
+description = "叙华 — 以可核验资料为依据的非遗对话体验"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12,<3.14"
 dependencies = [
-    "Flask>=3.0,<4",
-    "zhipuai>=2.1,<3",
-    "sniffio>=1.3,<2",
+    "edge-tts>=7.2,<8",
+    "fastapi>=0.141,<1",
+    "httpx>=0.28,<1",
     "pypinyin>=0.51,<1",
+    "uvicorn[standard]>=0.35,<1",
+    "websockets>=15,<17",
+]
+
+[dependency-groups]
+dev = [
+    "httpx2>=2.12.0",
+    "pytest>=8,<9",
+    "ruff>=0.12,<1",
 ]
 
 [project.scripts]
-xuhua = "heritage_explorer.web:main"
+xuhua = "heritage_explorer.api:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.ruff]
 line-length = 100
+target-version = "py312"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
+testpaths = ["tests"]

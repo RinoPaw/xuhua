@@ -14,6 +14,7 @@ env/
 !.env.example
 logs/
 tmp/
+audit/
 data/embeddings/
 competition_docs/
 *.log
@@ -21,3 +22,6 @@ skills-lock.json
 新形象/
 Thumbs.db
 .DS_Store
+.superdesign/tmp/
+frontend/node_modules/
+frontend/dist/

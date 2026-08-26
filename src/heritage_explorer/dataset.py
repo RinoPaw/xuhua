@@ -7,12 +7,9 @@ import re
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .config import DATASET_PATH
-
-if TYPE_CHECKING:
-    from .extractor import SoftLabels, StructuredMeta
 
 _AI_FIELDS_PATH = DATASET_PATH.parent / "ai_fields.json"
 
@@ -36,12 +33,7 @@ def _parse_tuple(value: Any) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class HeritageItem:
-    """Core heritage item with 13 stable fields.
-
-    Soft labels (education_value, interaction_potential, etc.) and
-    LLM-enriched fields (history, features, cultural_value) are
-    loaded on demand from ai_fields.json or computed via RuleExtractor.
-    """
+    """The 13 stable fields used by search and the public API."""
 
     id: str
     title: str
@@ -117,9 +109,6 @@ class KnowledgeBase:
     def get(self, item_id: str) -> HeritageItem | None:
         return self._by_id.get(item_id)
 
-    def category_names(self) -> list[str]:
-        return [category.name for category in self.categories]
-
 
 def load_dataset(path: Path = DATASET_PATH) -> KnowledgeBase:
     with path.open("r", encoding="utf-8") as f:
@@ -131,41 +120,12 @@ def get_knowledge_base() -> KnowledgeBase:
     return load_dataset()
 
 
-def get_structured_meta(item_id: str) -> "StructuredMeta | None":
-    """Backward-compatible adapter: build StructuredMeta from HeritageItem + ai_fields."""
-    from .extractor import StructuredMeta
-
-    kb = get_knowledge_base()
-    item = kb.get(item_id)
-    if item is None:
-        return None
-    ai = get_ai_fields(item_id)
-    return StructuredMeta(
-        level=item.level,
-        province=item.province,
-        city=item.city,
-        district=item.district,
-        display_forms=item.display_forms,
-        history=ai["history"],
-        features=ai["features"],
-        cultural_value=ai["cultural_value"],
-    )
-
-
-def get_soft_labels(item_id: str) -> "SoftLabels | None":
-    """Compute soft labels on-the-fly via RuleExtractor."""
-    from .extractor import RuleExtractor, infer_soft_labels
-
-    kb = get_knowledge_base()
-    item = kb.get(item_id)
-    if item is None:
-        return None
-    extractor = RuleExtractor()
-    meta = extractor.extract(item)
-    return infer_soft_labels(item, meta)
-
-
-def item_to_dict(item: HeritageItem, include_content: bool = False) -> dict[str, Any]:
+def item_to_dict(
+    item: HeritageItem,
+    *,
+    include_content: bool = False,
+    include_enrichment: bool = False,
+) -> dict[str, Any]:
     data = {
         "id": item.id,
         "title": item.title,
@@ -179,11 +139,8 @@ def item_to_dict(item: HeritageItem, include_content: bool = False) -> dict[str,
         "display_forms": list(item.display_forms),
         "suitable_scenarios": list(item.suitable_scenarios),
     }
-    # Merge ai_fields for API consumers
-    ai = get_ai_fields(item.id)
-    data["features"] = ai["features"]
-    data["history"] = ai["history"]
-    data["cultural_value"] = ai["cultural_value"]
+    if include_enrichment:
+        data.update(get_ai_fields(item.id))
     if include_content:
         data["content"] = item.content
     return data

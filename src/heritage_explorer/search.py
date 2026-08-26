@@ -1,10 +1,10 @@
-"""Small dependency-free lexical search for the normalized dataset."""
+"""One small, deterministic retrieval core for the heritage knowledge base."""
 
 from __future__ import annotations
 
-import logging
 import re
-from collections.abc import Iterable
+import logging
+from collections.abc import Iterable, Sequence
 from functools import lru_cache
 
 from . import config
@@ -12,163 +12,306 @@ from .dataset import HeritageItem, KnowledgeBase, normalize_text
 
 
 LOGGER = logging.getLogger(__name__)
-HYBRID_LEXICAL_CANDIDATES = 80
-HYBRID_SEMANTIC_CANDIDATES = 80
-RRF_K = 60
-LEXICAL_RANK_WEIGHT = 1.3
-SEMANTIC_RANK_WEIGHT = 1.35
-LEXICAL_MIN_SCORE = 10  # minimum score for an item to count as a lexical match
-HYBRID_MIN_SCORE = 0.015  # RRF-based scores are small; this keeps weak tail matches out.
 
-# Pinyin fuzzy search constants
-_PINYIN_MIN_QUERY_LEN = 2  # minimum query chars to try pinyin matching
-_PINYIN_MATCH_BONUS = 0.3  # score for pinyin-exact match
-_SEARCH_TRAILING_PUNCTUATION = "？?！!。.，,、 \t\r\n"
-_SEARCH_QUERY_FILLERS = (
-    "是什么",
-    "是啥",
-    "有哪些",
-    "有那些",
-    "有什么",
-    "有啥",
-    "生成讲解词",
-    "生成讲解稿",
-    "生成口播稿",
-    "生成文案",
-    "讲解词",
-    "讲解稿",
-    "口播稿",
-    "解说词",
-    "写一段",
-    "写一个",
-    "生成",
-    "给",
-    "请问",
-    "请介绍一下",
-    "请介绍",
-    "介绍一下",
-    "介绍",
-    "讲讲",
-    "说说",
-    "帮我看看",
-    "我想知道",
+
+_FILLERS = (
+    "推荐适合", "适合做", "非物质文化遗产", "非遗项目", "策划一个", "生成讲解词",
+    "生成讲解稿", "生成口播稿", "生成文案", "讲解词", "讲解稿", "口播稿", "解说词",
+    "请介绍一下", "请介绍", "介绍一下", "是什么", "是啥", "值得了解", "想了解", "了解",
+    "有哪些", "有那些", "有什么",
+    "有啥", "写一段", "写一个", "帮我看看", "我想知道", "请问", "哪些", "讲讲", "说说",
+    "推荐", "适合", "非遗", "项目", "介绍", "生成", "一下", "的", "给",
+)
+_PUNCTUATION = "？?！!。.，,、；;：:（）()[]【】{} \t\r\n"
+_TOKEN_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
+_MIN_LEXICAL_SCORE = 8.0
+_PROVINCE_SUFFIX_RE = re.compile(
+    r"(?:壮族自治区|回族自治区|维吾尔自治区|特别行政区|自治区|省|市)$"
 )
 
 
-@lru_cache(maxsize=1)
-def _build_pinyin_index(kb_hash: str) -> dict[str, list[str]]:
-    """Build a pinyin-to-item-id index for all heritage items.
-
-    Converts each item's title and family to pinyin and maps the
-    resulting pinyin strings to item IDs for homophone fuzzy matching.
-    kb_hash is a cache key derived from the dataset for thread safety.
-    """
-    try:
-        from pypinyin import lazy_pinyin  # noqa: PLC0415 - optional dependency
-        # We need kb inside the function but want the signature to accept
-        # a cache key string.  Pull the singleton via dataset.
-        from .dataset import load_dataset
-
-        kb = load_dataset()
-        index: dict[str, list[str]] = {}
-        for item in kb.items:
-            texts = [item.title]
-            if item.family:
-                texts.append(item.family)
-            for text in texts:
-                py = "".join(lazy_pinyin(text))
-                py_compact = py.replace(" ", "")
-                if py_compact:
-                    index.setdefault(py_compact, []).append(item.id)
-        LOGGER.info("Pinyin index built: %d entries", len(index))
-        return index
-    except ImportError:
-        LOGGER.debug("pypinyin not installed, pinyin fuzzy search disabled")
-        return {}
-
-
-def search_items_pinyin(
-    kb: KnowledgeBase,
-    query: str,
-) -> list[HeritageItem]:
-    """Try pinyin-based homophone matching as a fallback.
-
-    Converts the query characters to pinyin and looks for items whose
-    title/family pinyin matches.  Returns [] when pypinyin is unavailable
-    or no matches are found.
-    """
-    if not query or len(query) < _PINYIN_MIN_QUERY_LEN:
-        return []
-
-    index = _build_pinyin_index(kb.generated_at or str(len(kb.items)))
-    if not index:
-        return []
-
-    try:
-        from pypinyin import lazy_pinyin  # noqa: PLC0415 - optional dependency
-
-        query_py = "".join(lazy_pinyin(query))
-    except ImportError:
-        return []
-
-    matched_ids: list[str] = []
-
-    # 1) Exact full-pinyin match
-    if query_py in index:
-        matched_ids.extend(index[query_py])
-
-    # 2) Partial: query-pinyin and title-pinyin may contain each other.
-    for py, ids in index.items():
-        if py == query_py:
-            continue
-        if query_py in py or _is_substantial_pinyin_part(py, query_py):
-            matched_ids.extend(ids)
-
-    # Deduplicate and resolve
-    seen: set[str] = set()
-    result: list[HeritageItem] = []
-    for item_id in matched_ids:
-        if item_id in seen:
-            continue
-        seen.add(item_id)
-        item = kb.get(item_id)
-        if item is not None:
-            result.append(item)
-
-    return result
-
-
-def _is_substantial_pinyin_part(candidate_py: str, query_py: str) -> bool:
-    """Allow contained pinyin only when it covers a real chunk of the query."""
-    if candidate_py not in query_py:
-        return False
-    if len(candidate_py) < 6:
-        return False
-    return len(candidate_py) >= len(query_py) * 0.45
+def normalize_search_query(query: str) -> str:
+    """Normalize a natural-language question to terms useful for retrieval."""
+    text = normalize_text(str(query or "")).lower().strip(_PUNCTUATION)
+    if not text:
+        return ""
+    for filler in _FILLERS:
+        text = text.replace(filler, " ")
+    text = re.sub(r"(?:\d{1,2}|[一二两三四五六七八九十]+)\s*(?:个|项|种|类)", " ", text)
+    return re.sub(r"\s+", " ", text).strip(_PUNCTUATION + " ")
 
 
 def tokenize(query: str) -> list[str]:
-    query = normalize_search_query(query)
-    if not query:
-        return []
-    tokens = re.findall(r"[\w\u4e00-\u9fff]+", query)
-    if len(tokens) == 1:
-        text = tokens[0]
-        if len(text) > 2:
-            tokens.extend(text[i : i + 2] for i in range(len(text) - 1))
+    """Return stable word/phrase tokens, including Chinese character bigrams."""
+    text = normalize_search_query(query)
+    tokens: list[str] = []
+    for match in _TOKEN_RE.findall(text):
+        if match not in tokens:
+            tokens.append(match)
+        # A Chinese phrase has no spaces, so bigrams make partial matching useful.
+        if re.fullmatch(r"[\u4e00-\u9fff]+", match) and len(match) > 2:
+            tokens.extend(match[i : i + 2] for i in range(len(match) - 1))
     return list(dict.fromkeys(tokens))
 
 
-def normalize_search_query(query: str) -> str:
-    """Reduce natural-language questions to the searchable subject terms."""
-    text = normalize_text(query).lower().strip(_SEARCH_TRAILING_PUNCTUATION)
-    if not text:
-        return ""
+@lru_cache(maxsize=8)
+def _province_aliases(kb: KnowledgeBase) -> tuple[tuple[str, str], ...]:
+    names = {normalize_text(item.province) for item in kb.items if item.province}
+    aliases: list[tuple[str, str]] = []
+    for name in names:
+        aliases.append((name, name))
+        short = _PROVINCE_SUFFIX_RE.sub("", name)
+        if short and short != name:
+            aliases.append((short, name))
+    return tuple(sorted(set(aliases), key=lambda pair: (-len(pair[0]), pair[0])))
 
-    for filler in _SEARCH_QUERY_FILLERS:
-        text = text.replace(filler, " ")
-    text = re.sub(r"\s+", " ", text).strip(_SEARCH_TRAILING_PUNCTUATION)
-    return text or normalize_text(query).lower().strip(_SEARCH_TRAILING_PUNCTUATION)
+
+def _resolve_province(kb: KnowledgeBase, value: str) -> tuple[str, str] | None:
+    text = normalize_text(value)
+    if not text:
+        return None
+    for alias, canonical in _province_aliases(kb):
+        if text == alias or alias in text:
+            return canonical, alias
+    return None
+
+
+@lru_cache(maxsize=8)
+def _category_names(kb: KnowledgeBase) -> tuple[str, ...]:
+    names = {normalize_text(category.name) for category in kb.categories if category.name}
+    names.update(normalize_text(item.category) for item in kb.items if item.category)
+    return tuple(sorted((name for name in names if name), key=lambda value: (-len(value), value)))
+
+
+def _resolve_category(kb: KnowledgeBase, value: str) -> str:
+    """Resolve a category stated in a natural-language question.
+
+    A category phrase is a hard scope signal. Without this step a query such as
+    ``有哪些传统音乐项目`` scores the word ``传统`` across almost the entire
+    national catalogue and makes the first few results look arbitrary.
+    """
+    normalized = normalize_search_query(value)
+    if not normalized:
+        return ""
+    matches = [
+        name for name in _category_names(kb)
+        if name == normalized or name in normalized
+    ]
+    if not matches:
+        return ""
+    longest = max(len(name) for name in matches)
+    winners = [name for name in matches if len(name) == longest]
+    return winners[0] if len(winners) == 1 else ""
+
+
+@lru_cache(maxsize=8192)
+def _aliases(item: HeritageItem) -> tuple[str, ...]:
+    values = [item.family, *item.display_forms]
+    return tuple(dict.fromkeys(normalize_text(value).lower() for value in values if value))
+
+
+@lru_cache(maxsize=8192)
+def _fields(item: HeritageItem) -> dict[str, str]:
+    return {
+        "title": normalize_text(item.title).lower(),
+        "alias": " ".join(_aliases(item)),
+        "category": normalize_text(item.category).lower(),
+        "scenario": " ".join(
+            normalize_text(value).lower() for value in item.suitable_scenarios if value
+        ),
+        "region": " ".join(
+            normalize_text(value).lower()
+            for value in (item.province, item.city, item.district)
+            if value
+        ),
+        "summary": normalize_text(item.summary).lower(),
+        "content": normalize_text(item.search_text or item.content).lower(),
+    }
+
+
+def _lexical_score(item: HeritageItem, query: str, tokens: Sequence[str]) -> float:
+    if not query:
+        return 0.0
+    fields = _fields(item)
+    score = 0.0
+    # Exact/phrase matches carry the signal that users generally expect most.
+    for name, weight in (
+        ("title", 100.0), ("alias", 55.0), ("category", 32.0), ("scenario", 28.0),
+        ("region", 24.0), ("summary", 18.0), ("content", 10.0),
+    ):
+        value = fields[name]
+        if not value:
+            continue
+        if query == value:
+            score += weight
+        elif query in value:
+            score += weight * 0.58
+
+    # Token hits reward the same fields with smaller, additive weights.
+    token_weights = {
+        "title": 18.0, "alias": 11.0, "category": 8.0, "scenario": 8.0,
+        "region": 7.0, "summary": 4.0, "content": 2.0,
+    }
+    for token in tokens:
+        if len(token) < 2 and len(tokens) > 1:
+            continue
+        for name, weight in token_weights.items():
+            value = fields[name]
+            if token == value:
+                score += weight * 1.25
+            elif token in value:
+                score += weight
+    return score
+
+
+def _sort_scored(scored: Iterable[tuple[float, HeritageItem]]) -> list[tuple[float, HeritageItem]]:
+    return sorted(scored, key=lambda pair: (-pair[0], pair[1].title.casefold(), pair[1].id))
+
+
+def _diversity_key(item: HeritageItem) -> tuple[str, str]:
+    family = normalize_text(item.family or item.title).casefold()
+    region = normalize_text(item.province or item.city or item.district or "未知地区").casefold()
+    return family, region
+
+
+def _diversify_scored(
+    scored: Iterable[tuple[float, HeritageItem]],
+    *,
+    prefix_size: int = 40,
+) -> list[tuple[float, HeritageItem]]:
+    """Diversify only near-tied top results while preserving relevance.
+
+    The algorithm is deterministic: within a relevance band it prefers a new
+    family and region, then falls back to score/title/id. Strong exact matches
+    remain ahead of the band, so this is not random exploration.
+    """
+    pairs = list(scored)
+    # Preserve the source order for ties. The source order is deterministic,
+    # while title sorting here would reintroduce the same alphabetical bias
+    # that diversification is meant to remove.
+    ordered = [
+        pair
+        for _index, pair in sorted(enumerate(pairs), key=lambda indexed: (-indexed[1][0], indexed[0]))
+    ]
+    if len(ordered) <= 1:
+        return ordered
+    prefix_length = min(prefix_size, len(ordered))
+    remaining = ordered[:prefix_length]
+    selected: list[tuple[float, HeritageItem]] = []
+    while remaining:
+        if not selected:
+            selected.append(remaining.pop(0))
+            continue
+        best_score = remaining[0][0]
+        tolerance = max(5.0, abs(best_score) * 0.18)
+        eligible = [pair for pair in remaining if pair[0] >= best_score - tolerance]
+        if not eligible:
+            eligible = [remaining[0]]
+
+        def preference(pair: tuple[float, HeritageItem]) -> tuple[int, int, float, str, str]:
+            family, region = _diversity_key(pair[1])
+            same_family = sum(_diversity_key(item)[0] == family for _, item in selected)
+            same_region = sum(_diversity_key(item)[1] == region for _, item in selected)
+            return (same_family, same_region, -pair[0], pair[1].title.casefold(), pair[1].id)
+
+        picked = min(eligible, key=preference)
+        remaining.remove(picked)
+        selected.append(picked)
+    return selected + ordered[prefix_length:]
+
+
+def _pinyin_forms(text: str) -> list[str]:
+    if not text:
+        return []
+    try:
+        from pypinyin import lazy_pinyin
+    except ImportError:
+        return []
+    return ["".join(lazy_pinyin(text)).lower()]
+
+
+def _pinyin_score(item: HeritageItem, query: str) -> float:
+    if len(query) < 2:
+        return 0.0
+    query_forms = _pinyin_forms(query)
+    if not query_forms:
+        return 0.0
+    query_py = query_forms[0]
+    title = _pinyin_forms(item.title)
+    aliases = [form for alias in _aliases(item) for form in _pinyin_forms(alias)]
+    if any(query_py == form for form in title):
+        return 42.0
+    if any(query_py in form for form in title):
+        return 28.0
+    if any(query_py == form for form in aliases):
+        return 24.0
+    if any(query_py in form for form in aliases):
+        return 16.0
+    return 0.0
+
+
+def embedding_scores(
+    kb: KnowledgeBase,
+    query: str,
+    candidates: Sequence[HeritageItem],
+    min_score: float = 0.0,
+) -> dict[str, float]:
+    """Lazy proxy kept patchable for offline callers and optional embeddings."""
+    from .embeddings import embedding_scores as score_embeddings
+
+    return score_embeddings(kb, query, candidates, min_score=min_score)
+
+
+def _semantic_scores(
+    kb: KnowledgeBase,
+    query: str,
+    candidates: Sequence[HeritageItem],
+) -> dict[str, float]:
+    try:
+        return embedding_scores(
+            kb,
+            query,
+            candidates,
+            min_score=config.EMBEDDING_MIN_SCORE,
+        )
+    except Exception as exc:  # noqa: BLE001 - semantic retrieval must degrade gracefully.
+        LOGGER.info("retrieval.semantic.fallback reason=%s", type(exc).__name__)
+        return {}
+
+
+def _rank(
+    kb: KnowledgeBase,
+    candidates: Sequence[HeritageItem],
+    query: str,
+    use_pinyin: bool,
+) -> list[HeritageItem]:
+    tokens = tokenize(query)
+    lexical = {item.id: _lexical_score(item, query, tokens) for item in candidates}
+    pinyin = {item.id: _pinyin_score(item, query) for item in candidates} if use_pinyin else {}
+
+    # Pinyin is a fallback signal, while a real lexical hit remains stronger.
+    scores = {item.id: max(lexical[item.id], pinyin.get(item.id, 0.0)) for item in candidates}
+    has_lexical_results = any(score >= _MIN_LEXICAL_SCORE for score in scores.values())
+    if config.SEARCH_USE_EMBEDDING and query and not has_lexical_results:
+        semantic = _semantic_scores(kb, query, candidates)
+        if semantic:
+            lexical_max = max(scores.values(), default=0.0) or 1.0
+            semantic_max = max(semantic.values(), default=0.0) or 1.0
+            for item in candidates:
+                lexical_part = scores[item.id] / lexical_max if scores[item.id] else 0.0
+                semantic_part = max(semantic.get(item.id, 0.0), 0.0) / semantic_max
+                scores[item.id] = 0.7 * lexical_part + 0.3 * semantic_part
+            return [
+                item
+                for score, item in _diversify_scored((scores[item.id], item) for item in candidates)
+                if score > 0
+                and (lexical[item.id] >= _MIN_LEXICAL_SCORE or item.id in semantic)
+            ]
+
+    return [
+        item for score, item in _diversify_scored((scores[item.id], item) for item in candidates)
+        if score >= _MIN_LEXICAL_SCORE
+    ]
 
 
 def search_items(
@@ -181,274 +324,54 @@ def search_items(
     keywords: str = "",
     limit: int = 30,
     offset: int = 0,
+    use_pinyin: bool = True,
 ) -> tuple[list[HeritageItem], int]:
-    query = normalize_text(query)
-    category = normalize_text(category)
-    province = normalize_text(province)
-    level = normalize_text(level)
-    district = normalize_text(district)
-    keywords = normalize_text(keywords)
-    candidates: Iterable[HeritageItem] = kb.items
-
-    if category:
-        candidates = (item for item in candidates if item.category == category)
-    if province:
-        candidates = (
-            item for item in candidates
-            if item.province == province
-        )
-    if level:
-        candidates = (
-            item for item in candidates
-            if item.level == level
-        )
-    if district:
-        candidates = (
-            item for item in candidates
-            if district in item.district
-        )
-    if keywords:
-        query = f"{keywords} {query}".strip()
-
-    candidates = list(candidates)
-
-    if not query:
-        result = sorted(candidates, key=lambda item: (item.category, item.title))
-        return result[offset : offset + limit], len(result)
-
-    search_query = normalize_search_query(query)
-    tokens = tokenize(search_query)
-    lowered_query = search_query or query.lower()
-    ranked = rank_lexical(candidates, lowered_query, tokens)
-
-    using_hybrid = False
-    if config.SEARCH_USE_EMBEDDING:
-        try:
-            ranked = rank_hybrid(kb, candidates, lowered_query, tokens)
-            using_hybrid = True
-        except Exception:  # noqa: BLE001 - semantic retrieval should degrade to lexical search.
-            pass
-
-    min_score = HYBRID_MIN_SCORE if using_hybrid else LEXICAL_MIN_SCORE
-    result = [item for score, item in ranked if score >= min_score]
-    result = prepend_pinyin_matches(kb, result, search_query or query, candidates)
-    return result[offset : offset + limit], len(result)
-
-
-def prepend_pinyin_matches(
-    kb: KnowledgeBase,
-    ranked_items: list[HeritageItem],
-    query: str,
-    candidates: list[HeritageItem],
-) -> list[HeritageItem]:
-    """Place homophone title matches before normal ranked results.
-
-    Pinyin matching is intentionally a lexical supplement: it helps misspelled
-    or same-sound Chinese queries such as "落山" find "罗山", without feeding
-    those same-sound tokens into embedding search.
-    """
-    if not query or len(query) < _PINYIN_MIN_QUERY_LEN:
-        return ranked_items
-    if has_title_substring_match(ranked_items, query):
-        return ranked_items
-    if has_location_token_match(ranked_items, query):
-        return ranked_items
-
-    candidate_ids = {item.id for item in candidates}
-    pinyin_results = [
-        item for item in search_items_pinyin(kb, query)
-        if item.id in candidate_ids
-    ]
-    if not pinyin_results:
-        return ranked_items
-
-    pinyin_ids = {item.id for item in pinyin_results}
-    return pinyin_results + [item for item in ranked_items if item.id not in pinyin_ids]
-
-
-def has_title_substring_match(items: list[HeritageItem], query: str) -> bool:
-    lowered_query = query.lower()
-    return any(item.title and item.title.lower() in lowered_query for item in items)
-
-
-def has_location_token_match(items: list[HeritageItem], query: str) -> bool:
-    tokens = [token for token in tokenize(query) if len(token) >= 2]
-    if not tokens:
-        return False
-    for item in items[:8]:
-        location = f"{item.province} {item.city} {item.district}".lower()
-        if any(token.lower() in location for token in tokens):
-            return True
-    return False
-
-
-def rank_lexical(
-    candidates: Iterable[HeritageItem],
-    lowered_query: str,
-    tokens: list[str],
-) -> list[tuple[float, HeritageItem]]:
-    ranked: list[tuple[float, HeritageItem]] = []
-
-    for item in candidates:
-        score = score_item(item, lowered_query, tokens)
-        if score > 0:
-            ranked.append((score, item))
-
-    ranked.sort(key=lambda pair: (-pair[0], pair[1].title))
-    return ranked
-
-
-def rank_hybrid(
-    kb: KnowledgeBase,
-    candidates: list[HeritageItem],
-    lowered_query: str,
-    tokens: list[str],
-) -> list[tuple[float, HeritageItem]]:
-    from .embeddings import embedding_scores
-
-    semantic_scores = embedding_scores(kb, lowered_query, candidates, min_score=0.0)
-    lexical_ranked = rank_lexical(candidates, lowered_query, tokens)
-    lexical_scores = {item.id: score for score, item in lexical_ranked}
-    items_by_id = {item.id: item for item in candidates}
-    candidate_ids: set[str] = set()
-    rank_scores: dict[str, float] = {}
-
-    add_rank_signal(
-        rank_scores,
-        lexical_ranked[:HYBRID_LEXICAL_CANDIDATES],
-        LEXICAL_RANK_WEIGHT,
+    """Filter, rank, and paginate heritage items with deterministic ordering."""
+    category, province, level, district = (
+        normalize_text(str(value or "")) for value in (category, province, level, district)
     )
-    candidate_ids.update(item.id for _, item in lexical_ranked[:HYBRID_LEXICAL_CANDIDATES])
-
-    semantic_ranked = [
-        (score, item)
-        for item_id, score in semantic_scores.items()
-        if (item := items_by_id.get(item_id)) is not None
+    implicit_category = _resolve_category(kb, f"{query} {keywords}") if not category else ""
+    if implicit_category:
+        category = implicit_category
+    raw_terms = normalize_text(f"{query} {keywords}")
+    resolved_province = _resolve_province(kb, province) or _resolve_province(kb, raw_terms)
+    province = resolved_province[0] if resolved_province else province
+    candidates = [
+        item for item in kb.items
+        if (not category or item.category == category)
+        and (not province or item.province == province)
+        and (not level or item.level == level)
+        and (not district or district in item.district)
     ]
-    semantic_ranked.sort(key=lambda pair: (-pair[0], pair[1].title))
-    add_rank_signal(
-        rank_scores,
-        semantic_ranked[:HYBRID_SEMANTIC_CANDIDATES],
-        SEMANTIC_RANK_WEIGHT,
-    )
-    candidate_ids.update(item.id for _, item in semantic_ranked[:HYBRID_SEMANTIC_CANDIDATES])
 
-    for item in candidates:
-        if strong_match_bonus(item, lowered_query, tokens) > 0:
-            candidate_ids.add(item.id)
+    normalized_query = normalize_search_query(query)
+    normalized_keywords = normalize_search_query(keywords)
+    combined_query = " ".join(part for part in (normalized_query, normalized_keywords) if part)
+    if resolved_province:
+        canonical, alias = resolved_province
+        combined_query = normalize_text(
+            combined_query.replace(canonical.lower(), " ").replace(alias.lower(), " ")
+        )
+    if implicit_category:
+        combined_query = normalize_text(
+            combined_query.replace(normalize_search_query(implicit_category), " ")
+        )
+    if combined_query:
+        ranked = _rank(kb, candidates, combined_query, use_pinyin)
+    elif raw_terms and not resolved_province and not implicit_category:
+        ranked = []
+    else:
+        ranked = [
+            item
+            for _score, item in _diversify_scored(
+                (0.0, item)
+                for item in sorted(
+                    candidates,
+                    key=lambda item: (item.category.casefold(), item.title.casefold(), item.id),
+                )
+            )
+        ]
 
-    ranked: list[tuple[float, HeritageItem]] = []
-    for item_id in candidate_ids:
-        item = items_by_id[item_id]
-        score = rank_scores.get(item_id, 0.0)
-        score += strong_match_bonus(item, lowered_query, tokens)
-        score += lexical_tiebreak(lexical_scores.get(item_id, 0.0))
-        ranked.append((score, item))
-
-    ranked.sort(key=lambda pair: (-pair[0], pair[1].title))
-    return ranked
-
-
-def add_rank_signal(
-    rank_scores: dict[str, float],
-    ranked: list[tuple[float, HeritageItem]],
-    weight: float,
-) -> None:
-    for rank, (_, item) in enumerate(ranked, start=1):
-        rank_scores[item.id] = rank_scores.get(item.id, 0.0) + weight / (RRF_K + rank)
-
-
-def strong_match_bonus(item: HeritageItem, query: str, tokens: list[str]) -> float:
-    if not query:
-        return 0.0
-
-    title = item.title.lower()
-    family = item.family.lower()
-    category = item.category.lower()
-    bonus = 0.0
-
-    if query == title:
-        bonus += 0.7
-    elif query in title:
-        bonus += 0.35
-
-    if query == family:
-        bonus += 0.25
-    elif family and query in family:
-        bonus += 0.08
-
-    if query == category:
-        bonus += 0.2
-    elif query in category:
-        bonus += 0.1
-
-    for token in tokens:
-        if not token:
-            continue
-        if token == title:
-            bonus += 0.06
-        elif token in title:
-            bonus += 0.004
-        if token == family:
-            bonus += 0.04
-        elif family and token in family:
-            bonus += 0.003
-        if token == category:
-            bonus += 0.08
-        elif token in category:
-            bonus += 0.003
-
-    return bonus
-
-
-def lexical_tiebreak(score: float) -> float:
-    if score <= 0:
-        return 0.0
-    return min(score, 100.0) / 10000.0
-
-
-def score_item(item: HeritageItem, query: str, tokens: list[str]) -> float:
-    title = item.title.lower()
-    family = item.family.lower()
-    category = item.category.lower()
-    province = item.province.lower()
-    city = item.city.lower()
-    district = item.district.lower()
-    location = " ".join(part for part in (province, city, district) if part)
-    summary = item.summary.lower()
-    content = item.content.lower()
-    search_text = item.search_text.lower()
-
-    score = 0.0
-    if query == title:
-        score += 100
-    if query and query in title:
-        score += 40
-    if query and query in family:
-        score += 18
-    if query and query in category:
-        score += 16
-    if query and query in location:
-        score += 18
-    if query and query in summary:
-        score += 10
-    if query and query in content:
-        score += 12
-
-    for token in tokens:
-        if token in title:
-            score += 12
-        if token in family:
-            score += 6
-        if token in category:
-            score += 5
-        if token in province:
-            score += 10
-        elif token in city or token in district:
-            score += 8
-        if token in summary:
-            score += 3
-        if token in search_text:
-            score += 1
-
-    return score
+    start = max(int(offset), 0)
+    size = max(int(limit), 0)
+    return ranked[start : start + size], len(ranked)

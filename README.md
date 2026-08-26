@@ -1,271 +1,204 @@
 # 叙华
 
-叙华是一个面向非遗传播与教育展示的任务型 AI 智能体。它把全国非遗项目资料、混合检索、大模型规划、Markdown 回答和数字人播报整合到一个本地 Web 应用里，适合课程展示、竞赛演示和局域网现场讲解。
+叙华是一款非遗资料检索与对话应用。它以本地可核验资料为依据，把 3610 项、10 类非遗项目组织成可搜索、可追问、可引用的数字人讲解体验。
 
-当前数据集包含 3610 项非遗项目，覆盖 10 个类别。系统可以回答知识问题，也可以完成项目推荐、项目对比、展示策划、研学任务设计和内容转化等更接近真实展示场景的任务。
+当前版本聚焦一条清晰主链路：**检索资料 → 流式回答 → 展示来源 → 语音播报**。没有配置大模型时，应用仍会基于本地资料给出可用回答。
 
-## 核心能力
+## 产品能力
 
-- 搜索优先的问答 Agent：每轮对话先由服务端召回高相关候选，再交给大模型判断是直接回答还是继续检索。
-- 可控检索轮次：模型每轮最多连续检索 2 次，避免无限循环和长时间等待。
-- 多查询精查：模型发起检索时可以一次给出多个 `search_queries`，服务端分别查询后合并资料。
-- 上下文追问：服务端保留最近 5 轮对话和已展示条目，支持“再加入一个同类项目”“它有什么特点”这类追问。
-- 混合检索：结构化筛选、关键词检索、拼音同音匹配和可选 embedding 语义召回共同参与排序。
-- 模型决定展示：问答中间的重点卡片由模型根据任务选择，前端只负责展示，不替模型做业务决策。
-- Markdown 展示：答案要求由提示词直接生成可渲染 Markdown，前端负责渲染，后端不再做复杂表格修复。
-- 数字人播报：前端状态机驱动等待、思考、播报、结束视频；语音可用浏览器播报，也可接服务端 TTS。
+- 非遗项目检索：支持关键词、类别、地区、级别与拼音匹配。
+- 有来源的流式问答：回答与候选资料来自同一检索核心。
+- 连续文本对话：服务端保留最近对话，支持上下文追问。
+- 自然轮次：浏览器端 VAD 自动判断用户是否开始、结束说话，无需按住按钮或手动提交录音。
+- 连续与抢话：一个浏览器语音 WebSocket 承载多轮上下文；用户开口并被确认后，立即取消正在播报的回答。
+- 数字人界面：浅色宣纸质感的全屏三栏工作区，左侧数字人、中间对话、右侧项目资料。
+- 实时语音：浏览器采集音频，经讯飞流式 ASR、AssistantService 与 DeepSeek 生成回答，再由 Edge TTS 返回可中断音频。
 
-## 适用任务
-
-| 任务 | 示例问题 | 输出形态 |
-| --- | --- | --- |
-| 事实问答 | `汴绣是什么？` | 分段说明、要点列表 |
-| 资料筛选 | `河南省国家级传统美术项目有哪些？` | 条目卡片 + 筛选说明 |
-| 项目推荐 | `推荐几个适合亲子互动体验的河南非遗项目` | 推荐表格、推荐理由 |
-| 项目对比 | `比较一下罗山皮影戏和桐柏皮影戏` | Markdown 对比表 |
-| 展示策划 | `策划一个适合社区活动展示的河南非遗小展` | 展项、动线、互动、物料 |
-| 研学任务 | `围绕豫剧设计一个适合中学生的研学任务` | 目标、步骤、评价、注意事项 |
-| 内容转化 | `给汴绣生成中英双语介绍` | 双语表格或分段文案 |
-
-## 技术架构
+## 架构
 
 ```text
-浏览器页面
-  ├─ 资料检索侧栏：/api/items
-  ├─ 提问面板：/api/ask SSE
-  ├─ Markdown 渲染：marked + DOMPurify
-  └─ 数字人/语音：视频状态机 + Web Speech / 服务端 TTS
+React / Vite 前端
+  ├─ 项目检索与筛选
+  ├─ POST /api/chat 流式事件
+  ├─ 来源与推荐卡片
+  ├─ WebSocket /api/voice：浏览器 VAD 与流式语音识别
+  └─ GET /api/tts：Edge TTS 音频流与中断播放
 
-Flask 服务
-  ├─ Agent 调度：任务识别、搜索预算、上下文追问
-  ├─ 检索层：结构化字段 + 关键词 + 拼音 + embedding RRF
-  ├─ 数据层：heritage_items.json + ai_fields.json
-  ├─ 大模型层：OpenAI 兼容 chat completion
-  └─ 语音层：浏览器播报、火山 TTS、OpenAI TTS 可选
+FastAPI 服务
+  ├─ AssistantService：唯一回答流程
+  ├─ SearchService：唯一检索入口
+  ├─ SessionStore：session / turn / cancel
+  ├─ OpenAI-compatible LLM provider
+  ├─ XfyunStream：讯飞流式 ASR
+  └─ Edge TTS：流式语音合成
+
+本地数据
+  └─ data/processed/heritage_items.json
 ```
 
-语义检索不是 Chroma、FAISS 这类外部向量库，而是本地 JSON embedding 索引：`data/embeddings/heritage_embeddings.json`。索引由维护脚本生成，运行时加载后参与混合排序。
+普通文字问答使用稳定事件信封：`type`、`session_id`、`turn_id`、`seq`、`timestamp`、`payload`。实时语音使用同一个 session / turn / cancel 核心：浏览器端 VAD 通过 `/api/voice` 发送 PCM，讯飞返回流式 ASR 结果，回答仍由 `AssistantService` 复用唯一资料检索入口，语音输出通过 `/api/tts` 在浏览器端播放并支持打断。
 
 ## 快速开始
 
-### 1. 准备环境
+要求：Node.js 22+。放在统一的 `Packages` 目录中时，启动器会优先复用
+`Packages/runtime/uv/uv.exe`；单独交付时则需要系统已安装 [uv](https://docs.astral.sh/uv/)。
+Python 版本由 `.python-version` 锁定为 3.12。启动器与牡丹、田田共用
+`Packages/.venv`，只增量安装叙华缺少的依赖，不会用项目同步命令清理共享环境。
 
 ```powershell
-cd D:\Projects\xuhua
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+cd D:\Projects\Packages\叙华
+Copy-Item .env.example .env
+.\start.bat
 ```
 
-Python 3.10 到 3.12 均可。Windows 端推荐使用 PowerShell 和 Edge/Chrome。
-
-### 2. 创建本地配置
-
-```powershell
-copy .env.example .env
-```
-
-不配置任何 API Key 也可以启动页面和检索资料；需要大模型问答时再填写 `AI_API_KEY`。
-
-常用大模型配置示例：
-
-```env
-AI_BASE_URL=https://api.deepseek.com
-AI_MODEL=deepseek-v4-flash
-AI_TIMEOUT=60
-AI_API_KEY=你的密钥
-```
-
-### 3. 启动服务
-
-```powershell
-python .\app.py
-```
-
-默认地址：
+`start.bat` 会严格按 `package-lock.json` 重建前端，并按 `pyproject.toml` 检查、补齐共享
+Python 环境后启动服务。`uv.lock` 仍用于开发、测试与容器构建；共享环境采用增量安装，
+避免叙华启动时卸载牡丹、田田的专用依赖。本地启动固定监听 `127.0.0.1:5050`，健康检查
+通过后会自动用默认浏览器打开：
 
 ```text
 http://127.0.0.1:5050
 ```
 
-如果要让手机或其他设备访问，保持 `.env` 中 `HOST=0.0.0.0`，然后访问：
+`AI_API_KEY` 为空时，文字检索与问答仍可使用本地降级回答；实时语音还需要配置讯飞的三个 `XF_*` 变量，未配置时页面会明确显示语音不可用，不会模拟连接。
 
-```text
-http://你的电脑内网IP:5050
-```
+### 开发模式
 
-### 4. 可选：启用语义检索
-
-填写 embedding 配置：
-
-```env
-SEARCH_USE_EMBEDDING=1
-EMBEDDING_BASE_URL=https://api.vectorengine.ai/v1
-EMBEDDING_MODEL=text-embedding-3-small
-EMBEDDING_API_KEY=你的密钥
-```
-
-首次启用或数据集变化后，重建索引：
+终端一：
 
 ```powershell
-python .\scripts\maintenance\rebuild_embedding_index.py --no-resume
+uv sync --group dev
+uv run --env-file .env uvicorn heritage_explorer.api:app --reload --port 5050
 ```
 
-PowerShell 包装命令：
+终端二：
 
 ```powershell
-.\scripts\maintenance\rebuild_embedding_index.ps1 -NoResume
+cd frontend
+npm install
+npm run dev
 ```
 
-重建完成后重启 Web 服务。`data/embeddings/` 不提交到 Git，换机器运行时需要重新生成。
+Vite 会把 `/api` 与 `/healthz` 代理到本地 FastAPI 服务。
 
-## 重要配置
+## 配置
 
-| 变量 | 默认值 | 说明 |
+完整示例见 `.env.example`。常用变量：
+
+| 变量 | 默认值 | 用途 |
 | --- | --- | --- |
-| `HOST` | `127.0.0.1` | Flask 监听地址；局域网演示用 `0.0.0.0` |
+| `HOST` | `127.0.0.1` | 服务监听地址 |
 | `PORT` | `5050` | 服务端口 |
-| `DATASET_PATH` | `data/processed/heritage_items.json` | 主数据集路径 |
-| `AI_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容聊天接口地址 |
-| `AI_MODEL` | `deepseek-v4-flash` | 聊天模型名 |
-| `AI_API_KEY` | 空 | 留空时大模型能力不可用 |
-| `AI_AGENT_PLANNER` | `1` | 是否启用模型规划器 |
-| `AI_MAX_CONTEXT_CHARS` | `5200` | 单次发送给模型的资料上限 |
-| `SEARCH_USE_EMBEDDING` | `0` | 是否启用 embedding 混合检索 |
-| `EMBEDDING_INDEX_PATH` | `data/embeddings/heritage_embeddings.json` | 本地向量索引 |
-| `OPENAI_TTS_ENABLED` | `0` | 是否使用 OpenAI 兼容音频接口 |
-| `VOLC_TTS_ENABLED` | `1` | 是否启用火山引擎 TTS |
-| `TTS_CACHE_DIR` | `tmp/tts` | 服务端生成音频缓存目录 |
+| `DATASET_PATH` | `data/processed/heritage_items.json` | 主数据集 |
+| `FRONTEND_DIR` | `frontend/dist/client` | 已构建前端目录 |
+| `AI_BASE_URL` | `https://api.deepseek.com` | OpenAI 兼容聊天接口 |
+| `AI_MODEL` | `deepseek-v4-flash` | 聊天模型 |
+| `AI_API_KEY` | 空 | 大模型密钥 |
+| `XF_APP_ID` | 空 | 讯飞流式语音识别应用 ID |
+| `XF_API_KEY` | 空 | 讯飞流式语音识别 API Key |
+| `XF_API_SECRET` | 空 | 讯飞流式语音识别 API Secret |
+| `SEARCH_USE_EMBEDDING` | `0` | 是否启用可选语义索引 |
 
-完整配置见 [.env.example](.env.example)。
-
-## 数据与索引
-
-主要数据文件：
-
-- `data/processed/heritage_items.json`：3610 项非遗条目，包含标题、类别、地区、级别、摘要、正文和展示标签。
-- `data/processed/ai_fields.json`：由离线处理生成的补充字段，用于摘要、特色、历史、文化价值等展示。
-- `data/embeddings/heritage_embeddings.json`：本地语义索引，按需生成，不提交。
-
-数据集或 embedding 模型有任何变化时，必须全量重建索引：
-
-```powershell
-python .\scripts\maintenance\rebuild_embedding_index.py --no-resume
-```
-
-只有上一次构建被网络中断，且数据集没有变化时，才去掉 `--no-resume` 续跑。
+应用不会自行读取 `.env`。本地命令请使用 `uv run --env-file .env ...`；`start.bat` 已自动处理。
 
 ## API
 
-| 路径 | 方法 | 说明 |
+| 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| `/` | GET | 主页面 |
-| `/api/meta` | GET | 应用版本、数据集版本、条目数量 |
-| `/api/categories` | GET | 类别列表和数量 |
-| `/api/items` | GET | 资料检索，支持 `q`、`category`、`province`、`level`、`district`、`keywords`、`limit`、`offset` |
-| `/api/items?stream=1` | GET | 资料检索 SSE 版本 |
-| `/api/items/<id>` | GET | 条目详情 |
-| `/api/ask` | POST | 任务型问答，SSE 返回进度、结果和语音事件 |
-| `/api/tts` | POST | 生成服务端 TTS 音频 |
-| `/api/tts/stream` | GET | 流式 TTS 音频 |
-| `/api/tts/<filename>` | GET | 读取缓存音频 |
+| GET | `/healthz` | 健康检查 |
+| GET | `/api/meta` | 版本、数据规模与能力开关 |
+| GET | `/api/categories` | 类别与数量 |
+| GET | `/api/items` | 项目检索 |
+| GET | `/api/items/{item_id}` | 项目详情 |
+| POST | `/api/chat` | SSE 流式问答 |
+| POST | `/api/chat/{session_id}/turn/{turn_id}/cancel` | 中断指定轮次 |
+| WS | `/api/voice` | 浏览器端 VAD、讯飞流式 ASR、连续对话与抢话 |
+| GET | `/api/tts` | Edge TTS 音频流；通过 `text`、`trace_id`、`segment`、`reason` 标记播报段 |
 
-`/api/ask` 的最小请求：
+实时语音由浏览器端 VAD 自动断句。每个明确的用户轮次经讯飞流式 ASR 转成文字后，交给
+`AssistantService`；模型使用 `AI_BASE_URL` / `AI_MODEL` 配置的 OpenAI 兼容接口（默认
+DeepSeek），回答事实前复用本地检索。回答文本通过 Edge TTS 流式合成，浏览器播放过程中
+可以被新的用户语音立即打断。
+
+最小问答请求：
 
 ```json
 {
-  "question": "推荐几个适合亲子互动体验的河南非遗项目",
-  "voice_enabled": false
+  "question": "推荐适合校园展示的河南非遗项目",
+  "session_id": null,
+  "category": ""
 }
 ```
 
-## 目录结构
+## 数据维护
+
+源数据位于 `data/source/heritage_source.json`，运行数据由同一个确定性脚本生成：
+
+```powershell
+uv run python scripts/build_dataset.py `
+  --input data/source/heritage_source.json `
+  --output data/processed/heritage_items.json
+```
+
+可选 embedding 索引不提交到仓库。需要时执行：
+
+```powershell
+uv run --env-file .env python scripts/maintenance/rebuild_embedding_index.py --no-resume
+```
+
+## 实时语音链路
+
+当前唯一支持的语音路径是：
 
 ```text
-xuhua/
-├── app.py
-├── docs/                      # 设计说明、路线图与补充文档
-├── src/heritage_explorer/
-│   ├── agent/                  # Agent 主流程、任务分发、规划器
-│   │   ├── handlers/           # 任务处理扩展点（当前保留）
-│   │   ├── __init__.py         # Agent、意图路由、SSE 调度
-│   │   └── planner.py          # 模型规划器与决策解析
-│   ├── ai/                     # 模型调用、提示词、RAG 回答、语音稿
-│   ├── agent_comparison.py     # 对比任务处理
-│   ├── agent_models.py         # AgentResult / TaskType 等共享数据结构
-│   ├── agent_task_config.py    # 各任务的检索与生成配置
-│   ├── config.py               # 环境变量配置
-│   ├── conversation.py         # 最近 5 轮上下文存储
-│   ├── dataset.py              # 数据加载、序列化与标准化
-│   ├── embeddings.py           # 本地 embedding 索引
-│   ├── extractor.py            # 查询分析与结构化线索提取
-│   ├── http_client.py          # AI / TTS 共用 HTTP 请求封装
-│   ├── item_cards.py           # 条目卡片与来源 payload 组装
-│   ├── retriever.py            # 检索辅助逻辑
-│   ├── scenario_evidence.py    # 场景适配硬证据打分
-│   ├── search.py               # 混合检索与排序
-│   ├── transform_config.py     # 内容转化提示词
-│   ├── volc_tts.py             # 服务端 TTS
-│   └── web.py                  # Flask API 与 SSE / TTS 路由
-├── data/
-│   └── processed/              # 已处理数据
-├── scripts/
-│   ├── maintenance/            # embedding 索引维护脚本
-│   └── ...                     # 数据构建、导入、补录与辅助工具
-├── static/
-│   ├── js/                     # 前端模块
-│   ├── media/                  # 数字人视频和提示音频
-│   ├── vendor/                 # 前端第三方库
-│   └── styles.css              # 页面样式
-├── templates/                  # 页面和本地回答模板
-├── requirements.txt
-├── requirements-dev.txt
-└── pyproject.toml
+浏览器麦克风
+  → 浏览器端 VAD（开始/结束说话、抢话判定）
+  → /api/voice WebSocket
+  → 讯飞流式 ASR（partial / final）
+  → AssistantService / DeepSeek（检索、流式回答）
+  → Edge TTS（/api/tts）
+  → 浏览器可中断播放
 ```
 
-## 开发检查
+文字聊天与实时语音共享 `SessionStore`、`turn_id`、取消语义和本地资料检索；语音播放不依赖
+独立的第二套回答流程。用户在回答过程中开口并被 ASR 确认后，当前回答、正在播放的音频和
+剩余预取音频都应一起取消，再进入新的识别轮次。
+
+## 目录
+
+```text
+frontend/                       React 界面与真实视觉素材
+src/heritage_explorer/          FastAPI、对话、检索、会话与 providers
+data/source/                    原始数据
+data/processed/                 运行数据与离线补充字段
+scripts/                        数据构建、补充与索引维护
+tests/                           API、核心流程、检索、取消与语音传输测试
+```
+
+## 验证
 
 ```powershell
-python -m pip install -r requirements-dev.txt
-python -m compileall src
-python -m ruff check src scripts app.py
+uv lock --check
+uv run pytest -q
+uv run ruff check src scripts tests app.py
+uv run python -m compileall -q src scripts app.py
+
+cd frontend
+npm run build
+npm run test:sites
 ```
 
-前端脚本语法检查：
+## Docker
 
 ```powershell
-node --check static/js/ask.js
-node --check static/js/search.js
-node --check static/js/speech.js
+docker build -t xuhua .
+docker run --rm -p 5050:5050 --env-file .env -e HOST=0.0.0.0 xuhua
 ```
 
-如果本地没有 Node，可以跳过前端语法检查，只用浏览器控制台观察错误。
-
-## 常见问题
-
-### 问答失败或模型不回答
-
-先确认 `.env` 中 `AI_API_KEY`、`AI_BASE_URL`、`AI_MODEL` 是否正确。DeepSeek 等 OpenAI 兼容接口使用 `/chat/completions`，不要把 embedding 或 TTS 地址填到聊天接口里。
-
-### 检索结果很多但不相关
-
-确认是否启用了最新的 embedding 索引；数据集更新后必须使用 `--no-resume` 全量重建。场景类问题还会结合硬证据匹配，避免只因为软标签就把项目排到前面。
-
-### 手机访问不了
-
-确认 `.env` 中 `HOST=0.0.0.0`，电脑和手机在同一局域网，Windows 防火墙允许 Python 访问专用网络。部分校园网或路由器会开启 AP 隔离，设备之间会互相不可见。
-
-### 没有语音
-
-浏览器播报需要页面获得一次用户交互。服务端 TTS 需要配置火山引擎或 OpenAI 兼容音频接口；未配置时会自动回退到浏览器 Web Speech。
-
-### Markdown 表格显示异常
-
-当前策略是让模型直接输出规范 Markdown，前端只渲染，不在后端做复杂修复。出现异常时优先检查对应任务提示词，而不是叠加文本后处理。
+镜像会在独立 Node 阶段构建前端，再由 FastAPI 提供同源页面与 API。`render.yaml` 已配置 `/healthz` 健康检查。
 
 ## 安全
 
-- 不要提交 `.env`、真实 API Key、TTS 凭据或本地日志。
-- 大模型、embedding 和 TTS 都可能产生费用，演示前建议限制并发和请求次数。
-- 公开展示时请注意非遗资料来源、引用规范和学校/比赛的内容要求。
+- 不要提交 `.env`、API Key、日志或本地语义索引。
+- 大模型与 embedding 可能产生费用；公开部署前应在供应商侧设置额度与并发限制。
+- 答案基于本地资料，但正式发布仍应复核来源、署名与使用授权。

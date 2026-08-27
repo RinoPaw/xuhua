@@ -210,6 +210,10 @@ Compose 清单。切换期间可能出现短暂连接中断。
 
 腾讯云服务器若无法直连 Docker Hub，可将 `deploy/docker-daemon-tencent.json` 安装为
 `/etc/docker/daemon.json` 并重启 Docker。该配置使用腾讯云内网镜像加速地址。
+服务器访问 GitHub HTTPS 不稳定时，建议为本仓库配置服务器专用的只读 Deploy Key，并将
+`origin` 切换为 `ssh://git@ssh.github.com:443/RinoPaw/xuhua.git`。私钥应只保存在
+`/var/lib/xuhua/.ssh`，权限设为 `0600`；同时通过 `core.sshCommand` 固定该私钥、
+`known_hosts` 和严格主机校验。Deploy Key 不应授予写权限，也不要提交到仓库。
 
 首次部署需预先安装 Docker、Compose、Git、Python、`flock`、Nginx 与 Certbot，并建立运行账户及目录。
 以下顺序先安装生产配置和 systemd 单元，再手动完成一次发布；只有首次发布验证成功后才启用自动更新：

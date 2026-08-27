@@ -13,7 +13,8 @@ previous_good_sha_file="${XUHUA_PREVIOUS_GOOD_SHA_FILE:-/var/lib/xuhua/previous-
 failure_cooldown="${XUHUA_FAILURE_COOLDOWN:-600}"
 fetch_timeout="${XUHUA_FETCH_TIMEOUT:-180}"
 compose_file="$repo_dir/compose.yaml"
-expected_origin="https://github.com/RinoPaw/xuhua.git"
+expected_https_origin="https://github.com/RinoPaw/xuhua.git"
+expected_ssh_origin="ssh://git@ssh.github.com:443/RinoPaw/xuhua.git"
 
 export GIT_TERMINAL_PROMPT=0
 
@@ -42,10 +43,19 @@ if [[ "$(git symbolic-ref --short HEAD)" != "main" ]]; then
   exit 1
 fi
 
-if [[ "$(git remote get-url origin)" != "$expected_origin" ]]; then
-  echo "Unexpected Git origin; refusing to deploy." >&2
-  exit 1
-fi
+origin_url="$(git remote get-url origin)"
+case "$origin_url" in
+  "$expected_https_origin")
+    fetch_command=(git -c http.version=HTTP/1.1 fetch -4 --prune origin main)
+    ;;
+  "$expected_ssh_origin")
+    fetch_command=(git fetch --prune origin main)
+    ;;
+  *)
+    echo "Unexpected Git origin; refusing to deploy." >&2
+    exit 1
+    ;;
+esac
 
 if [[ -n "$(git status --porcelain=v1 --untracked-files=all)" ]]; then
   echo "Deployment checkout is dirty; refusing to overwrite local changes." >&2
@@ -57,7 +67,7 @@ if [[ -e .env || -e compose.override.yml || -e compose.override.yaml ]]; then
   exit 1
 fi
 
-if ! timeout --foreground "${fetch_timeout}s" git -c http.version=HTTP/1.1 fetch -4 --prune origin main; then
+if ! timeout --foreground "${fetch_timeout}s" "${fetch_command[@]}"; then
   echo "GitHub fetch failed or exceeded ${fetch_timeout} seconds." >&2
   exit 1
 fi

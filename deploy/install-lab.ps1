@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [string]$InstallRoot = "D:\Projects\Packages",
     [string]$Repository = "https://github.com/RinoPaw/xuhua.git",

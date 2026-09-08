@@ -2,6 +2,7 @@
 setlocal
 chcp 65001 >nul
 set "INSTALLER=%TEMP%\xuhua-install-lab.ps1"
+if /I "%~1"=="--syntax-check" goto :syntax_ok
 echo [1/2] 正在从 GitHub 获取叙华安装器...
 powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest 'https://raw.githubusercontent.com/RinoPaw/xuhua/main/deploy/install-lab.ps1' -OutFile '%INSTALLER%' -UseBasicParsing"
 if errorlevel 1 goto :fail
@@ -12,6 +13,9 @@ if exist "%~dp0xuhua.env" (
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%INSTALLER%"
 )
 if errorlevel 1 goto :fail
+exit /b 0
+:syntax_ok
+echo [OK] bootstrap syntax
 exit /b 0
 :fail
 echo.

@@ -78,3 +78,32 @@ def test_non_chinese_transcript_skips_pinyin_normalization_even_with_context() -
     assert result.raw_text == "卞绣の歴史を教えてください。"
     assert result.canonical_text == result.raw_text
     assert result.spans == ()
+
+
+def test_corrects_xuhua_homophone_when_user_addresses_assistant() -> None:
+    result = normalize_asr_final(
+        "徐华，给我介绍一下汴绣。",
+        kb=_kb(("汴绣", "传统美术", ())),
+    )
+
+    assert result.canonical_text == "叙华，给我介绍一下汴绣。"
+    assert result.spans[0].raw == "徐华"
+    assert result.spans[0].canonical == "叙华"
+    assert result.spans[0].reason == "assistant-name-asr-alias"
+
+
+def test_corrects_xuhua_homophone_after_greeting() -> None:
+    result = normalize_asr_final("你好徐华", kb=_kb())
+
+    assert result.canonical_text == "你好叙华"
+    assert len(result.spans) == 1
+
+
+def test_does_not_rewrite_real_person_named_xuhua() -> None:
+    result = normalize_asr_final(
+        "传承人徐华的经历很丰富。",
+        kb=_kb(("汴绣", "传统美术", ())),
+    )
+
+    assert result.canonical_text == result.raw_text
+    assert result.spans == ()

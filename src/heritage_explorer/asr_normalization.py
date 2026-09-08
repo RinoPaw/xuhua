@@ -58,6 +58,77 @@ class _Match:
 
 
 _CHINESE_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
+_ASSISTANT_NAME = "叙华"
+_ASSISTANT_ASR_ALIASES = ("徐华",)
+_ASSISTANT_ADDRESS_FOLLOW = (
+    "你",
+    "请",
+    "能",
+    "可以",
+    "可不可以",
+    "帮",
+    "给",
+    "讲",
+    "介绍",
+    "告诉",
+    "聊",
+    "推荐",
+    "说",
+    "解释",
+    "看看",
+)
+_ASSISTANT_ADDRESS_LEAD = (
+    "你好",
+    "您好",
+    "嗨",
+    "哈喽",
+    "请问",
+    "我说的是",
+    "我叫的是",
+)
+_ASSISTANT_BOUNDARY = frozenset(" \t\r\n，,。！？!?：:、")
+
+
+def _assistant_reference_normalization(text: str) -> tuple[str, tuple[NormalizedSpan, ...]]:
+    """Correct a known ASR homophone only when it looks like an address to 叙华.
+
+    ``徐华`` is a perfectly valid person's name, so it must not be replaced in
+    ordinary factual text such as ``传承人徐华的经历``.  Voice commands normally
+    put the assistant name at the beginning, next to punctuation, or after a
+    greeting; those narrow contexts are enough to make the correction safe.
+    """
+
+    output = str(text or "")
+    spans: list[NormalizedSpan] = []
+    for alias in _ASSISTANT_ASR_ALIASES:
+        search_from = 0
+        while True:
+            start = output.find(alias, search_from)
+            if start < 0:
+                break
+            end = start + len(alias)
+            before = output[:start]
+            after = output[end:]
+            left_boundary = start == 0 or (before and before[-1] in _ASSISTANT_BOUNDARY)
+            greeted = any(before.endswith(prefix) for prefix in _ASSISTANT_ADDRESS_LEAD)
+            right_boundary = not after or after[0] in _ASSISTANT_BOUNDARY
+            addressed = any(after.startswith(prefix) for prefix in _ASSISTANT_ADDRESS_FOLLOW)
+            if (left_boundary and (right_boundary or addressed)) or (
+                greeted and (right_boundary or addressed)
+            ):
+                output = output[:start] + _ASSISTANT_NAME + output[end:]
+                spans.append(
+                    NormalizedSpan(
+                        start=start,
+                        end=end,
+                        raw=alias,
+                        canonical=_ASSISTANT_NAME,
+                        score=1.0,
+                        reason="assistant-name-asr-alias",
+                    )
+                )
+            search_from = end
+    return output, tuple(spans)
 
 
 def _items_from_kb(kb: Any) -> Iterable[Any]:
@@ -263,20 +334,23 @@ def normalize_asr_final(
     asr_candidates: Iterable[Any] = (),
     language: str = "zh",
 ) -> NormalizedTranscript:
-    """Conservatively correct likely heritage-item name errors in a transcript.
+    """Conservatively correct likely Chinese ASR errors in a transcript.
 
-    Only changed local Chinese spans are returned.  Exact titles and aliases
-    are protected, and a fuzzy change requires category, recent-item, or n-best
+    Address-like homophones of the assistant name are normalized first.  Item
+    name corrections remain context constrained: exact titles and aliases are
+    protected, and a fuzzy change requires category, recent-item, or n-best
     evidence plus a clear score margin over the next candidate.
     """
 
-    text = str(raw_text or "")
+    original_text = str(raw_text or "")
     language_code = str(language or "").strip().casefold().replace("-", "_")
     if language_code not in {"zh", "cn", "zh_cn", "cn_cbm", "chinese"}:
-        return NormalizedTranscript(text, text, ())
+        return NormalizedTranscript(original_text, original_text, ())
+
+    text, assistant_spans = _assistant_reference_normalization(original_text)
     index = _get_index(kb)
     if not text or not index.entries:
-        return NormalizedTranscript(text, text, ())
+        return NormalizedTranscript(original_text, text, assistant_spans)
 
     def as_texts(values: Iterable[Any]) -> tuple[str, ...]:
         if isinstance(values, str):
@@ -295,6 +369,7 @@ def normalize_asr_final(
     recent = as_texts(recent_items)
     nbest = as_texts(asr_candidates)
     protected = _protected_ranges(text, index)
+    protected.extend((span.start, span.end) for span in assistant_spans)
     matches: list[_Match] = []
 
     for run in _CHINESE_RUN.finditer(text):
@@ -358,13 +433,13 @@ def normalize_asr_final(
     chosen.sort(key=lambda m: m.start)
 
     if not chosen:
-        return NormalizedTranscript(text, text, ())
+        return NormalizedTranscript(original_text, text, assistant_spans)
     output: list[str] = []
-    spans: list[NormalizedSpan] = []
+    spans: list[NormalizedSpan] = list(assistant_spans)
     cursor = 0
     for match in chosen:
         output.append(text[cursor : match.start])
-        raw = text[match.start : match.end]
+        raw = original_text[match.start : match.end]
         output.append(match.entry.canonical)
         spans.append(
             NormalizedSpan(
@@ -373,7 +448,8 @@ def normalize_asr_final(
         )
         cursor = match.end
     output.append(text[cursor:])
-    return NormalizedTranscript(text, "".join(output), tuple(spans))
+    spans.sort(key=lambda span: span.start)
+    return NormalizedTranscript(original_text, "".join(output), tuple(spans))
 
 
 __all__ = [

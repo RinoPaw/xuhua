@@ -150,7 +150,9 @@ class _Index:
                     continue
                 pinyin = _py(form)
                 self.by_py.setdefault(pinyin, []).append(entry)
-                self.by_prefix.setdefault((len(form), pinyin[0] if pinyin else ""), []).append(entry)
+                self.by_prefix.setdefault((len(form), pinyin[0] if pinyin else ""), []).append(
+                    entry
+                )
                 self.by_first_char.setdefault((len(form), form[0]), []).append(entry)
         self.exact_forms = frozenset(
             form for e in self.entries for form in e.forms if form and _CHINESE_RUN.fullmatch(form)
@@ -230,7 +232,9 @@ def _overlaps(start: int, end: int, ranges: list[tuple[int, int]]) -> bool:
     return any(start < right and end > left for left, right in ranges)
 
 
-def _signal(value: str, entry: _Entry, *, candidates: tuple[str, ...], recent: tuple[str, ...]) -> tuple[float, list[str]]:
+def _signal(
+    value: str, entry: _Entry, *, candidates: tuple[str, ...], recent: tuple[str, ...]
+) -> tuple[float, list[str]]:
     """Context score and human-readable evidence for one candidate."""
 
     canonical = entry.canonical
@@ -257,6 +261,7 @@ def normalize_asr_final(
     category: str = "",
     recent_items: Iterable[Any] = (),
     asr_candidates: Iterable[Any] = (),
+    language: str = "zh",
 ) -> NormalizedTranscript:
     """Conservatively correct likely heritage-item name errors in a transcript.
 
@@ -266,6 +271,9 @@ def normalize_asr_final(
     """
 
     text = str(raw_text or "")
+    language_code = str(language or "").strip().casefold().replace("-", "_")
+    if language_code not in {"zh", "cn", "zh_cn", "cn_cbm", "chinese"}:
+        return NormalizedTranscript(text, text, ())
     index = _get_index(kb)
     if not text or not index.entries:
         return NormalizedTranscript(text, text, ())
@@ -309,7 +317,9 @@ def normalize_asr_final(
                 for entry in candidates:
                     best_form = max(
                         entry.forms,
-                        key=lambda form: _char_similarity(raw, form) + _sequence_similarity(raw_py, _py(form)),
+                        key=lambda form: (
+                            _char_similarity(raw, form) + _sequence_similarity(raw_py, _py(form))
+                        ),
                     )
                     char_score = _char_similarity(raw, best_form)
                     py_score = _sequence_similarity(raw_py, _py(best_form))
@@ -357,7 +367,9 @@ def normalize_asr_final(
         raw = text[match.start : match.end]
         output.append(match.entry.canonical)
         spans.append(
-            NormalizedSpan(match.start, match.end, raw, match.entry.canonical, match.score, match.reason)
+            NormalizedSpan(
+                match.start, match.end, raw, match.entry.canonical, match.score, match.reason
+            )
         )
         cursor = match.end
     output.append(text[cursor:])

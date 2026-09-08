@@ -85,6 +85,7 @@ class RecordingAssistant:
         session_id: str | None = None,
         turn_id: str | None = None,
         category: str = "",
+        locale_hint: str = "",
     ) -> AsyncIterator[AssistantEvent]:
         self.calls.append(
             {
@@ -92,6 +93,7 @@ class RecordingAssistant:
                 "session_id": session_id,
                 "turn_id": turn_id,
                 "category": category,
+                "locale_hint": locale_hint,
             }
         )
         for event in self.events:
@@ -122,12 +124,18 @@ class ASGIClient:
 
 
 class FakeXfyunStream:
-    """Deterministic ASR stream used to exercise the websocket orchestration."""
+    """Deterministic auto-ASR stream used to exercise websocket orchestration."""
+
+    AUTO = "auto"
+    DIALECT = "dialect"
+    MULTILINGUAL = "multilingual"
+    LEGACY = "legacy"
 
     instances: list["FakeXfyunStream"] = []
     transcript = ""
     candidate_texts: tuple[str, ...] = ()
     partial = ""
+    provider_language = "zh"
     block_finish = False
     block_start = False
     finish_gate = threading.Event()
@@ -146,6 +154,8 @@ class FakeXfyunStream:
             (self.transcript,) if self.transcript else ()
         )
         self.partial = self.__class__.partial
+        self.selected_mode = str(kwargs.get("preferred_mode") or self.DIALECT)
+        self.detected_language = self.__class__.provider_language
         self.__class__.instances.append(self)
 
     async def start(self) -> None:
@@ -183,6 +193,7 @@ class VoiceRecordingAssistant:
         session_id: str | None = None,
         turn_id: str | None = None,
         category: str = "",
+        locale_hint: str = "",
     ) -> AsyncIterator[AssistantEvent]:
         assert turn_id is not None
         session = session_id or "voice-session"
@@ -192,6 +203,7 @@ class VoiceRecordingAssistant:
                 "session_id": session_id,
                 "turn_id": turn_id,
                 "category": category,
+                "locale_hint": locale_hint,
             }
         )
         self.started.set()
@@ -226,9 +238,10 @@ def voice_test_client(monkeypatch, assistant: VoiceRecordingAssistant) -> TestCl
     FakeXfyunStream.block_start = False
     FakeXfyunStream.partial = ""
     FakeXfyunStream.candidate_texts = ()
+    FakeXfyunStream.provider_language = "zh"
     FakeXfyunStream.finish_gate.set()
     FakeXfyunStream.start_gate.set()
-    monkeypatch.setattr(api_module, "XfyunStream", FakeXfyunStream)
+    monkeypatch.setattr(api_module, "AutoXfyunStream", FakeXfyunStream)
     search = RecordingSearch(make_kb())
     return TestClient(
         create_app(
@@ -379,7 +392,9 @@ def parse_sse(body: str) -> list[dict[str, object]]:
 def test_chat_sse_preserves_order_and_nested_event_payload() -> None:
     events = (
         AssistantEvent("turn.started", "session-1", "turn-1", 0, payload={"question": "介绍"}),
-        AssistantEvent("response.sources", "session-1", "turn-1", 1, payload={"sources": [{"id": "item-1"}]}),
+        AssistantEvent(
+            "response.sources", "session-1", "turn-1", 1, payload={"sources": [{"id": "item-1"}]}
+        ),
         AssistantEvent("turn.completed", "session-1", "turn-1", 2, payload={"answer": "完成"}),
     )
     client, _kb, _search, assistant = build_client(events=events)
@@ -407,6 +422,7 @@ def test_chat_sse_preserves_order_and_nested_event_payload() -> None:
             "session_id": "session-1",
             "turn_id": None,
             "category": "传统技艺",
+            "locale_hint": "",
         }
     ]
 
@@ -421,8 +437,9 @@ def test_voice_empty_vad_does_not_cancel_active_answer(monkeypatch) -> None:
             assert assistant.started.wait(2)
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "thinking",
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "thinking"
+                ),
             )
 
             websocket.send_json({"type": "utterance.start", "interrupt": True})
@@ -434,8 +451,7 @@ def test_voice_empty_vad_does_not_cancel_active_answer(monkeypatch) -> None:
                 lambda message: message.get("type") == "utterance.rejected",
             )
             assert not any(
-                message.get("type") == "status"
-                and message.get("status") == "user_speaking"
+                message.get("type") == "status" and message.get("status") == "user_speaking"
                 for message in messages
             )
             assert not assistant.cancelled.is_set()
@@ -457,8 +473,9 @@ def test_voice_empty_final_is_rejected_without_starting_new_answer(monkeypatch) 
             websocket.send_json({"type": "utterance.start"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking",
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "user_speaking"
+                ),
             )
             websocket.send_json({"type": "utterance.end"})
             messages = receive_until(
@@ -479,8 +496,9 @@ def test_voice_partial_snapshot_precedes_and_is_calibrated_by_final(monkeypatch)
             websocket.send_json({"type": "utterance.start"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking",
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "user_speaking"
+                ),
             )
             websocket.send_json({"type": "utterance.end"})
             messages = receive_until(
@@ -489,7 +507,9 @@ def test_voice_partial_snapshot_precedes_and_is_calibrated_by_final(monkeypatch)
             )
 
             partial = next(message for message in messages if message.get("type") == "user.partial")
-            final = next(message for message in messages if message.get("type") == "user.transcript")
+            final = next(
+                message for message in messages if message.get("type") == "user.transcript"
+            )
             assert partial["utterance_id"] == 1
             assert partial["revision"] == 1
             assert partial["text"] == "你"
@@ -510,8 +530,9 @@ def test_voice_completed_batch_does_not_leak_partial_into_next_turn(monkeypatch)
             websocket.send_json({"type": "utterance.start"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking",
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "user_speaking"
+                ),
             )
             websocket.send_json({"type": "utterance.end"})
             receive_until(websocket, lambda message: message.get("type") == "assistant.done")
@@ -521,9 +542,11 @@ def test_voice_completed_batch_does_not_leak_partial_into_next_turn(monkeypatch)
             websocket.send_json({"type": "utterance.start"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking"
-                and message.get("utterance_id") == 2,
+                lambda message: (
+                    message.get("type") == "status"
+                    and message.get("status") == "user_speaking"
+                    and message.get("utterance_id") == 2
+                ),
             )
             websocket.send_json({"type": "utterance.end"})
             second_turn = receive_until(
@@ -531,12 +554,20 @@ def test_voice_completed_batch_does_not_leak_partial_into_next_turn(monkeypatch)
                 lambda message: message.get("type") == "assistant.done",
             )
 
-            partial = next(message for message in second_turn if message.get("type") == "user.partial")
-            final = next(message for message in second_turn if message.get("type") == "user.transcript")
+            partial = next(
+                message for message in second_turn if message.get("type") == "user.partial"
+            )
+            final = next(
+                message for message in second_turn if message.get("type") == "user.transcript"
+            )
             assert partial["text"] == "苏"
             assert partial["revision"] == 1
             assert final["text"] == "苏绣"
             assert [call["question"] for call in assistant.calls] == ["你好", "苏绣"]
+            assert [instance.kwargs["mode"] for instance in FakeXfyunStream.instances] == [
+                FakeXfyunStream.AUTO,
+                FakeXfyunStream.AUTO,
+            ]
 
 
 def test_voice_overlapping_finalizes_merge_in_id_order(monkeypatch) -> None:
@@ -550,16 +581,20 @@ def test_voice_overlapping_finalizes_merge_in_id_order(monkeypatch) -> None:
             websocket.send_json({"type": "utterance.start"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking"
-                and message.get("utterance_id") == 1,
+                lambda message: (
+                    message.get("type") == "status"
+                    and message.get("status") == "user_speaking"
+                    and message.get("utterance_id") == 1
+                ),
             )
             websocket.send_json({"type": "utterance.end"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "transcribing"
-                and message.get("utterance_id") == 1,
+                lambda message: (
+                    message.get("type") == "status"
+                    and message.get("status") == "transcribing"
+                    and message.get("utterance_id") == 1
+                ),
             )
             first = FakeXfyunStream.instances[0]
 
@@ -569,9 +604,11 @@ def test_voice_overlapping_finalizes_merge_in_id_order(monkeypatch) -> None:
             websocket.send_json({"type": "utterance.start"})
             messages = receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking"
-                and message.get("utterance_id") == 2,
+                lambda message: (
+                    message.get("type") == "status"
+                    and message.get("status") == "user_speaking"
+                    and message.get("utterance_id") == 2
+                ),
             )
             assert not first.closed.is_set()
             websocket.send_json({"type": "utterance.end"})
@@ -603,9 +640,11 @@ def test_voice_new_start_implicitly_finishes_previous_asr(monkeypatch) -> None:
             websocket.send_json({"type": "utterance.start"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking"
-                and message.get("utterance_id") == 1,
+                lambda message: (
+                    message.get("type") == "status"
+                    and message.get("status") == "user_speaking"
+                    and message.get("utterance_id") == 1
+                ),
             )
 
             # No utterance.end arrives for the first phrase. A new VAD onset
@@ -616,9 +655,11 @@ def test_voice_new_start_implicitly_finishes_previous_asr(monkeypatch) -> None:
             websocket.send_json({"type": "utterance.start"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking"
-                and message.get("utterance_id") == 2,
+                lambda message: (
+                    message.get("type") == "status"
+                    and message.get("status") == "user_speaking"
+                    and message.get("utterance_id") == 2
+                ),
             )
             websocket.send_json({"type": "utterance.end"})
             FakeXfyunStream.finish_gate.set()
@@ -646,14 +687,16 @@ def test_voice_text_invalidates_pending_asr_without_batch_lock_deadlock(monkeypa
             websocket.send_json({"type": "utterance.start"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking",
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "user_speaking"
+                ),
             )
             websocket.send_json({"type": "utterance.end"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "transcribing",
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "transcribing"
+                ),
             )
 
             # Invalidating the generation before canceling the blocked final
@@ -684,8 +727,9 @@ def test_voice_nonempty_final_emits_transcript_and_ordered_assistant_events(monk
             websocket.send_json({"type": "utterance.start"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking",
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "user_speaking"
+                ),
             )
             websocket.send_json({"type": "utterance.end"})
             messages = receive_until(
@@ -729,10 +773,7 @@ def test_voice_interrupt_delays_speaking_status_until_nonempty_partial(monkeypat
                 message
                 for message in messages
                 if message.get("type") == "user.partial"
-                or (
-                    message.get("type") == "status"
-                    and message.get("status") == "user_speaking"
-                )
+                or (message.get("type") == "status" and message.get("status") == "user_speaking")
             ]
             assert [message["type"] for message in speech_events] == [
                 "status",
@@ -749,8 +790,9 @@ def test_voice_non_interrupt_still_publishes_speaking_status_immediately(monkeyp
             websocket.send_json({"type": "utterance.start", "interrupt": False})
             messages = receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking",
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "user_speaking"
+                ),
             )
             assert messages[-1]["utterance_id"] == 1
             assert not any(message.get("type") == "user.partial" for message in messages)
@@ -765,14 +807,16 @@ def test_voice_barge_in_cancels_answer_without_closing_active_asr(monkeypatch) -
             assert assistant.started.wait(2)
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "thinking",
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "thinking"
+                ),
             )
             websocket.send_json({"type": "utterance.start"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking",
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "user_speaking"
+                ),
             )
             asr_stream = FakeXfyunStream.instances[-1]
             assert not asr_stream.closed.is_set()
@@ -780,8 +824,9 @@ def test_voice_barge_in_cancels_answer_without_closing_active_asr(monkeypatch) -
             websocket.send_json({"type": "barge_in"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking",
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "user_speaking"
+                ),
             )
             assert assistant.cancelled.wait(2)
             assert not asr_stream.closed.is_set()
@@ -799,8 +844,9 @@ def test_voice_provider_handshake_does_not_block_immediate_barge_in(monkeypatch)
                 assert assistant.started.wait(2)
                 receive_until(
                     websocket,
-                    lambda message: message.get("type") == "status"
-                    and message.get("status") == "thinking",
+                    lambda message: (
+                        message.get("type") == "status" and message.get("status") == "thinking"
+                    ),
                 )
 
                 websocket.send_json({"type": "utterance.start", "interrupt": True})
@@ -813,8 +859,9 @@ def test_voice_provider_handshake_does_not_block_immediate_barge_in(monkeypatch)
                 websocket.send_json({"type": "barge_in"})
                 receive_until(
                     websocket,
-                    lambda message: message.get("type") == "status"
-                    and message.get("status") == "user_speaking",
+                    lambda message: (
+                        message.get("type") == "status" and message.get("status") == "user_speaking"
+                    ),
                 )
                 assert assistant.cancelled.wait(2)
         finally:
@@ -839,16 +886,19 @@ def test_voice_context_is_used_once_at_final_boundary(monkeypatch) -> None:
         FakeXfyunStream.candidate_texts = ("卞绣", "汴绣")
         with client.websocket_connect("/api/voice") as websocket:
             assert websocket.receive_json()["type"] == "ready"
-            websocket.send_json({
-                "type": "context",
-                "category": "传统技艺",
-                "titles": ["苏绣", "木雕技艺"],
-            })
+            websocket.send_json(
+                {
+                    "type": "context",
+                    "category": "传统技艺",
+                    "titles": ["苏绣", "木雕技艺"],
+                }
+            )
             websocket.send_json({"type": "utterance.start"})
             receive_until(
                 websocket,
-                lambda message: message.get("type") == "status"
-                and message.get("status") == "user_speaking",
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "user_speaking"
+                ),
             )
             websocket.send_json({"type": "utterance.end"})
             messages = receive_until(
@@ -856,7 +906,9 @@ def test_voice_context_is_used_once_at_final_boundary(monkeypatch) -> None:
                 lambda message: message.get("type") == "assistant.done",
             )
 
-            final = next(message for message in messages if message.get("type") == "user.transcript")
+            final = next(
+                message for message in messages if message.get("type") == "user.transcript"
+            )
             assert final["text"] == "汴绣"
             assert final["raw_text"] == "卞绣"
             assert final["normalizations"][0]["canonical"] == "汴绣"
@@ -869,3 +921,115 @@ def test_voice_context_is_used_once_at_final_boundary(monkeypatch) -> None:
             )
             assert assistant.calls[0]["question"] == "汴绣"
             assert assistant.calls[0]["category"] == "传统技艺"
+
+
+def test_chat_forwards_hidden_locale_hint_without_changing_the_sse_contract() -> None:
+    events = (
+        AssistantEvent(
+            "turn.completed",
+            "session-en",
+            "turn-en",
+            0,
+            payload={"answer": "Done", "locale": "en-US"},
+        ),
+    )
+    client, _kb, _search, assistant = build_client(events=events)
+
+    response = client.post(
+        "/api/chat",
+        json={
+            "question": "Tell me about Kunqu",
+            "session_id": "session-en",
+            "locale_hint": "en-US",
+        },
+    )
+
+    assert response.status_code == 200
+    assert parse_sse(response.text)[0]["data"]["payload"]["locale"] == "en-US"
+    assert assistant.calls[-1]["locale_hint"] == "en-US"
+
+
+def test_tts_maps_resolved_locales_to_allowlisted_voices(monkeypatch) -> None:
+    calls: list[dict[str, str]] = []
+
+    class FakeCommunicate:
+        def __init__(self, text: str, **kwargs: str) -> None:
+            calls.append({"text": text, **kwargs})
+
+        async def stream(self):
+            yield {"type": "audio", "data": b"audio"}
+
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", FakeCommunicate)
+    client, _kb, _search, _assistant = build_client()
+
+    english = client.get(
+        "/api/tts",
+        params={"text": "Kunqu (昆曲) is a living tradition.", "locale": "en-US"},
+    )
+    cantonese = client.get(
+        "/api/tts",
+        params={"text": "昆曲係一项传统艺术。", "locale": "yue-HK"},
+    )
+    henan = client.get(
+        "/api/tts",
+        params={"text": "中，咱聊聊河南非遗。", "locale": "zh-CN-henan"},
+    )
+
+    assert english.status_code == 200
+    assert english.headers["x-speech-locale"] == "en-US"
+    assert cantonese.status_code == 200
+    assert cantonese.headers["x-speech-locale"] == "yue-CN"
+    assert henan.status_code == 200
+    assert henan.headers["x-speech-locale"] == "zh-CN-henan"
+    assert [call["voice"] for call in calls] == [
+        "en-US-JennyNeural",
+        "zh-HK-HiuMaanNeural",
+        "zh-CN-YunxiNeural",
+    ]
+
+
+def test_voice_context_auto_routes_non_chinese_and_returns_resolved_locale(
+    monkeypatch,
+) -> None:
+    assistant = VoiceRecordingAssistant()
+    FakeXfyunStream.transcript = "Tell me about paper cutting"
+
+    def fail_chinese_normalizer(*args: object, **kwargs: object) -> object:
+        raise AssertionError("non-Chinese speech must bypass Mandarin pinyin normalization")
+
+    monkeypatch.setattr(api_module, "normalize_asr_final", fail_chinese_normalizer)
+    with voice_test_client(monkeypatch, assistant) as client:
+        FakeXfyunStream.provider_language = "en"
+        with client.websocket_connect("/api/voice") as websocket:
+            assert websocket.receive_json()["type"] == "ready"
+            websocket.send_json(
+                {
+                    "type": "context",
+                    "locale_hint": "en-US",
+                    "preferred_locales": ["en-US", "zh-CN"],
+                }
+            )
+            websocket.send_json({"type": "utterance.start"})
+            receive_until(
+                websocket,
+                lambda message: (
+                    message.get("type") == "status" and message.get("status") == "user_speaking"
+                ),
+            )
+            websocket.send_json({"type": "utterance.end"})
+            messages = receive_until(
+                websocket,
+                lambda message: message.get("type") == "assistant.done",
+            )
+
+    transcript = next(message for message in messages if message.get("type") == "user.transcript")
+    assistant_events = [
+        message
+        for message in messages
+        if message.get("type") in {"assistant.delta", "assistant.done"}
+    ]
+    assert FakeXfyunStream.instances[0].kwargs["preferred_mode"] == "multilingual"
+    assert transcript["locale"] == "en-US"
+    assert transcript["asr_engine"] == "multilingual"
+    assert all(message["locale"] == "en-US" for message in assistant_events)
+    assert assistant.calls[0]["locale_hint"] == "en-US"

@@ -19,6 +19,7 @@ class ConversationTurn:
     question: str
     answer: str
     source_ids: tuple[str, ...] = ()
+    locale: str = "zh-CN"
     created_at: datetime = field(default_factory=utc_now)
 
     def context_dict(self) -> dict[str, Any]:
@@ -27,6 +28,7 @@ class ConversationTurn:
             "question": self.question,
             "answer": self.answer,
             "source_ids": list(self.source_ids),
+            "locale": self.locale,
         }
 
 

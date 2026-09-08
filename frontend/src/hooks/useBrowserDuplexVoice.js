@@ -21,6 +21,7 @@ import {
 import { advanceVADGate, createVADGateState, getVADOnsetPolicy } from "../lib/vadOnsetGate.js";
 import { encodePcm, StatefulPcmResampler } from "../lib/pcmResampler.js";
 import { appendPreRoll, createPreRollState, drainPreRoll, PRE_ROLL_MS } from "../lib/pcmPreRoll.js";
+import { DEFAULT_LOCALE, getPreferredLocales, normalizeLocaleHint } from "../lib/locale.js";
 
 const TARGET_RATE = 16000;
 const NORMAL_VAD_POLICY = getVADOnsetPolicy(false);
@@ -33,7 +34,38 @@ function websocketUrl(path) {
   return url.toString();
 }
 
-function compactRecognitionContext(context) {
+export function resolveSpeechLocale(value, fallback = DEFAULT_LOCALE) {
+  return normalizeLocaleHint(value) || normalizeLocaleHint(fallback) || DEFAULT_LOCALE;
+}
+
+export function assistantEventLocale(message, fallback = DEFAULT_LOCALE) {
+  return resolveSpeechLocale(
+    message?.locale
+      || message?.response_locale
+      || message?.payload?.locale
+      || message?.payload?.response_locale,
+    fallback,
+  );
+}
+
+export function buildTtsUrl({
+  websocketPath,
+  text,
+  traceId,
+  segment,
+  reason,
+  locale,
+}) {
+  const ttsPath = String(websocketPath || "/api/voice").replace(/\/voice$/, "/tts");
+  const speechLocale = resolveSpeechLocale(locale);
+  return `${ttsPath}?text=${encodeURIComponent(String(text || ""))}`
+    + `&trace_id=${encodeURIComponent(String(traceId || ""))}`
+    + `&segment=${encodeURIComponent(String(segment ?? 0))}`
+    + `&reason=${encodeURIComponent(String(reason || ""))}`
+    + `&locale=${encodeURIComponent(speechLocale)}`;
+}
+
+export function compactRecognitionContext(context) {
   const value = context && typeof context === "object" ? context : {};
   const values = [];
   for (const key of ["selectedTitle", "selectedItem", "selected"]) {
@@ -52,11 +84,24 @@ function compactRecognitionContext(context) {
     titles.push(title.slice(0, 200));
     if (titles.length >= 8) break;
   }
+  const rawPreferredLocales = Array.isArray(value.preferredLocales)
+    ? value.preferredLocales
+    : Array.isArray(value.preferred_locales)
+      ? value.preferred_locales
+      : [];
+  const requestedLocale = normalizeLocaleHint(value.localeHint || value.locale_hint || value.locale);
+  const preferredLocales = getPreferredLocales({
+    languages: [...(requestedLocale ? [requestedLocale] : []), ...rawPreferredLocales],
+  });
+  const localeHint = requestedLocale || preferredLocales[0] || DEFAULT_LOCALE;
+
   return {
     category: String(value.category || "").trim().slice(0, 200),
     titles,
     selected_title: String(value.selectedTitle || value.selectedItem?.title || value.selected?.title || "").trim().slice(0, 200),
     session_id: String(value.sessionId || "").trim().slice(0, 128),
+    locale_hint: localeHint,
+    preferred_locales: preferredLocales,
   };
 }
 
@@ -120,7 +165,8 @@ export function useBrowserDuplexVoice({
   const speechPipelineRef = useRef(false);
   const assistantPendingRef = useRef(false);
   const speechTraceRef = useRef("");
-  const speechTextPlanRef = useRef(new TtsTextPlan());
+  const speechLocaleRef = useRef(DEFAULT_LOCALE);
+  const speechTextPlanRef = useRef(new TtsTextPlan(DEFAULT_LOCALE));
   const ttsSchedulerRef = useRef(null);
   const bargeInRef = useRef(createBargeInState());
   const assistantTurnRef = useRef("");
@@ -326,13 +372,20 @@ export function useBrowserDuplexVoice({
     return true;
   }, []);
 
-  const beginSpeechStream = useCallback(() => {
+  const beginSpeechStream = useCallback((locale = "") => {
     const generation = ttsSchedulerRef.current?.begin();
     speechPipelineRef.current = true;
     assistantPendingRef.current = true;
     setSpeechPending(true);
     speechTraceRef.current = globalThis.crypto?.randomUUID?.() || `tts-${Date.now()}`;
-    speechTextPlanRef.current.reset();
+    // Locale is owned by the answer generation, just like the TTS scheduler
+    // generation.  Snapshot it once so a later browser/context update cannot
+    // make the prefetched remainder speak with another voice.
+    speechLocaleRef.current = resolveSpeechLocale(
+      locale,
+      compactRecognitionContext(recognitionContextRef.current).locale_hint,
+    );
+    speechTextPlanRef.current.reset(speechLocaleRef.current);
     speechActiveRef.current = false;
     aboveRef.current = createVADGateState();
     preRollRef.current = createPreRollState();
@@ -345,23 +398,29 @@ export function useBrowserDuplexVoice({
     if (!scheduler) return false;
     const spokenSegment = String(segment || "").replace(/[#*_`>-]/g, " ").trim();
     const segmentNumber = scheduler.segmentCount;
-    const ttsPath = websocketPath.replace(/\/voice$/, "/tts");
-    const url = `${ttsPath}?text=${encodeURIComponent(spokenSegment)}&trace_id=${encodeURIComponent(speechTraceRef.current)}&segment=${segmentNumber}&reason=${reason}`;
+    const url = buildTtsUrl({
+      websocketPath,
+      text: spokenSegment,
+      traceId: speechTraceRef.current,
+      segment: segmentNumber,
+      reason,
+      locale: speechLocaleRef.current,
+    });
     return scheduler.enqueue(spokenSegment, { url, reason });
   }, [websocketPath]);
 
-  const appendSpeechDelta = useCallback((text) => {
+  const appendSpeechDelta = useCallback((text, locale = "") => {
     const delta = String(text || "");
     if (!delta) return false;
-    if (!speechPipelineRef.current) beginSpeechStream();
+    if (!speechPipelineRef.current) beginSpeechStream(locale);
     const firstSegment = speechTextPlanRef.current.append(delta);
     if (firstSegment) enqueueSpeechSegment(firstSegment, "first_sentence");
     return true;
   }, [beginSpeechStream, enqueueSpeechSegment]);
 
-  const finishSpeechStream = useCallback((fallbackText = "") => {
+  const finishSpeechStream = useCallback((fallbackText = "", locale = "") => {
     const scheduler = ttsSchedulerRef.current;
-    if (!speechPipelineRef.current) beginSpeechStream();
+    if (!speechPipelineRef.current) beginSpeechStream(locale);
     const remainder = speechTextPlanRef.current.finish();
     if (remainder) enqueueSpeechSegment(remainder, "text_complete");
     else if (fallbackText && !scheduler?.hasSegments) enqueueSpeechSegment(fallbackText, "text_complete");
@@ -369,12 +428,12 @@ export function useBrowserDuplexVoice({
     return true;
   }, [beginSpeechStream, enqueueSpeechSegment]);
 
-  const speak = useCallback((text) => {
+  const speak = useCallback((text, locale = "") => {
     const content = String(text || "").trim();
     if (!content) return false;
-    beginSpeechStream();
-    appendSpeechDelta(content);
-    return finishSpeechStream();
+    beginSpeechStream(locale);
+    appendSpeechDelta(content, locale);
+    return finishSpeechStream("", locale);
   }, [appendSpeechDelta, beginSpeechStream, finishSpeechStream]);
 
   const processAudio = useCallback((samples, inputRate) => {
@@ -629,14 +688,22 @@ export function useBrowserDuplexVoice({
         }
         else if (message.type === "assistant.delta") {
           if (!acceptAssistantTurn(message, assistantTurnRef, ignoredAssistantTurnsRef.current)) return;
-          callbacks.current.onAssistantTranscript?.(message.text || "", { done: false });
-          appendSpeechDelta(message.text || "");
+          const locale = assistantEventLocale(
+            message,
+            compactRecognitionContext(recognitionContextRef.current).locale_hint,
+          );
+          callbacks.current.onAssistantTranscript?.(message.text || "", { done: false, locale });
+          appendSpeechDelta(message.text || "", locale);
         }
         else if (message.type === "assistant.done") {
           if (!acceptAssistantTurn(message, assistantTurnRef, ignoredAssistantTurnsRef.current)) return;
-          callbacks.current.onAssistantTranscript?.(message.text || "", { done: true });
+          const locale = assistantEventLocale(
+            message,
+            compactRecognitionContext(recognitionContextRef.current).locale_hint,
+          );
+          callbacks.current.onAssistantTranscript?.(message.text || "", { done: true, locale });
           assistantPendingRef.current = false;
-          finishSpeechStream(message.text || "");
+          finishSpeechStream(message.text || "", locale);
           const turnId = normalizeVoiceId(message.turn_id);
           if (turnId) {
             rememberIgnoredTurn(ignoredAssistantTurnsRef.current, turnId);

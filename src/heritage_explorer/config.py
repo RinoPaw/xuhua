@@ -37,6 +37,20 @@ XF_APP_ID = os.getenv("XF_APP_ID", "")
 XF_API_KEY = os.getenv("XF_API_KEY", "")
 XF_API_SECRET = os.getenv("XF_API_SECRET", "")
 XF_ASR_RES_ID = os.getenv("XF_ASR_RES_ID", "")
+# Xunfei exposes the dialect and multilingual SLM recognisers through the
+# same packet protocol.  Separate credentials remain optional because both
+# capabilities can be enabled on one application, while dedicated service
+# applications can override them without changing the browser contract.
+XF_ASR_HOST = os.getenv("XF_ASR_HOST", "iat.cn-huabei-1.xf-yun.com")
+XF_LEGACY_ASR_HOST = os.getenv("XF_LEGACY_ASR_HOST", "iat.xf-yun.com")
+XF_MULTILINGUAL_APP_ID = os.getenv("XF_MULTILINGUAL_APP_ID", XF_APP_ID)
+XF_MULTILINGUAL_API_KEY = os.getenv("XF_MULTILINGUAL_API_KEY", XF_API_KEY)
+XF_MULTILINGUAL_API_SECRET = os.getenv("XF_MULTILINGUAL_API_SECRET", XF_API_SECRET)
+XF_MULTILINGUAL_ASR_HOST = os.getenv("XF_MULTILINGUAL_ASR_HOST", XF_ASR_HOST)
+XF_MULTILINGUAL_LANGUAGE_HINT = os.getenv(
+    "XF_MULTILINGUAL_LANGUAGE_HINT",
+    "en|ja|ko",
+)
 
 EMBEDDING_API_KEY = os.getenv("EMBEDDING_API_KEY", "")
 EMBEDDING_BASE_URL = os.getenv("EMBEDDING_BASE_URL", "https://api.vectorengine.ai/v1")

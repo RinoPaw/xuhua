@@ -13,6 +13,7 @@ import { REALTIME_VOICE_STATUS, useVoiceConversation } from "./hooks/useVoiceCon
 import DigitalHuman from "./components/DigitalHuman.jsx";
 import { composerAction, effectiveVoiceStatus } from "./lib/conversationUiState.js";
 import { createConversationSessionId } from "./lib/conversationSession.js";
+import { getLocaleHint, getPreferredLocales } from "./lib/locale.js";
 import {
   mergePageItems,
   nextPageState,
@@ -21,6 +22,8 @@ import {
 } from "./lib/pagination.js";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "";
+const LOCALE_HINT = getLocaleHint();
+const PREFERRED_LOCALES = getPreferredLocales();
 const VOICE_COPY = {
   [REALTIME_VOICE_STATUS.IDLE]: { label: "实时对话", detail: "等待开启", owner: "system" },
   [REALTIME_VOICE_STATUS.CONNECTING]: { label: "连接中", detail: "请允许使用麦克风", owner: "assistant" },
@@ -465,11 +468,17 @@ function App() {
               firstTextLogged = true;
               console.info(`[叙华][trace=${requestId}] llm.first_text_delta`);
             }
-            realtimeRef.current?.appendSpeechDelta?.(event.payload?.delta || "");
+            realtimeRef.current?.appendSpeechDelta?.(
+              event.payload?.delta || "",
+              event.payload?.locale || LOCALE_HINT,
+            );
           }
           if (type === "turn.completed") {
             console.info(`[叙华][trace=${requestId}] text.complete`);
-            realtimeRef.current?.finishSpeechStream?.(event.payload?.answer || "");
+            realtimeRef.current?.finishSpeechStream?.(
+              event.payload?.answer || "",
+              event.payload?.locale || LOCALE_HINT,
+            );
           }
           if (["turn.failed", "turn.cancelled"].includes(type)) realtimeRef.current?.stopSpeaking?.();
           if (event.turn_id) turnRef.current = event.turn_id;
@@ -485,7 +494,12 @@ function App() {
       const response = await fetch(apiUrl("/api/chat"), {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-        body: JSON.stringify({ question: text, session_id: sessionRef.current, category: filters.category }),
+        body: JSON.stringify({
+          question: text,
+          session_id: sessionRef.current,
+          category: filters.category,
+          locale_hint: LOCALE_HINT,
+        }),
         signal: controller.signal,
       });
       if (!response.ok || !response.body) throw new Error("request_failed");
@@ -518,6 +532,8 @@ function App() {
       .slice(0, 8),
     selectedItem: selected,
     sessionId: sessionRef.current,
+    localeHint: LOCALE_HINT,
+    preferredLocales: PREFERRED_LOCALES,
   }), [filters.category, items, selected]);
 
   const realtime = useVoiceConversation({

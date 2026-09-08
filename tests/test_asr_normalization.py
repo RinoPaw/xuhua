@@ -10,7 +10,10 @@ from heritage_explorer.asr_normalization import (
 
 def _kb(*items: tuple[str, str, tuple[str, ...]]) -> SimpleNamespace:
     return SimpleNamespace(
-        items=[SimpleNamespace(title=title, category=category, aliases=aliases) for title, category, aliases in items]
+        items=[
+            SimpleNamespace(title=title, category=category, aliases=aliases)
+            for title, category, aliases in items
+        ]
     )
 
 
@@ -21,7 +24,9 @@ def test_corrects_local_homophone_with_category_and_preserves_sentence() -> None
         category="传统美术",
     )
     assert result.canonical_text == "我是说汴绣，想了解它的历史。"
-    assert result.spans == (NormalizedSpan(3, 5, "卞绣", "汴绣", result.spans[0].score, result.spans[0].reason),)
+    assert result.spans == (
+        NormalizedSpan(3, 5, "卞绣", "汴绣", result.spans[0].score, result.spans[0].reason),
+    )
 
 
 def test_nbest_can_supply_context_without_category() -> None:
@@ -57,5 +62,19 @@ def test_exact_title_and_alias_are_protected() -> None:
         kb=_kb(("汴绣", "传统美术", ("汴州绣",))),
         category="传统美术",
     )
+    assert result.canonical_text == result.raw_text
+    assert result.spans == ()
+
+
+def test_non_chinese_transcript_skips_pinyin_normalization_even_with_context() -> None:
+    result = normalize_asr_final(
+        "卞绣の歴史を教えてください。",
+        kb=_kb(("汴绣", "传统美术", ())),
+        category="传统美术",
+        asr_candidates=("汴绣の歴史",),
+        language="ja",
+    )
+
+    assert result.raw_text == "卞绣の歴史を教えてください。"
     assert result.canonical_text == result.raw_text
     assert result.spans == ()

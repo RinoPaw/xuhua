@@ -17,3 +17,25 @@ test("uses the whole answer as the only segment when no early sentence arrives",
   assert.equal(plan.append("没有标点的回答"), null);
   assert.equal(plan.finish(), "没有标点的回答");
 });
+
+test("commits an English full stop without waiting for the complete answer", () => {
+  const plan = new TtsTextPlan("en-US");
+  assert.equal(plan.append("The first sentence. The sec"), "The first sentence.");
+  assert.equal(plan.append("ond sentence. A third sentence."), null);
+  assert.equal(plan.finish(), "The second sentence. A third sentence.");
+});
+
+test("does not split decimals, common abbreviations, or initialisms", () => {
+  const plan = new TtsTextPlan("en-US");
+  assert.equal(
+    plan.append("The value is 3.14 and Dr. Zhang used e.g. paper cutting. Next."),
+    "The value is 3.14 and Dr. Zhang used e.g. paper cutting.",
+  );
+  assert.equal(plan.finish(), "Next.");
+});
+
+test("keeps a closing quote with the completed English sentence", () => {
+  const plan = new TtsTextPlan("en-US");
+  assert.equal(plan.append('She said “Hello.” Then left.'), 'She said “Hello.”');
+  assert.equal(plan.finish(), "Then left.");
+});

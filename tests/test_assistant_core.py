@@ -95,10 +95,12 @@ def test_broad_category_browse_uses_a_turn_specific_catalogue_window():
     class CatalogueSearch(RecordingSearch):
         def __init__(self):
             super().__init__()
-            self.knowledge_base = KnowledgeBase({
-                "categories": [{"id": 7, "name": "传统美术", "item_count": 417}],
-                "items": [],
-            })
+            self.knowledge_base = KnowledgeBase(
+                {
+                    "categories": [{"id": 7, "name": "传统美术", "item_count": 417}],
+                    "items": [],
+                }
+            )
 
         def search(self, query: str, **kwargs):
             self.calls.append({"query": query, **kwargs})
@@ -116,19 +118,43 @@ def test_broad_category_browse_uses_a_turn_specific_catalogue_window():
 
 def test_sources_and_suggestions_follow_projects_named_in_answer():
     items = tuple(
-        type("Item", (), {"id": id_, "title": title, "family": "", "display_forms": (), "category": "", "summary": "", "content": "", "search_text": "", "level": "", "province": "", "city": "", "district": "", "suitable_scenarios": ()})()
+        type(
+            "Item",
+            (),
+            {
+                "id": id_,
+                "title": title,
+                "family": "",
+                "display_forms": (),
+                "category": "",
+                "summary": "",
+                "content": "",
+                "search_text": "",
+                "level": "",
+                "province": "",
+                "city": "",
+                "district": "",
+                "suitable_scenarios": (),
+            },
+        )()
         for id_, title in (("a", "甲项目"), ("b", "乙项目"), ("c", "丙项目"))
     )
     used = _used_sources("先看看乙项目，再比较甲项目。", items)
     assert [item.id for item in used] == ["b", "a"]
-    assert [text.split("的", 1)[0] for text in _suggestions(used)] == ["乙项目", "甲项目", "按地区继续比较"]
+    assert [text.split("的", 1)[0] for text in _suggestions(used)] == [
+        "乙项目",
+        "甲项目",
+        "按地区继续比较",
+    ]
     assert [item.id for item in _used_sources("没有点名具体项目。", items)] == ["a"]
 
     shared_family = tuple(
         type("Item", (), {"id": id_, "title": title, "family": "剪纸", "display_forms": ()})()
         for id_, title in (("paper-a", "甲地剪纸"), ("paper-b", "乙地剪纸"))
     )
-    assert [item.id for item in _used_sources("剪纸讲究以形写神，先看甲地剪纸。", shared_family)] == ["paper-a"]
+    assert [
+        item.id for item in _used_sources("剪纸讲究以形写神，先看甲地剪纸。", shared_family)
+    ] == ["paper-a"]
 
 
 def test_local_fallback_selection_is_driven_by_request_and_content_budget():
@@ -153,11 +179,80 @@ def test_greeting_is_short_and_does_not_search_or_call_the_llm():
             raise AssertionError("a greeting must not enter retrieval")
 
     llm = FakeLLM()
-    events = collect(AssistantService(search=NoSearch(), sessions=SessionStore(), llm=llm).stream_turn("你好。"))
+    events = collect(
+        AssistantService(search=NoSearch(), sessions=SessionStore(), llm=llm).stream_turn("你好。")
+    )
 
     assert events[-1].type == "turn.completed"
     assert events[-1].payload["answer"] == "你好。想了解哪项非遗？"
     assert llm.messages == []
+
+
+def test_multilingual_greetings_are_localized_without_entering_retrieval():
+    class NoSearch:
+        def search(self, query: str, **kwargs):
+            raise AssertionError("a greeting must not enter retrieval")
+
+    llm = FakeLLM()
+    service = AssistantService(search=NoSearch(), sessions=SessionStore(), llm=llm)
+
+    english = collect(service.stream_turn("Hello", locale_hint="en-US"))
+    japanese = collect(service.stream_turn("こんにちは", locale_hint="ja-JP"))
+    henan = collect(service.stream_turn("恁好", locale_hint="zh-CN"))
+
+    assert english[-1].payload["locale"] == "en-US"
+    assert english[-1].payload["answer"].startswith("Hello.")
+    assert japanese[-1].payload["locale"] == "ja-JP"
+    assert japanese[-1].payload["answer"].startswith("こんにちは。")
+    assert henan[-1].payload["locale"] == "zh-CN-henan"
+    assert henan[-1].payload["answer"].startswith("恁好。")
+    assert llm.messages == []
+
+
+def test_foreign_language_query_is_bridged_to_the_chinese_catalogue():
+    search = RecordingSearch()
+    llm = FakeLLM(("Kunqu (昆曲) is a refined form of Chinese theatre.",))
+    service = AssistantService(search=search, sessions=SessionStore(), llm=llm)
+
+    # Kunku is a common ASR rendering of Kunqu in an otherwise correct English turn.
+    events = collect(service.stream_turn("Tell me about Kunku opera", locale_hint="en-US"))
+
+    assert search.calls[0]["query"] == "昆曲"
+    assert events[0].payload["locale"] == "en-US"
+    assert events[-1].payload["locale"] == "en-US"
+    assert "Reply in natural English" in llm.messages[0][0]["content"]
+    assert "canonical Chinese name" in llm.messages[0][0]["content"]
+
+
+def test_japanese_and_korean_asr_variants_recover_the_canonical_project_name():
+    search = RecordingSearch()
+    service = AssistantService(search=search, sessions=SessionStore(), llm=FakeLLM())
+
+    collect(service.stream_turn("根極という伝統芸術を紹介してください", locale_hint="ja-JP"))
+    collect(service.stream_turn("곤국이라는 전통 예술을 소개해 주세요", locale_hint="ko-KR"))
+
+    assert [call["query"] for call in search.calls] == ["昆曲", "昆曲"]
+
+
+def test_henan_dialect_is_kept_in_the_answer_instruction_without_changing_facts():
+    search = RecordingSearch()
+    llm = FakeLLM(("中，咱从河南剪纸聊起。",))
+    service = AssistantService(search=search, sessions=SessionStore(), llm=llm)
+
+    events = collect(service.stream_turn("恁讲讲河南剪纸中不中", locale_hint="zh-CN"))
+
+    assert events[-1].payload["locale"] == "zh-CN-henan"
+    assert "自然、克制、易懂的河南口吻" in llm.messages[0][0]["content"]
+
+
+def test_broad_multilingual_heritage_query_opens_a_bounded_catalogue_window():
+    search = RecordingSearch()
+    service = AssistantService(search=search, sessions=SessionStore(), llm=FakeLLM())
+
+    collect(service.stream_turn("中国の無形文化遺産を紹介して", locale_hint="ja-JP"))
+
+    assert search.calls[0]["query"] == ""
+    assert search.calls[0]["limit"] == service.max_candidates
 
 
 def test_ambiguous_first_turn_does_not_retrieve_or_invent_user_mentions():
@@ -249,7 +344,13 @@ def test_prompt_preserves_real_speaker_roles_and_separates_retrieval_context():
     )
 
     assert [message["role"] for message in messages] == [
-        "system", "user", "assistant", "system", "system", "system", "user",
+        "system",
+        "user",
+        "assistant",
+        "system",
+        "system",
+        "system",
+        "user",
     ]
     assert messages[1]["content"] == "介绍一下锅庄舞"
     assert messages[2]["content"] == "锅庄舞有圆圈舞的形态。"
@@ -265,11 +366,13 @@ def test_short_reply_keeps_previous_assistant_words_owned_by_assistant():
     messages = service._messages(
         "嗯。",
         (),
-        [ConversationTurn(
-            "turn",
-            "介绍锅庄舞",
-            "我刚才讲了赉谟卓干玛和甘孜锅庄的不同气质。",
-        )],
+        [
+            ConversationTurn(
+                "turn",
+                "介绍锅庄舞",
+                "我刚才讲了赉谟卓干玛和甘孜锅庄的不同气质。",
+            )
+        ],
         short_reply_mode="continuation",
     )
 
@@ -284,8 +387,14 @@ def test_empty_llm_key_uses_local_fallback_without_constructing_network_request(
         def stream(self, *args, **kwargs):
             raise AssertionError("network must not be attempted")
 
-    provider = OpenAICompatibleLLM(api_key="", base_url="https://example.invalid", model="x", client=RaisingClient())
-    events = collect(AssistantService(search=FakeSearch(), sessions=SessionStore(), llm=provider).stream_turn("hello"))
+    provider = OpenAICompatibleLLM(
+        api_key="", base_url="https://example.invalid", model="x", client=RaisingClient()
+    )
+    events = collect(
+        AssistantService(search=FakeSearch(), sessions=SessionStore(), llm=provider).stream_turn(
+            "tell me more"
+        )
+    )
     assert events[-1].type == "turn.completed"
     assert any(event.type == "response.text.delta" for event in events)
     assert not any(event.type == "warning" for event in events)
@@ -297,7 +406,11 @@ def test_provider_failure_is_an_explicit_terminal_failure():
             raise RuntimeError("offline")
             yield "never"
 
-    events = collect(AssistantService(search=FakeSearch(), sessions=SessionStore(), llm=BrokenLLM()).stream_turn("hello"))
+    events = collect(
+        AssistantService(search=FakeSearch(), sessions=SessionStore(), llm=BrokenLLM()).stream_turn(
+            "tell me more"
+        )
+    )
     assert events[-1].type == "turn.failed"
     assert events[-1].payload["code"] == "llm_unavailable"
     assert not any(event.type == "turn.completed" for event in events)
@@ -327,11 +440,17 @@ def test_first_token_timeout_closes_old_stream_before_one_retry(monkeypatch):
 
     monkeypatch.setattr(assistant_module, "AI_FIRST_TOKEN_TIMEOUT", 0.01)
     llm = SlowThenFastLLM()
-    events = collect(AssistantService(search=FakeSearch(), sessions=SessionStore(), llm=llm).stream_turn("hello"))
+    events = collect(
+        AssistantService(search=FakeSearch(), sessions=SessionStore(), llm=llm).stream_turn(
+            "tell me more"
+        )
+    )
 
     assert llm.calls == 2
     assert llm.second_started.is_set()
-    assert [event.payload.get("delta") for event in events if event.type == "response.text.delta"] == ["重试成功"]
+    assert [
+        event.payload.get("delta") for event in events if event.type == "response.text.delta"
+    ] == ["重试成功"]
     assert events[-1].type == "turn.completed"
 
 
@@ -348,10 +467,16 @@ def test_failure_after_delta_is_not_replayed_or_retried():
             raise RuntimeError("connection lost")
 
     llm = PartialThenBrokenLLM()
-    events = collect(AssistantService(search=FakeSearch(), sessions=SessionStore(), llm=llm).stream_turn("hello"))
+    events = collect(
+        AssistantService(search=FakeSearch(), sessions=SessionStore(), llm=llm).stream_turn(
+            "tell me more"
+        )
+    )
 
     assert llm.calls == 1
-    assert [event.payload.get("delta") for event in events if event.type == "response.text.delta"] == ["已有片段"]
+    assert [
+        event.payload.get("delta") for event in events if event.type == "response.text.delta"
+    ] == ["已有片段"]
     assert events[-1].type == "turn.failed"
     assert events[-1].payload["code"] == "llm_unavailable"
 
@@ -370,7 +495,11 @@ def test_empty_configured_stream_is_retried_then_fails(monkeypatch):
 
     monkeypatch.setattr(assistant_module, "AI_FIRST_TOKEN_TIMEOUT", 0.01)
     llm = EmptyLLM()
-    events = collect(AssistantService(search=FakeSearch(), sessions=SessionStore(), llm=llm).stream_turn("hello"))
+    events = collect(
+        AssistantService(search=FakeSearch(), sessions=SessionStore(), llm=llm).stream_turn(
+            "tell me more"
+        )
+    )
 
     assert llm.calls == 2
     assert events[-1].type == "turn.failed"

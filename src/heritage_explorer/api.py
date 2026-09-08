@@ -20,17 +20,35 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 from .assistant import AssistantService, SearchService
-from .asr_normalization import normalize_asr_final, prepare_asr_normalization
+from .asr_normalization import (
+    NormalizedTranscript,
+    normalize_asr_final,
+    prepare_asr_normalization,
+)
 from .config import (
     FRONTEND_DIR,
     XF_API_KEY,
     XF_API_SECRET,
     XF_APP_ID,
+    XF_ASR_HOST,
     XF_ASR_RES_ID,
+    XF_LEGACY_ASR_HOST,
+    XF_MULTILINGUAL_API_KEY,
+    XF_MULTILINGUAL_API_SECRET,
+    XF_MULTILINGUAL_APP_ID,
+    XF_MULTILINGUAL_ASR_HOST,
+    XF_MULTILINGUAL_LANGUAGE_HINT,
 )
 from .dataset import item_to_dict
+from .language import (
+    detect_locale,
+    get_language_profile,
+    is_chinese_locale,
+    locale_from_provider_language,
+    normalize_locale_hint,
+)
 from .sessions import SessionStore
-from .voice import VoiceProviderError, XfyunStream
+from .voice import AutoXfyunStream, VoiceProviderError
 
 
 MAX_CHAT_CHARS = 4000
@@ -53,6 +71,7 @@ class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=MAX_CHAT_CHARS)
     session_id: str | None = Field(default=None, max_length=MAX_SESSION_ID_CHARS)
     category: str = Field(default="", max_length=200)
+    locale_hint: str = Field(default="", max_length=64)
 
 
 def create_app(
@@ -61,8 +80,12 @@ def create_app(
     search: SearchService | None = None,
     sessions: SessionStore | None = None,
 ) -> FastAPI:
-    search = search or (getattr(assistant, "search", None) if assistant else None) or SearchService()
-    sessions = sessions or (getattr(assistant, "sessions", None) if assistant else None) or SessionStore()
+    search = (
+        search or (getattr(assistant, "search", None) if assistant else None) or SearchService()
+    )
+    sessions = (
+        sessions or (getattr(assistant, "sessions", None) if assistant else None) or SessionStore()
+    )
     assistant = assistant or AssistantService(search=search, sessions=sessions)
     kb = search.knowledge_base
     prepare_asr_normalization(kb)
@@ -114,6 +137,7 @@ def create_app(
     @app.get("/api/tts")
     async def synthesize_speech(
         text: str = Query(min_length=1, max_length=MAX_TTS_CHARS),
+        locale: str = Query(default="", max_length=64),
         trace_id: str = Query(default="", max_length=128),
         segment: int = Query(default=0, ge=0, le=999),
         reason: str = Query(default="", max_length=40),
@@ -121,13 +145,28 @@ def create_app(
         text = text.strip()
         if not text:
             raise HTTPException(status_code=422, detail="empty_text")
+        # The locale attached to an assistant turn is authoritative for every
+        # segment in that turn.  Inspect text only when an older client did
+        # not send a resolved locale; otherwise a canonical Chinese project
+        # name inside an English sentence could unexpectedly change voices.
+        requested_locale = normalize_locale_hint(locale)
+        language_profile = get_language_profile(
+            requested_locale or detect_locale(text),
+        )
         started = time.perf_counter()
-        LOGGER.info("[trace=%s segment=%s] tts.request.start reason=%s chars=%s", trace_id or "-", segment, reason or "unspecified", len(text))
+        LOGGER.info(
+            "[trace=%s segment=%s] tts.request.start reason=%s chars=%s locale=%s",
+            trace_id or "-",
+            segment,
+            reason or "unspecified",
+            len(text),
+            language_profile.code,
+        )
 
         async def audio_stream() -> AsyncIterator[bytes]:
             communicate = edge_tts.Communicate(
                 text,
-                voice="zh-CN-XiaoxiaoNeural",
+                voice=language_profile.tts_voice,
                 rate="-2%",
                 pitch="+0Hz",
             )
@@ -136,14 +175,27 @@ def create_app(
                 if chunk.get("type") == "audio" and chunk.get("data"):
                     if first_chunk:
                         first_chunk = False
-                        LOGGER.info("[trace=%s segment=%s] tts.first_audio_chunk +%.3fs", trace_id or "-", segment, time.perf_counter() - started)
+                        LOGGER.info(
+                            "[trace=%s segment=%s] tts.first_audio_chunk +%.3fs",
+                            trace_id or "-",
+                            segment,
+                            time.perf_counter() - started,
+                        )
                     yield chunk["data"]
-            LOGGER.info("[trace=%s segment=%s] tts.stream.complete +%.3fs", trace_id or "-", segment, time.perf_counter() - started)
+            LOGGER.info(
+                "[trace=%s segment=%s] tts.stream.complete +%.3fs",
+                trace_id or "-",
+                segment,
+                time.perf_counter() - started,
+            )
 
         return StreamingResponse(
             audio_stream(),
             media_type="audio/mpeg",
-            headers={"Cache-Control": "no-store"},
+            headers={
+                "Cache-Control": "no-store",
+                "X-Speech-Locale": language_profile.code,
+            },
         )
 
     @app.get("/api/items")
@@ -188,11 +240,13 @@ def create_app(
         question = body.question.strip()
         session_id = body.session_id.strip() if body.session_id else None
         category = body.category.strip()
+        locale_hint = body.locale_hint.strip()
 
         async for assistant_event in assistant.stream_turn(
             question,
             session_id=session_id,
             category=category,
+            locale_hint=locale_hint,
         ):
             yield ServerSentEvent(
                 data=assistant_event.to_dict(),
@@ -217,7 +271,7 @@ def create_app(
             return
         await websocket.accept()
         connection_id = uuid.uuid4().hex
-        asr_stream: XfyunStream | None = None
+        asr_stream: AutoXfyunStream | None = None
         asr_start_task: asyncio.Task[None] | None = None
         answer_task: asyncio.Task[None] | None = None
         # Finalizing ASR is independent for each ended utterance.  Keeping a
@@ -226,6 +280,8 @@ def create_app(
         finalize_tasks: set[asyncio.Task[None]] = set()
         batch_results: dict[int, str] = {}
         batch_candidates: dict[int, tuple[str, ...]] = {}
+        batch_languages: dict[int, str] = {}
+        batch_asr_modes: dict[int, str] = {}
         # The browser may split one spoken turn into several VAD utterances.
         # Keep each provider hypothesis until its final arrives, then publish
         # the ordered concatenation so a late partial from the first segment
@@ -239,6 +295,7 @@ def create_app(
         session_id: str | None = None
         voice_category = ""
         voice_context_titles: list[str] = []
+        voice_locale_hint = ""
         active_turn_id: str | None = None
         utterance_sequence = 0
         event_sequence = 0
@@ -247,12 +304,15 @@ def create_app(
         def update_voice_context(event: dict[str, Any]) -> None:
             """Keep only bounded, non-sensitive recognition context from the browser."""
 
-            nonlocal session_id, voice_category, voice_context_titles
+            nonlocal session_id, voice_category, voice_context_titles, voice_locale_hint
             category = str(event.get("category") or "").strip()
             voice_category = category[:200]
             incoming_session = str(event.get("session_id") or "").strip()
             if incoming_session:
                 session_id = incoming_session[:MAX_SESSION_ID_CHARS]
+            incoming_locale = normalize_locale_hint(event.get("locale_hint") or event.get("locale"))
+            if incoming_locale:
+                voice_locale_hint = incoming_locale
 
             values: list[Any] = []
             for key in ("selected_title", "selected_item", "selected"):
@@ -293,7 +353,7 @@ def create_app(
                         return tuple(recent)
             return tuple(recent)
 
-        def make_asr_stream(on_partial: Any) -> XfyunStream:
+        def make_asr_stream(on_partial: Any) -> AutoXfyunStream:
             recent = recent_voice_items()
             recent_titles = [str(getattr(item, "title", "") or "") for item in recent]
             hotwords: list[str] = []
@@ -305,13 +365,29 @@ def create_app(
                     hotwords.append(title)
                 if len(hotwords) >= MAX_VOICE_CONTEXT_TITLES + MAX_VOICE_RECENT_ITEMS:
                     break
-            return XfyunStream(
+            preferred_mode = (
+                AutoXfyunStream.DIALECT
+                if is_chinese_locale(voice_locale_hint)
+                else AutoXfyunStream.MULTILINGUAL
+            )
+            return AutoXfyunStream(
                 app_id=XF_APP_ID,
                 api_key=XF_API_KEY,
                 api_secret=XF_API_SECRET,
+                multilingual_app_id=XF_MULTILINGUAL_APP_ID,
+                multilingual_api_key=XF_MULTILINGUAL_API_KEY,
+                multilingual_api_secret=XF_MULTILINGUAL_API_SECRET,
+                host=XF_ASR_HOST,
+                multilingual_host=XF_MULTILINGUAL_ASR_HOST,
+                multilingual_language_hint=XF_MULTILINGUAL_LANGUAGE_HINT,
+                legacy_host=XF_LEGACY_ASR_HOST,
                 on_partial=on_partial,
                 hotwords=tuple(hotwords),
                 resource_id=XF_ASR_RES_ID,
+                # Probe on every utterance so one conversation can naturally
+                # switch between a Chinese dialect and English/Japanese/Korean.
+                mode=AutoXfyunStream.AUTO,
+                preferred_mode=preferred_mode,
             )
 
         async def send(payload: dict[str, Any]) -> None:
@@ -319,11 +395,13 @@ def create_app(
             try:
                 async with send_lock:
                     event_sequence += 1
-                    await websocket.send_json({
-                        "connection_id": connection_id,
-                        "sequence": event_sequence,
-                        **payload,
-                    })
+                    await websocket.send_json(
+                        {
+                            "connection_id": connection_id,
+                            "sequence": event_sequence,
+                            **payload,
+                        }
+                    )
             except (RuntimeError, WebSocketDisconnect):
                 pass
 
@@ -355,6 +433,8 @@ def create_app(
             batch_generation += 1
             batch_results.clear()
             batch_candidates.clear()
+            batch_languages.clear()
+            batch_asr_modes.clear()
             batch_partials.clear()
             pending_user_speaking.clear()
             batch_pending.clear()
@@ -378,15 +458,17 @@ def create_app(
             if not combined:
                 return
             partial_revision += 1
-            await send({
-                "type": "user.partial",
-                # The latest id owns the visible bubble; the text includes
-                # all earlier utterance hypotheses in order.
-                "utterance_id": max(batch_partials),
-                "revision": partial_revision,
-                "text": combined,
-                "final": False,
-            })
+            await send(
+                {
+                    "type": "user.partial",
+                    # The latest id owns the visible bubble; the text includes
+                    # all earlier utterance hypotheses in order.
+                    "utterance_id": max(batch_partials),
+                    "revision": partial_revision,
+                    "text": combined,
+                    "final": False,
+                }
+            )
 
         async def stop_answer(reason: str) -> None:
             nonlocal answer_task, active_turn_id
@@ -402,32 +484,43 @@ def create_app(
                 )
             await stop_task(task)
 
-        async def answer(question: str, turn_id: str) -> None:
+        async def answer(question: str, turn_id: str, locale_hint: str = "") -> None:
             nonlocal session_id
+            answer_locale = detect_locale(question, hint=locale_hint or voice_locale_hint)
             LOGGER.info(
                 "voice.agent.thinking connection=%s turn=%s question_chars=%s",
                 connection_id,
                 turn_id,
                 len(question),
             )
-            await send({"type": "status", "status": "thinking", "turn_id": turn_id})
+            await send(
+                {
+                    "type": "status",
+                    "status": "thinking",
+                    "turn_id": turn_id,
+                    "locale": answer_locale,
+                }
+            )
             try:
                 async for event in assistant.stream_turn(
                     question,
                     session_id=session_id,
                     turn_id=turn_id,
                     category=voice_category,
+                    locale_hint=answer_locale,
                 ):
                     if active_turn_id != turn_id:
                         return
                     session_id = event.session_id
                     if event.type == "response.text.delta":
+                        event_locale = str(event.payload.get("locale") or answer_locale)
                         await send(
                             {
                                 "type": "assistant.delta",
                                 "session_id": event.session_id,
                                 "turn_id": event.turn_id,
                                 "text": event.payload.get("delta", ""),
+                                "locale": event_locale,
                             }
                         )
                     elif event.type == "response.sources":
@@ -440,12 +533,14 @@ def create_app(
                             }
                         )
                     elif event.type == "turn.completed":
+                        event_locale = str(event.payload.get("locale") or answer_locale)
                         await send(
                             {
                                 "type": "assistant.done",
                                 "session_id": event.session_id,
                                 "turn_id": event.turn_id,
                                 "text": event.payload.get("answer", ""),
+                                "locale": event_locale,
                             }
                         )
                     elif event.type == "turn.failed":
@@ -455,12 +550,14 @@ def create_app(
                             if code == "llm_first_token_timeout"
                             else "回答服务暂时不可用，请再试一次"
                         )
-                        await send({
-                            "type": "error",
-                            "turn_id": turn_id,
-                            "code": code,
-                            "message": message,
-                        })
+                        await send(
+                            {
+                                "type": "error",
+                                "turn_id": turn_id,
+                                "code": code,
+                                "message": message,
+                            }
+                        )
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -471,12 +568,16 @@ def create_app(
                 )
                 await send({"type": "error", "turn_id": turn_id, "message": "回答服务暂时不可用"})
 
-        async def start_answer(question: str, reason: str) -> None:
+        async def start_answer(
+            question: str,
+            reason: str,
+            locale_hint: str = "",
+        ) -> None:
             nonlocal answer_task, active_turn_id
             await stop_answer(reason)
             turn_id = uuid.uuid4().hex
             active_turn_id = turn_id
-            answer_task = asyncio.create_task(answer(question, turn_id))
+            answer_task = asyncio.create_task(answer(question, turn_id, locale_hint))
 
         async def commit_voice_batch(generation: int) -> None:
             """Commit one settled group of overlapping VAD utterances."""
@@ -490,7 +591,12 @@ def create_app(
             if generation != batch_generation:
                 return
             async with batch_lock:
-                if generation != batch_generation or asr_stream is not None or batch_pending or not batch_results:
+                if (
+                    generation != batch_generation
+                    or asr_stream is not None
+                    or batch_pending
+                    or not batch_results
+                ):
                     return
                 results = dict(batch_results)
                 batch_results.clear()
@@ -501,6 +607,8 @@ def create_app(
                     for candidate in batch_candidates.pop(item_id, ())
                     if candidate
                 )
+                provider_languages = [batch_languages.pop(item_id, "") for item_id in ordered_ids]
+                asr_modes = [batch_asr_modes.pop(item_id, "") for item_id in ordered_ids]
                 raw_text = " ".join(
                     results[item_id].strip() for item_id in ordered_ids if results[item_id].strip()
                 )
@@ -510,12 +618,28 @@ def create_app(
                     partial_revision = 0
                     await send({"type": "utterance.rejected", "utterance_id": committed_id})
                     return
-                normalized = normalize_asr_final(
+                provider_locale = next(
+                    (
+                        locale
+                        for language in reversed(provider_languages)
+                        if (locale := locale_from_provider_language(language))
+                    ),
+                    None,
+                )
+                resolved_locale = detect_locale(
                     raw_text,
-                    kb=kb,
-                    category=voice_category,
-                    recent_items=recent_voice_items(),
-                    asr_candidates=asr_candidates,
+                    hint=provider_locale or voice_locale_hint,
+                )
+                normalized = (
+                    normalize_asr_final(
+                        raw_text,
+                        kb=kb,
+                        category=voice_category,
+                        recent_items=recent_voice_items(),
+                        asr_candidates=asr_candidates,
+                    )
+                    if is_chinese_locale(resolved_locale)
+                    else NormalizedTranscript(raw_text, raw_text, ())
                 )
                 canonical_text = normalized.canonical_text
                 normalizations = [asdict(span) for span in normalized.spans]
@@ -528,34 +652,40 @@ def create_app(
                     len(normalizations),
                 )
                 await stop_answer("asr_batch")
-                await send({
-                    "type": "user.transcript",
-                    "utterance_id": committed_id,
-                    "revision": partial_revision,
-                    "final": True,
-                    "text": canonical_text,
-                    "raw_text": raw_text,
-                    "normalizations": normalizations,
-                })
+                await send(
+                    {
+                        "type": "user.transcript",
+                        "utterance_id": committed_id,
+                        "revision": partial_revision,
+                        "final": True,
+                        "text": canonical_text,
+                        "raw_text": raw_text,
+                        "normalizations": normalizations,
+                        "locale": resolved_locale,
+                        "asr_engine": next((mode for mode in reversed(asr_modes) if mode), "auto"),
+                    }
+                )
                 # This batch is complete. Do not let its partial prefix leak
                 # into the next VAD turn; there are no pending finalizers to
                 # invalidate, so the generation remains unchanged.
                 batch_partials.clear()
                 partial_revision = 0
-                await start_answer(canonical_text, "new_utterance")
+                await start_answer(canonical_text, "new_utterance", resolved_locale)
 
         async def finish_utterance(
-            stream: XfyunStream,
+            stream: AutoXfyunStream,
             start_task: asyncio.Task[None],
             utterance_id: int,
             generation: int,
         ) -> None:
             try:
-                await send({
-                    "type": "status",
-                    "status": "transcribing",
-                    "utterance_id": utterance_id,
-                })
+                await send(
+                    {
+                        "type": "status",
+                        "status": "transcribing",
+                        "utterance_id": utterance_id,
+                    }
+                )
                 await start_task
                 transcript = await stream.finish()
                 LOGGER.info(
@@ -574,6 +704,10 @@ def create_app(
                 if generation == batch_generation:
                     batch_results[utterance_id] = transcript
                     batch_candidates[utterance_id] = stream.candidates
+                    selected_mode = str(getattr(stream, "selected_mode", "") or "")
+                    detected_language = str(getattr(stream, "detected_language", "") or "")
+                    batch_asr_modes[utterance_id] = selected_mode
+                    batch_languages[utterance_id] = detected_language
                     # The provider final is authoritative for this segment;
                     # keep it in the batch until commit so a late partial
                     # cannot replace the calibrated text.
@@ -590,6 +724,8 @@ def create_app(
                 if generation == batch_generation:
                     batch_results[utterance_id] = ""
                     batch_candidates[utterance_id] = ()
+                    batch_asr_modes[utterance_id] = ""
+                    batch_languages[utterance_id] = ""
                 await send({"type": "error", "message": "语音识别暂时不可用"})
             finally:
                 await stream.close()
@@ -597,7 +733,7 @@ def create_app(
                 batch_pending.discard(utterance_id)
                 await commit_voice_batch(generation)
 
-        async def start_asr(stream: XfyunStream, utterance_id: int) -> None:
+        async def start_asr(stream: AutoXfyunStream, utterance_id: int) -> None:
             started_at = time.perf_counter()
             LOGGER.info(
                 "voice.asr.connect.start connection=%s utterance=%s",
@@ -613,7 +749,7 @@ def create_app(
             )
 
         def schedule_finalize(
-            stream: XfyunStream,
+            stream: AutoXfyunStream,
             start_task: asyncio.Task[None],
             utterance_id: int,
         ) -> None:
@@ -687,11 +823,13 @@ def create_app(
                             if current not in batch_partials:
                                 return
                             if current in pending_user_speaking and _contains_spoken_text(text):
-                                await send({
-                                    "type": "status",
-                                    "status": "user_speaking",
-                                    "utterance_id": current,
-                                })
+                                await send(
+                                    {
+                                        "type": "status",
+                                        "status": "user_speaking",
+                                        "utterance_id": current,
+                                    }
+                                )
                                 pending_user_speaking.discard(current)
                             if not partial_logged:
                                 LOGGER.info(
@@ -715,11 +853,13 @@ def create_app(
                         # in order after the handshake.
                         asr_start_task = asyncio.create_task(start_asr(asr_stream, utterance_id))
                         if utterance_id not in pending_user_speaking:
-                            await send({
-                                "type": "status",
-                                "status": "user_speaking",
-                                "utterance_id": utterance_id,
-                            })
+                            await send(
+                                {
+                                    "type": "status",
+                                    "status": "user_speaking",
+                                    "utterance_id": utterance_id,
+                                }
+                            )
                 elif event_type == "utterance.end" and asr_stream is not None:
                     async with batch_lock:
                         utterance_id = utterance_sequence
@@ -739,7 +879,9 @@ def create_app(
                         clear_voice_batch()
                         await stop_finalize_tasks()
                         await close_active_asr()
-                        await send({"type": "utterance.rejected", "utterance_id": utterance_sequence})
+                        await send(
+                            {"type": "utterance.rejected", "utterance_id": utterance_sequence}
+                        )
                 elif event_type == "barge_in":
                     # Batch commit and confirmed barge-in both replace the
                     # active answer. Serialize them so a concurrently
@@ -752,11 +894,13 @@ def create_app(
                             utterance_sequence,
                         )
                         await stop_answer("barge_in")
-                    await send({
-                        "type": "status",
-                        "status": "user_speaking",
-                        "utterance_id": utterance_sequence,
-                    })
+                    await send(
+                        {
+                            "type": "status",
+                            "status": "user_speaking",
+                            "utterance_id": utterance_sequence,
+                        }
+                    )
                 elif event_type == "text":
                     text = str(event.get("text") or "").strip()
                     if text:
@@ -773,11 +917,13 @@ def create_app(
                         clear_voice_batch()
                         await stop_finalize_tasks()
                         await close_active_asr()
-                        await send({
-                            "type": "status",
-                            "status": "listening",
-                            "utterance_id": utterance_sequence,
-                        })
+                        await send(
+                            {
+                                "type": "status",
+                                "status": "listening",
+                                "utterance_id": utterance_sequence,
+                            }
+                        )
         except WebSocketDisconnect:
             pass
         finally:
@@ -790,6 +936,7 @@ def create_app(
         app.frontend("/", directory=FRONTEND_DIR, fallback="index.html")
 
     return app
+
 
 app = create_app()
 

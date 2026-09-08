@@ -13,6 +13,7 @@
 - 连续与抢话：一个浏览器语音 WebSocket 承载多轮上下文；用户开口并被确认后，立即取消正在播报的回答。
 - 数字人界面：浅色宣纸质感的全屏三栏工作区，左侧数字人、中间对话、右侧项目资料。
 - 实时语音：浏览器采集音频，经讯飞流式 ASR、AssistantService 与 DeepSeek 生成回答，再由 Edge TTS 返回可中断音频。
+- 多语言与方言：不增加选择控件；自动覆盖普通话、国内方言、英语、日语和韩语，回答语言与 TTS 声线随每轮结果切换。
 
 ## 架构
 
@@ -40,6 +41,21 @@ FastAPI 服务
 
 ## 快速开始
 
+### 实验室电脑一键安装
+
+在 Windows 实验室电脑上下载仓库根目录的 `bootstrap-xuhua.cmd` 后双击。安装器会从
+GitHub 克隆或更新源码，从 Hugging Face 下载并校验本地模型，安装依赖、构建前端，最后
+启动叙华。默认安装到 `D:\Projects\Packages`。
+
+云端 DeepSeek 与讯飞语音所需密钥不会提交到 GitHub。需要全自动配置时，把包含真实配置
+的 `xuhua.env` 与安装器放在同一目录；安装器会将它复制为项目的 `.env`。模型清单见
+`deploy/models.manifest.json`，高级参数可直接运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\deploy\install-lab.ps1 `
+  -InstallRoot D:\Projects\Packages -SkipLaunch
+```
+
 要求：Node.js 22+。放在统一的 `Packages` 目录中时，启动器会优先复用
 `Packages/runtime/uv/uv.exe`；单独交付时则需要系统已安装 [uv](https://docs.astral.sh/uv/)。
 Python 版本由 `.python-version` 锁定为 3.12。启动器与牡丹、田田共用
@@ -50,6 +66,21 @@ cd D:\Projects\Packages\叙华
 Copy-Item .env.example .env
 .\start.bat
 ```
+
+### 实验室电脑一键安装
+
+从 GitHub 下载仓库根目录的 `bootstrap-xuhua.cmd`，把包含密钥的 `xuhua.env`
+放在同一目录后双击。安装器会同步 GitHub 源码、从 Hugging Face 下载四套本地模型、
+安装依赖、构建前端并启动叙华。默认安装位置为 `D:\Projects\Packages`。
+
+也可以直接在 PowerShell 中运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install-lab.ps1
+```
+
+模型来源、固定版本与大文件 SHA-256 记录在 `deploy/models.manifest.json`。`.env` 和
+`xuhua.env` 均被 Git 忽略，密钥不会上传到 GitHub。
 
 `start.bat` 会严格按 `package-lock.json` 重建前端，并按 `pyproject.toml` 检查、补齐共享
 Python 环境后启动服务。`uv.lock` 仍用于开发、测试与容器构建；共享环境采用增量安装，
@@ -97,6 +128,14 @@ Vite 会把 `/api` 与 `/healthz` 代理到本地 FastAPI 服务。
 | `XF_APP_ID` | 空 | 讯飞流式语音识别应用 ID |
 | `XF_API_KEY` | 空 | 讯飞流式语音识别 API Key |
 | `XF_API_SECRET` | 空 | 讯飞流式语音识别 API Secret |
+| `XF_ASR_HOST` | `iat.cn-huabei-1.xf-yun.com` | 讯飞方言大模型 ASR 地址 |
+| `XF_LEGACY_ASR_HOST` | `iat.xf-yun.com` | 新模型未开通时的兼容 ASR 地址 |
+| `XF_ASR_RES_ID` | 空 | 可选的方言 ASR 资源 ID |
+| `XF_MULTILINGUAL_APP_ID` | 复用 `XF_APP_ID` | 可选的讯飞多语种应用 ID |
+| `XF_MULTILINGUAL_API_KEY` | 复用 `XF_API_KEY` | 可选的讯飞多语种 API Key |
+| `XF_MULTILINGUAL_API_SECRET` | 复用 `XF_API_SECRET` | 可选的讯飞多语种 API Secret |
+| `XF_MULTILINGUAL_ASR_HOST` | 复用 `XF_ASR_HOST` | 讯飞多语种大模型 ASR 地址 |
+| `XF_MULTILINGUAL_LANGUAGE_HINT` | `en|ja|ko` | 将外语自动识别限定为英语、日语和韩语，减少语种串扰 |
 | `SEARCH_USE_EMBEDDING` | `0` | 是否启用可选语义索引 |
 
 应用不会自行读取 `.env`。本地命令请使用 `uv run --env-file .env ...`；`start.bat` 已自动处理。
@@ -113,12 +152,18 @@ Vite 会把 `/api` 与 `/healthz` 代理到本地 FastAPI 服务。
 | POST | `/api/chat` | SSE 流式问答 |
 | POST | `/api/chat/{session_id}/turn/{turn_id}/cancel` | 中断指定轮次 |
 | WS | `/api/voice` | 浏览器端 VAD、讯飞流式 ASR、连续对话与抢话 |
-| GET | `/api/tts` | Edge TTS 音频流；通过 `text`、`trace_id`、`segment`、`reason` 标记播报段 |
+| GET | `/api/tts` | Edge TTS 音频流；通过 `locale` 自动映射允许的声线 |
 
 实时语音由浏览器端 VAD 自动断句。每个明确的用户轮次经讯飞流式 ASR 转成文字后，交给
 `AssistantService`；模型使用 `AI_BASE_URL` / `AI_MODEL` 配置的 OpenAI 兼容接口（默认
 DeepSeek），回答事实前复用本地检索。回答文本通过 Edge TTS 流式合成，浏览器播放过程中
 可以被新的用户语音立即打断。
+
+首个语音轮次会同时探测讯飞方言模型与多语种模型：普通话和国内方言采用方言结果，英语、
+日语、韩语采用多语种结果；新模型不可用时自动降级到兼容识别。识别出的语言会贯穿资料
+检索、回答、字幕和本轮 TTS。粤语、四川话和河南话还会匹配各自的回答口吻；当前 Edge TTS
+对四川、河南专用 Azure 声线不返回音频，因此这两类先使用稳定中文声线朗读方言文本，避免
+无声。整个过程不显示语言按钮或选择器。
 
 最小问答请求：
 
@@ -126,7 +171,8 @@ DeepSeek），回答事实前复用本地检索。回答文本通过 Edge TTS �
 {
   "question": "推荐适合校园展示的河南非遗项目",
   "session_id": null,
-  "category": ""
+  "category": "",
+  "locale_hint": "zh-CN"
 }
 ```
 

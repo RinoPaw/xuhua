@@ -16,6 +16,8 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
   right column for searchable project material and detail views.
 - Keep the composer at the bottom in a restrained GPT-like form. The realtime voice control sits to the
   right as a genuinely round button; do not turn it into a square or a speech-to-text-looking control.
+- Language and dialect support is automatic. Do not add a language selector, language button, or any
+  other locale control; infer the current turn from speech/text with browser locale only as a hint.
 - Use restrained xuan-paper texture and a quiet light palette. Readable type and compact, consistent
   conversation bubbles take priority over decorative chrome, large empty states, or redundant labels.
 - Project imagery is intentionally not displayed for now; do not add empty image regions, “待上传” text,

@@ -15,6 +15,8 @@ from urllib.parse import urlencode
 
 from websockets.asyncio.client import ClientConnection, connect
 
+from .language import detect_locale, is_chinese_locale
+
 
 LOGGER = logging.getLogger(__name__)
 
@@ -48,10 +50,26 @@ class XfyunStream:
         on_partial: Callable[[str], Awaitable[None]] | None = None,
         hotwords: str | list[str] | tuple[str, ...] | None = None,
         resource_id: str | None = None,
+        host: str | None = None,
+        path: str = "/v1",
+        language: str = "zh_cn",
+        accent: str = "mandarin",
+        domain: str = "slm",
+        language_hint: str = "",
+        dynamic_correction: bool = True,
+        eos: int = 1800,
     ) -> None:
         self.app_id = app_id.strip()
         self.api_key = api_key.strip()
         self.api_secret = api_secret.strip()
+        self.host = str(host or type(self).host).strip()
+        self.path = str(path or "/v1").strip()
+        self.language = str(language or "zh_cn").strip()
+        self.accent = str(accent or "mandarin").strip()
+        self.domain = str(domain or "slm").strip()
+        self.language_hint = str(language_hint or "").strip()
+        self.dynamic_correction = bool(dynamic_correction)
+        self.eos = min(max(int(eos), 600), 10000)
         self.resource_id = (resource_id or "").strip()
         self._hotword_spec = self._format_hotwords(hotwords)
         self._socket: ClientConnection | None = None
@@ -67,6 +85,7 @@ class XfyunStream:
         # discard every hypothesis from the replaced range together with its
         # top-1 text.
         self._candidate_pieces: dict[int, tuple[str, ...]] = {}
+        self._language_pieces: dict[int, str] = {}
         self._sequence = 0
         self._first = True
         self._has_audio = False
@@ -224,8 +243,10 @@ class XfyunStream:
                 current.done.cancel()
             raise
         except Exception as exc:
-            failure = exc if isinstance(exc, VoiceProviderError) else VoiceProviderError(
-                "voice_provider_disconnected"
+            failure = (
+                exc
+                if isinstance(exc, VoiceProviderError)
+                else VoiceProviderError("voice_provider_disconnected")
             )
             self._send_failure = failure
             self._error = True
@@ -390,7 +411,9 @@ class XfyunStream:
         count = max(len(items) for items in words)
         output: list[str] = []
         for index in range(count):
-            output.append("".join(items[index] if index < len(items) else items[0] for items in words))
+            output.append(
+                "".join(items[index] if index < len(items) else items[0] for items in words)
+            )
         return tuple(output)
 
     @staticmethod
@@ -411,16 +434,50 @@ class XfyunStream:
             for key in range(start, end + 1):
                 self._pieces.pop(key, None)
                 self._candidate_pieces.pop(key, None)
+                self._language_pieces.pop(key, None)
         if piece:
             self._pieces[sequence] = piece
         if candidates and any(candidates):
             self._candidate_pieces[sequence] = tuple(
-                candidate for index, candidate in enumerate(candidates) if candidate and candidate not in candidates[:index]
+                candidate
+                for index, candidate in enumerate(candidates)
+                if candidate and candidate not in candidates[:index]
             )
+        source_language = self.extract_language(result)
+        if source_language:
+            self._language_pieces[sequence] = source_language
         return bool(piece or replacement)
 
     def current_text(self) -> str:
         return "".join(self._pieces[key] for key in sorted(self._pieces)).strip()
+
+    @staticmethod
+    def extract_language(result: dict[str, object]) -> str:
+        """Return the dominant provider ``cw.lg`` source-language tag."""
+
+        counts: dict[str, int] = {}
+        segments = result.get("ws", [])
+        if not isinstance(segments, list):
+            return ""
+        for segment in segments:
+            candidates = segment.get("cw", []) if isinstance(segment, dict) else []
+            if not isinstance(candidates, list):
+                continue
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                language = str(candidate.get("lg") or "").strip().casefold()
+                if language:
+                    counts[language] = counts.get(language, 0) + 1
+                    break
+        return max(counts, key=counts.get) if counts else ""
+
+    @property
+    def detected_language(self) -> str:
+        counts: dict[str, int] = {}
+        for language in self._language_pieces.values():
+            counts[language] = counts.get(language, 0) + 1
+        return max(counts, key=counts.get) if counts else ""
 
     @property
     def alternative_texts(self) -> tuple[str, ...]:
@@ -473,20 +530,18 @@ class XfyunStream:
 
     def _first_packet(self, audio: str) -> dict[str, object]:
         iat: dict[str, object] = {
-            "domain": "slm",
-            "language": "zh_cn",
-            # iat.xf-yun.com/v1 is the Chinese/English SLM endpoint. Its
-            # documented fixed accent is mandarin; mulacc belongs to the
-            # separate dialect endpoint and must not be mixed into this
-            # request contract.
-            "accent": "mandarin",
-            "eos": 1800,
-            # Enable Xunfei's dynamic correction mode.  Without WPGS
-            # the provider tends to hold results until the utterance
-            # ends, which makes the browser look non-streaming.
-            "dwa": "wpgs",
+            "domain": self.domain,
+            "language": self.language,
+            "accent": self.accent,
+            "eos": self.eos,
             "result": {"encoding": "utf8", "compress": "raw", "format": "json"},
         }
+        # Xunfei documents WPGS and session hotwords for the dialect SLM,
+        # while the multilingual SLM leaves both out of its request contract.
+        if self.dynamic_correction:
+            iat["dwa"] = "wpgs"
+        if self.language_hint:
+            iat["ln"] = self.language_hint
         if self._hotword_spec:
             iat["dhw"] = self._hotword_spec
         return {
@@ -508,4 +563,283 @@ class XfyunStream:
         }
 
 
-__all__ = ["VoiceProviderError", "XfyunStream"]
+class AutoXfyunStream:
+    """Probe Xunfei's dialect and multilingual SLMs behind one stream API.
+
+    The provider exposes ``zh_cn/mulacc`` (Mandarin plus Chinese dialects) and
+    ``mul_cn/mandarin`` (automatic language recognition) as separate models.
+    The first utterance can therefore be sent to both models; the result's
+    ``cw.lg`` tags choose multilingual output only when it is genuinely
+    non-Chinese.  A third legacy stream preserves existing Mandarin/simple
+    English recognition when neither newer entitlement is enabled.
+    """
+
+    DIALECT = "dialect"
+    MULTILINGUAL = "multilingual"
+    LEGACY = "legacy"
+    AUTO = "auto"
+
+    def __init__(
+        self,
+        *,
+        app_id: str,
+        api_key: str,
+        api_secret: str,
+        multilingual_app_id: str = "",
+        multilingual_api_key: str = "",
+        multilingual_api_secret: str = "",
+        host: str | None = None,
+        multilingual_host: str | None = None,
+        multilingual_language_hint: str = "en|ja|ko",
+        legacy_host: str | None = "iat.xf-yun.com",
+        on_partial: Callable[[str], Awaitable[None]] | None = None,
+        hotwords: str | list[str] | tuple[str, ...] | None = None,
+        resource_id: str | None = None,
+        mode: str = AUTO,
+        preferred_mode: str = DIALECT,
+    ) -> None:
+        requested_mode = str(mode or self.AUTO).strip().casefold()
+        self.mode = (
+            requested_mode
+            if requested_mode
+            in {
+                self.AUTO,
+                self.DIALECT,
+                self.MULTILINGUAL,
+                self.LEGACY,
+            }
+            else self.AUTO
+        )
+        preferred = str(preferred_mode or self.DIALECT).strip().casefold()
+        self.preferred_mode = (
+            preferred
+            if preferred
+            in {
+                self.DIALECT,
+                self.MULTILINGUAL,
+            }
+            else self.DIALECT
+        )
+        self._on_partial = on_partial
+        self._partials: dict[str, str] = {}
+        self._active_modes: set[str] = set()
+        self._start_errors: dict[str, Exception] = {}
+        self._selected_mode = ""
+
+        async def dialect_partial(text: str) -> None:
+            await self._publish_partial(self.DIALECT, text)
+
+        async def multilingual_partial(text: str) -> None:
+            await self._publish_partial(self.MULTILINGUAL, text)
+
+        async def legacy_partial(text: str) -> None:
+            await self._publish_partial(self.LEGACY, text)
+
+        self._streams: dict[str, XfyunStream] = {}
+        if self.mode in {self.AUTO, self.DIALECT}:
+            self._streams[self.DIALECT] = XfyunStream(
+                app_id=app_id,
+                api_key=api_key,
+                api_secret=api_secret,
+                host=host,
+                language="zh_cn",
+                accent="mulacc",
+                domain="slm",
+                dynamic_correction=True,
+                on_partial=dialect_partial,
+                hotwords=hotwords,
+                resource_id=resource_id,
+            )
+        if self.mode in {self.AUTO, self.MULTILINGUAL}:
+            self._streams[self.MULTILINGUAL] = XfyunStream(
+                app_id=(multilingual_app_id or app_id),
+                api_key=(multilingual_api_key or api_key),
+                api_secret=(multilingual_api_secret or api_secret),
+                host=multilingual_host or host,
+                language="mul_cn",
+                accent="mandarin",
+                domain="slm",
+                dynamic_correction=False,
+                eos=6000,
+                language_hint=multilingual_language_hint,
+                on_partial=multilingual_partial,
+            )
+        if self.mode in {self.AUTO, self.LEGACY}:
+            self._streams[self.LEGACY] = XfyunStream(
+                app_id=app_id,
+                api_key=api_key,
+                api_secret=api_secret,
+                host=legacy_host,
+                language="zh_cn",
+                accent="mandarin",
+                domain="slm",
+                dynamic_correction=True,
+                on_partial=legacy_partial,
+                hotwords=hotwords,
+                resource_id=resource_id,
+            )
+
+    @staticmethod
+    def _is_chinese_tag(value: object) -> bool:
+        language = str(value or "").strip().casefold().replace("-", "_")
+        return language in {"zh", "cn", "zh_cn", "cn_cbm", "chinese"}
+
+    @classmethod
+    def _is_foreign_transcript(cls, text: str, detected: object) -> bool:
+        """Reject foreign-language tags contradicted by Chinese dialect text."""
+
+        if cls._is_chinese_tag(detected):
+            return False
+        return not is_chinese_locale(detect_locale(text, hint=detected))
+
+    async def _publish_partial(self, mode: str, text: str) -> None:
+        content = str(text or "")
+        self._partials[mode] = content
+        if self._on_partial is None or not content:
+            return
+        if self._selected_mode:
+            if mode == self._selected_mode:
+                await self._on_partial(content)
+            return
+        multilingual = self._streams.get(self.MULTILINGUAL)
+        detected = getattr(multilingual, "detected_language", "") if multilingual else ""
+        multilingual_text = self._partials.get(self.MULTILINGUAL, "")
+        if detected and self._is_foreign_transcript(multilingual_text, detected):
+            if mode == self.MULTILINGUAL:
+                await self._on_partial(content)
+            return
+        if (
+            self.mode != self.AUTO
+            or mode == self.preferred_mode
+            or (
+                mode == self.LEGACY
+                and not self._partials.get(self.preferred_mode)
+            )
+        ):
+            await self._on_partial(content)
+
+    async def start(self) -> None:
+        async def start_one(mode: str, stream: XfyunStream) -> None:
+            try:
+                await stream.start()
+                self._active_modes.add(mode)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._start_errors[mode] = exc
+                await stream.close()
+
+        await asyncio.gather(*(start_one(mode, stream) for mode, stream in self._streams.items()))
+        if not self._active_modes:
+            failure = next(iter(self._start_errors.values()), None)
+            if isinstance(failure, VoiceProviderError):
+                raise failure
+            raise VoiceProviderError("voice_provider_unavailable") from failure
+
+    async def send_audio(self, data: bytes) -> None:
+        # Audio can arrive while ``start`` is still negotiating sockets.  Each
+        # child stream already buffers pre-connect PCM, preserving first audio.
+        await asyncio.gather(
+            *(
+                stream.send_audio(data)
+                for mode, stream in self._streams.items()
+                if mode not in self._start_errors
+            )
+        )
+
+    async def finish(self) -> str:
+        async def finish_one(mode: str, stream: XfyunStream) -> tuple[str, str | Exception]:
+            if mode not in self._active_modes:
+                return mode, self._start_errors.get(
+                    mode,
+                    VoiceProviderError("voice_provider_unavailable"),
+                )
+            try:
+                return mode, await stream.finish()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                return mode, exc
+
+        finished = await asyncio.gather(
+            *(finish_one(mode, stream) for mode, stream in self._streams.items())
+        )
+        results = {mode: result for mode, result in finished}
+        dialect = results.get(self.DIALECT, "")
+        multilingual = results.get(self.MULTILINGUAL, "")
+        legacy = results.get(self.LEGACY, "")
+        dialect_text = dialect if isinstance(dialect, str) else ""
+        multilingual_text = multilingual if isinstance(multilingual, str) else ""
+        legacy_text = legacy if isinstance(legacy, str) else ""
+        multilingual_stream = self._streams.get(self.MULTILINGUAL)
+        detected = (
+            getattr(multilingual_stream, "detected_language", "") if multilingual_stream else ""
+        )
+
+        if (
+            multilingual_text
+            and detected
+            and self._is_foreign_transcript(multilingual_text, detected)
+        ):
+            self._selected_mode = self.MULTILINGUAL
+            return multilingual_text
+        if dialect_text:
+            self._selected_mode = self.DIALECT
+            return dialect_text
+        if multilingual_text:
+            self._selected_mode = self.MULTILINGUAL
+            return multilingual_text
+        if legacy_text:
+            self._selected_mode = self.LEGACY
+            return legacy_text
+
+        # Empty speech is still a successful provider result.  Do not turn a
+        # valid rejection/silence into an ASR outage merely because another
+        # optional model is not licensed for this account.
+        successful_modes = [
+            mode for mode, result in results.items() if isinstance(result, str)
+        ]
+        if successful_modes:
+            if self.LEGACY in successful_modes:
+                self._selected_mode = self.LEGACY
+            else:
+                self._selected_mode = successful_modes[0]
+            return ""
+
+        failures = [result for result in results.values() if isinstance(result, Exception)]
+        if failures:
+            failure = failures[0]
+            if isinstance(failure, VoiceProviderError):
+                raise failure
+            raise VoiceProviderError("voice_provider_failed") from failure
+        return ""
+
+    async def close(self) -> None:
+        await asyncio.gather(
+            *(stream.close() for stream in self._streams.values()),
+            return_exceptions=True,
+        )
+
+    @property
+    def selected_mode(self) -> str:
+        return self._selected_mode
+
+    @property
+    def detected_language(self) -> str:
+        stream = self._streams.get(self._selected_mode or self.MULTILINGUAL)
+        return str(getattr(stream, "detected_language", "") or "")
+
+    @property
+    def candidates(self) -> tuple[str, ...]:
+        stream = self._streams.get(self._selected_mode)
+        if stream is not None:
+            return stream.candidates
+        values: list[str] = []
+        for child in self._streams.values():
+            for candidate in child.candidates:
+                if candidate and candidate not in values:
+                    values.append(candidate)
+        return tuple(values)
+
+
+__all__ = ["AutoXfyunStream", "VoiceProviderError", "XfyunStream"]

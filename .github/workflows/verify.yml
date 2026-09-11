@@ -41,7 +41,40 @@ jobs:
       - run: uv run python -m compileall -q src scripts app.py
       - run: npm ci --no-audit --no-fund
         working-directory: frontend
-      - run: npm test
-        working-directory: frontend
       - run: npm run build
         working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+      - name: Smoke test application startup
+        run: |
+          uv run python app.py > /tmp/xuhua.log 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+          python - <<'PY'
+          import json
+          import time
+          import urllib.request
+
+          base = "http://127.0.0.1:5050"
+          last_error = None
+          for _ in range(40):
+              try:
+                  with urllib.request.urlopen(base + "/healthz", timeout=2) as response:
+                      body = json.load(response)
+                  if body.get("status") == "ok":
+                      break
+              except Exception as exc:
+                  last_error = exc
+                  time.sleep(0.25)
+          else:
+              raise RuntimeError(f"application did not become healthy: {last_error}")
+
+          with urllib.request.urlopen(base + "/api/meta", timeout=3) as response:
+              meta = json.load(response)
+          assert meta["item_count"] >= 3000
+          assert meta["category_count"] >= 10
+
+          with urllib.request.urlopen(base + "/", timeout=3) as response:
+              html = response.read().decode("utf-8")
+          assert 'id="root"' in html
+          PY

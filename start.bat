@@ -104,6 +104,14 @@ if errorlevel 1 (
     )
 )
 
+echo [CHECK] Validating .env...
+"%UV_EXE%" run --no-sync --python "%PYTHON%" --env-file ".env" python -c "import sys; sys.path.insert(0, r'%PROJECT_DIR%src'); import heritage_explorer.config"
+if errorlevel 1 (
+    echo [ERROR] .env is incomplete or contains an invalid value.
+    pause
+    exit /b 1
+)
+
 if /I "%~1"=="--check" (
     echo [OK] The runtime environment is ready.
     exit /b 0

@@ -34,13 +34,3 @@ XF_APP_ID = os.environ["XF_APP_ID"]
 XF_API_KEY = os.environ["XF_API_KEY"]
 XF_API_SECRET = os.environ["XF_API_SECRET"]
 XF_ASR_HOST = os.environ["XF_ASR_HOST"]
-
-# Temporary internal aliases for the current voice transport call shape.
-# They are not deployment settings and deliberately do not appear in .env.
-XF_ASR_RES_ID = ""
-XF_LEGACY_ASR_HOST = XF_ASR_HOST
-XF_MULTILINGUAL_APP_ID = ""
-XF_MULTILINGUAL_API_KEY = ""
-XF_MULTILINGUAL_API_SECRET = ""
-XF_MULTILINGUAL_ASR_HOST = ""
-XF_MULTILINGUAL_LANGUAGE_HINT = ""

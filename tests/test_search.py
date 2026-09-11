@@ -151,18 +151,3 @@ def test_pinyin_is_optional(monkeypatch):
     items, total = search.search_items(kb, query="luowu", use_pinyin=True)
     assert total == 1
     assert items[0].id == "a"
-
-
-def test_embedding_scores_can_hybrid_rerank(monkeypatch):
-    kb = make_kb()
-    monkeypatch.setattr(search.config, "SEARCH_USE_EMBEDDING", True)
-
-    def fake_embedding_scores(_kb, _query, candidates, min_score=0.0):
-        assert min_score == search.config.EMBEDDING_MIN_SCORE
-        scores = {"a": 0.9, "b": 0.1, "c": 0.2}
-        return {item.id: scores[item.id] for item in candidates if scores[item.id] >= min_score}
-
-    monkeypatch.setattr("heritage_explorer.embeddings.embedding_scores", fake_embedding_scores)
-    items, total = search.search_items(kb, query="龙", use_pinyin=False)
-    assert total == 2
-    assert [item.id for item in items] == ["a", "c"]

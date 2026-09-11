@@ -36,7 +36,16 @@ XF_APP_ID = os.environ["XF_APP_ID"]
 XF_API_KEY = os.environ["XF_API_KEY"]
 XF_API_SECRET = os.environ["XF_API_SECRET"]
 XF_ASR_RES_ID = os.environ["XF_ASR_RES_ID"]
-XF_ASR_HOST = os.environ["XF_ASR_HOST"]
+
+# AutoXfyunStream still accepts the old three-stream call shape internally,
+# but the runtime uses only this one explicitly configured endpoint.
+XF_ASR_HOST = ""
+XF_LEGACY_ASR_HOST = os.environ["XF_ASR_HOST"]
+XF_MULTILINGUAL_APP_ID = ""
+XF_MULTILINGUAL_API_KEY = ""
+XF_MULTILINGUAL_API_SECRET = ""
+XF_MULTILINGUAL_ASR_HOST = ""
+XF_MULTILINGUAL_LANGUAGE_HINT = ""
 
 EMBEDDING_API_KEY = os.environ["EMBEDDING_API_KEY"]
 EMBEDDING_BASE_URL = os.environ["EMBEDDING_BASE_URL"]

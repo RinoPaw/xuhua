@@ -4,7 +4,6 @@ param(
     [string]$Repository = "https://github.com/RinoPaw/xuhua.git",
     [string]$Branch = "main",
     [string]$EnvFile = "",
-    [switch]$SkipModels,
     [switch]$SkipLaunch
 )
 
@@ -40,28 +39,6 @@ function Get-Uv([string]$Root) {
     return $uv
 }
 
-function Download-Models([string]$Uv, [string]$Project, [string]$ModelsRoot) {
-    $manifestPath = Join-Path $Project "deploy\models.manifest.json"
-    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
-    New-Item -ItemType Directory -Force -Path $ModelsRoot | Out-Null
-    foreach ($model in $manifest.models) {
-        $destination = Join-Path $ModelsRoot $model.destination
-        New-Item -ItemType Directory -Force -Path $destination | Out-Null
-        Step "Hugging Face：$($model.name)"
-        $args = @("--from", "huggingface_hub", "hf", "download", $model.repo_id,
-                  "--revision", $model.revision, "--local-dir", $destination)
-        foreach ($pattern in $model.files) { $args += @("--include", $pattern) }
-        & $Uv tool run @args
-        if ($LASTEXITCODE -ne 0) { throw "模型下载失败：$($model.name)" }
-        foreach ($property in $model.sha256.PSObject.Properties) {
-            $file = Join-Path $destination $property.Name
-            if (-not (Test-Path -LiteralPath $file)) { throw "模型文件缺失：$file" }
-            $actual = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
-            if ($actual -ne [string]$property.Value) { throw "模型校验失败：$file" }
-        }
-    }
-}
-
 Step "检查基础工具"
 Require-Command "git" "Git.Git"
 Require-Command "node" "OpenJS.NodeJS.LTS"
@@ -84,7 +61,6 @@ if (Test-Path -LiteralPath (Join-Path $Project ".git")) {
 if ($LASTEXITCODE -ne 0) { throw "GitHub 源码同步失败。" }
 
 $Uv = Get-Uv $InstallRoot
-if (-not $SkipModels) { Download-Models $Uv $Project (Join-Path $InstallRoot "models") }
 
 if (-not $EnvFile) {
     $beside = Join-Path (Split-Path -Parent $PSCommandPath) "xuhua.env"
@@ -95,7 +71,7 @@ if ($EnvFile) {
     Copy-Item -LiteralPath $resolvedEnv -Destination (Join-Path $Project ".env") -Force
 } elseif (-not (Test-Path -LiteralPath (Join-Path $Project ".env"))) {
     Copy-Item -LiteralPath (Join-Path $Project ".env.example") -Destination (Join-Path $Project ".env")
-    Write-Warning "已生成 .env；云端模型和讯飞语音需要填入密钥。"
+    Write-Warning "已生成 .env；如需 AI 与实时语音，请填入对应密钥。"
 }
 
 Step "安装依赖并构建"
@@ -104,6 +80,5 @@ if ($LASTEXITCODE -ne 0) { throw "叙华运行环境检查失败。" }
 
 Step "安装完成"
 Write-Host "源码：$Project"
-Write-Host "模型：$(Join-Path $InstallRoot 'models')"
 Write-Host "启动：$(Join-Path $Project 'start.bat')"
 if (-not $SkipLaunch) { & (Join-Path $Project "start.bat") }

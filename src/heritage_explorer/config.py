@@ -25,7 +25,7 @@ DEBUG = os.getenv("DEBUG", "0") == "1"
 
 AI_API_KEY = os.getenv("AI_API_KEY", "")
 AI_BASE_URL = os.getenv("AI_BASE_URL", "https://api.deepseek.com")
-AI_MODEL = os.getenv("AI_MODEL", "deepseek-v4-flash")
+AI_MODEL = os.environ["AI_MODEL"]
 AI_TIMEOUT = int(os.getenv("AI_TIMEOUT", "60"))
 AI_FIRST_TOKEN_TIMEOUT = float(os.getenv("AI_FIRST_TOKEN_TIMEOUT", "8"))
 AI_FIRST_TOKEN_MAX_ATTEMPTS = min(max(int(os.getenv("AI_FIRST_TOKEN_MAX_ATTEMPTS", "2")), 1), 2)

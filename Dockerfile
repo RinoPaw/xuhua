@@ -21,9 +21,7 @@ ARG UV_FILES_BASE_URL=https://files.pythonhosted.org/packages
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HOME=/home/app \
-    UV_CACHE_DIR=/tmp/uv-cache \
-    HOST=0.0.0.0 \
-    PORT=5050
+    UV_CACHE_DIR=/tmp/uv-cache
 
 WORKDIR /app
 
@@ -43,4 +41,4 @@ USER app
 
 EXPOSE 5050
 
-CMD ["sh", "-c", "exec /app/.venv/bin/uvicorn heritage_explorer.api:app --host ${HOST:-0.0.0.0} --port ${PORT:-5050}"]
+CMD ["/app/.venv/bin/python", "app.py"]

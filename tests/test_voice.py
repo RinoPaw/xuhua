@@ -6,11 +6,14 @@ import json
 from urllib.parse import parse_qs, urlparse
 
 import heritage_explorer.voice as voice_module
-from heritage_explorer.voice import AutoXfyunStream, XfyunStream
+from heritage_explorer.voice import XfyunStream
+
+
+ASR_HOST = "iat.xf-yun.com"
 
 
 def make_stream() -> XfyunStream:
-    return XfyunStream(app_id="app", api_key="key", api_secret="secret")
+    return XfyunStream(app_id="app", api_key="key", api_secret="secret", host=ASR_HOST)
 
 
 def test_extract_text_uses_best_candidate_from_each_segment() -> None:
@@ -65,16 +68,14 @@ def test_chinese_model_packet_matches_official_contract() -> None:
         app_id="app",
         api_key="key",
         api_secret="secret",
-        resource_id="  res-123 ",
+        host=ASR_HOST,
         hotwords=[" 苏绣 ", "苏绣", "木|版年画", "", "甲\n乙"],
     )
     packet = stream._first_packet("")
     iat = packet["parameter"]["iat"]
 
-    assert stream.host == "iat.xf-yun.com"
-    assert packet["header"]["res_id"] == "res-123"
-    assert stream._middle_packet("")["header"]["res_id"] == "res-123"
-    assert stream._last_packet()["header"]["res_id"] == "res-123"
+    assert stream.host == ASR_HOST
+    assert packet["header"] == {"app_id": "app", "status": 0}
     assert iat["domain"] == "slm"
     assert iat["language"] == "zh_cn"
     assert iat["accent"] == "mandarin"
@@ -85,17 +86,12 @@ def test_chinese_model_packet_matches_official_contract() -> None:
 
 
 def test_signed_url_uses_selected_host() -> None:
-    stream = XfyunStream(
-        app_id="app",
-        api_key="key",
-        api_secret="secret",
-        host="iat.xf-yun.com",
-    )
+    stream = make_stream()
 
     parsed = urlparse(stream.signed_url())
 
-    assert parsed.hostname == "iat.xf-yun.com"
-    assert parse_qs(parsed.query)["host"] == ["iat.xf-yun.com"]
+    assert parsed.hostname == ASR_HOST
+    assert parse_qs(parsed.query)["host"] == [ASR_HOST]
 
 
 def test_provider_language_tracks_dominant_cw_lg_and_wpgs_replacement() -> None:
@@ -125,104 +121,12 @@ def test_provider_language_tracks_dominant_cw_lg_and_wpgs_replacement() -> None:
     assert stream.current_text() == "你好"
 
 
-def test_auto_stream_builds_only_one_chinese_english_model(monkeypatch) -> None:
-    class FakeProviderStream:
-        instances: list["FakeProviderStream"] = []
-
-        def __init__(self, **kwargs: object) -> None:
-            self.kwargs = kwargs
-            self.detected_language = ""
-            self.candidates: tuple[str, ...] = ()
-            self.__class__.instances.append(self)
-
-        async def start(self) -> None:
-            return
-
-        async def send_audio(self, _data: bytes) -> None:
-            return
-
-        async def finish(self) -> str:
-            return ""
-
-        async def close(self) -> None:
-            return
-
-    monkeypatch.setattr(voice_module, "XfyunStream", FakeProviderStream)
-
-    AutoXfyunStream(
-        app_id="main-app",
-        api_key="main-key",
-        api_secret="main-secret",
-        multilingual_app_id="unused-app",
-        multilingual_api_key="unused-key",
-        multilingual_api_secret="unused-secret",
-        host="iat.cn-huabei-1.xf-yun.com",
-        multilingual_host="some-multilingual-host",
-        multilingual_language_hint="en|ja|ko",
-        legacy_host="iat.xf-yun.com",
-        hotwords=("苏绣",),
-        resource_id="resource-1",
-    )
-
-    assert len(FakeProviderStream.instances) == 1
-    kwargs = FakeProviderStream.instances[0].kwargs
-    assert kwargs["app_id"] == "main-app"
-    assert kwargs["api_key"] == "main-key"
-    assert kwargs["api_secret"] == "main-secret"
-    assert kwargs["host"] == "iat.xf-yun.com"
-    assert kwargs["language"] == "zh_cn"
-    assert kwargs["accent"] == "mandarin"
-    assert kwargs["domain"] == "slm"
-    assert kwargs["dynamic_correction"] is True
-    assert kwargs["hotwords"] == ("苏绣",)
-    assert kwargs["resource_id"] == "resource-1"
-
-
-def test_auto_stream_delegates_chinese_english_and_dialect_results(monkeypatch) -> None:
-    class FakeProviderStream:
-        def __init__(self, **_kwargs: object) -> None:
-            self.detected_language = "en"
-            self.candidates = ("hello heritage", "hello")
-            self.audio: list[bytes] = []
-            self.started = False
-            self.closed = False
-
-        async def start(self) -> None:
-            self.started = True
-
-        async def send_audio(self, data: bytes) -> None:
-            self.audio.append(data)
-
-        async def finish(self) -> str:
-            return "hello heritage"
-
-        async def close(self) -> None:
-            self.closed = True
-
-    monkeypatch.setattr(voice_module, "XfyunStream", FakeProviderStream)
-
-    async def scenario() -> None:
-        stream = AutoXfyunStream(app_id="app", api_key="key", api_secret="secret")
-        await stream.start()
-        await stream.send_audio(b"pcm")
-
-        assert await stream.finish() == "hello heritage"
-        assert stream.selected_mode == AutoXfyunStream.CHINESE
-        assert stream.detected_language == "en"
-        assert stream.candidates == ("hello heritage", "hello")
-        assert stream._stream.audio == [b"pcm"]
-
-        await stream.close()
-        assert stream._stream.closed
-
-    asyncio.run(scenario())
-
-
 def test_hotwords_are_bounded_to_1024_utf8_bytes() -> None:
     stream = XfyunStream(
         app_id="app",
         api_key="key",
         api_secret="secret",
+        host=ASR_HOST,
         hotwords=["词" * 1000],
     )
 

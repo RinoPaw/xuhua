@@ -5,7 +5,35 @@ services:
     healthCheckPath: /healthz
     autoDeploy: true
     envVars:
-      - key: PORT
-        value: 5050
       - key: HOST
         value: 0.0.0.0
+      - key: PORT
+        value: 5050
+      - key: DEBUG
+        value: 0
+      - key: DATASET_PATH
+        value: data/processed/heritage_items.json
+      - key: FRONTEND_DIR
+        value: frontend/dist/client
+      - key: AI_BASE_URL
+        value: https://api.deepseek.com
+      - key: AI_MODEL
+        value: deepseek-v4-flash
+      - key: AI_TIMEOUT
+        value: 60
+      - key: AI_FIRST_TOKEN_TIMEOUT
+        value: 8
+      - key: AI_FIRST_TOKEN_MAX_ATTEMPTS
+        value: 2
+      - key: AI_MAX_CONTEXT_CHARS
+        value: 5200
+      - key: XF_ASR_HOST
+        value: iat.xf-yun.com
+      - key: AI_API_KEY
+        sync: false
+      - key: XF_APP_ID
+        sync: false
+      - key: XF_API_KEY
+        sync: false
+      - key: XF_API_SECRET
+        sync: false

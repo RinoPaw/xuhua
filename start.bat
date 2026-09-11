@@ -5,11 +5,30 @@ cd /d "%~dp0"
 set "PROJECT_DIR=%~dp0"
 for %%I in ("%PROJECT_DIR%..") do set "PACKAGE_DIR=%%~fI"
 set "PYTHON=%PACKAGE_DIR%\.venv\Scripts\python.exe"
-set "HOST=127.0.0.1"
-set "PORT=5050"
-set "LOCAL_URL=http://%HOST%:%PORT%"
 set "UV_LINK_MODE=copy"
 set "UV_PROJECT_ENVIRONMENT=%PACKAGE_DIR%\.venv"
+
+if not exist ".env" (
+    echo [ERROR] .env was not found.
+    echo Copy .env.example to .env and fill in the required values.
+    pause
+    exit /b 1
+)
+
+set "HOST="
+set "PORT="
+for /f "tokens=1,* delims==" %%A in ('findstr /B /C:"HOST=" /C:"PORT=" ".env"') do set "%%A=%%B"
+if not defined HOST (
+    echo [ERROR] HOST is missing from .env.
+    pause
+    exit /b 1
+)
+if not defined PORT (
+    echo [ERROR] PORT is missing from .env.
+    pause
+    exit /b 1
+)
+set "LOCAL_URL=http://%HOST%:%PORT%"
 
 set "UV_EXE=%PACKAGE_DIR%\runtime\uv\uv.exe"
 if not exist "%UV_EXE%" (
@@ -93,11 +112,7 @@ if /I "%~1"=="--check" (
 echo Starting Xuhua at %LOCAL_URL%...
 echo Close this window to stop the service.
 start "" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%PROJECT_DIR%scripts\open_browser_when_ready.ps1" -Url "%LOCAL_URL%"
-if exist ".env" (
-    "%UV_EXE%" run --no-sync --python "%PYTHON%" --env-file ".env" python "app.py"
-) else (
-    "%UV_EXE%" run --no-sync --python "%PYTHON%" python "app.py"
-)
+"%UV_EXE%" run --no-sync --python "%PYTHON%" --env-file ".env" python "app.py"
 
 set "XUHUA_EXIT_CODE=%ERRORLEVEL%"
 

@@ -3,15 +3,10 @@
 from __future__ import annotations
 
 import re
-import logging
 from collections.abc import Iterable, Sequence
 from functools import lru_cache
 
-from . import config
 from .dataset import HeritageItem, KnowledgeBase, normalize_text
-
-
-LOGGER = logging.getLogger(__name__)
 
 
 _FILLERS = (
@@ -48,7 +43,6 @@ def tokenize(query: str) -> list[str]:
     for match in _TOKEN_RE.findall(text):
         if match not in tokens:
             tokens.append(match)
-        # A Chinese phrase has no spaces, so bigrams make partial matching useful.
         if re.fullmatch(r"[\u4e00-\u9fff]+", match) and len(match) > 2:
             tokens.extend(match[i : i + 2] for i in range(len(match) - 1))
     return list(dict.fromkeys(tokens))
@@ -84,12 +78,7 @@ def _category_names(kb: KnowledgeBase) -> tuple[str, ...]:
 
 
 def _resolve_category(kb: KnowledgeBase, value: str) -> str:
-    """Resolve a category stated in a natural-language question.
-
-    A category phrase is a hard scope signal. Without this step a query such as
-    ``有哪些传统音乐项目`` scores the word ``传统`` across almost the entire
-    national catalogue and makes the first few results look arbitrary.
-    """
+    """Resolve a category stated in a natural-language question."""
     normalized = normalize_search_query(value)
     if not normalized:
         return ""
@@ -134,7 +123,6 @@ def _lexical_score(item: HeritageItem, query: str, tokens: Sequence[str]) -> flo
         return 0.0
     fields = _fields(item)
     score = 0.0
-    # Exact/phrase matches carry the signal that users generally expect most.
     for name, weight in (
         ("title", 100.0), ("alias", 55.0), ("category", 32.0), ("scenario", 28.0),
         ("region", 24.0), ("summary", 18.0), ("content", 10.0),
@@ -147,7 +135,6 @@ def _lexical_score(item: HeritageItem, query: str, tokens: Sequence[str]) -> flo
         elif query in value:
             score += weight * 0.58
 
-    # Token hits reward the same fields with smaller, additive weights.
     token_weights = {
         "title": 18.0, "alias": 11.0, "category": 8.0, "scenario": 8.0,
         "region": 7.0, "summary": 4.0, "content": 2.0,
@@ -179,16 +166,8 @@ def _diversify_scored(
     *,
     prefix_size: int = 40,
 ) -> list[tuple[float, HeritageItem]]:
-    """Diversify only near-tied top results while preserving relevance.
-
-    The algorithm is deterministic: within a relevance band it prefers a new
-    family and region, then falls back to score/title/id. Strong exact matches
-    remain ahead of the band, so this is not random exploration.
-    """
+    """Diversify only near-tied top results while preserving relevance."""
     pairs = list(scored)
-    # Preserve the source order for ties. The source order is deterministic,
-    # while title sorting here would reintroduce the same alphabetical bias
-    # that diversification is meant to remove.
     ordered = [
         pair
         for _index, pair in sorted(enumerate(pairs), key=lambda indexed: (-indexed[1][0], indexed[0]))
@@ -250,37 +229,7 @@ def _pinyin_score(item: HeritageItem, query: str) -> float:
     return 0.0
 
 
-def embedding_scores(
-    kb: KnowledgeBase,
-    query: str,
-    candidates: Sequence[HeritageItem],
-    min_score: float = 0.0,
-) -> dict[str, float]:
-    """Lazy proxy kept patchable for offline callers and optional embeddings."""
-    from .embeddings import embedding_scores as score_embeddings
-
-    return score_embeddings(kb, query, candidates, min_score=min_score)
-
-
-def _semantic_scores(
-    kb: KnowledgeBase,
-    query: str,
-    candidates: Sequence[HeritageItem],
-) -> dict[str, float]:
-    try:
-        return embedding_scores(
-            kb,
-            query,
-            candidates,
-            min_score=config.EMBEDDING_MIN_SCORE,
-        )
-    except Exception as exc:  # noqa: BLE001 - semantic retrieval must degrade gracefully.
-        LOGGER.info("retrieval.semantic.fallback reason=%s", type(exc).__name__)
-        return {}
-
-
 def _rank(
-    kb: KnowledgeBase,
     candidates: Sequence[HeritageItem],
     query: str,
     use_pinyin: bool,
@@ -288,28 +237,10 @@ def _rank(
     tokens = tokenize(query)
     lexical = {item.id: _lexical_score(item, query, tokens) for item in candidates}
     pinyin = {item.id: _pinyin_score(item, query) for item in candidates} if use_pinyin else {}
-
-    # Pinyin is a fallback signal, while a real lexical hit remains stronger.
     scores = {item.id: max(lexical[item.id], pinyin.get(item.id, 0.0)) for item in candidates}
-    has_lexical_results = any(score >= _MIN_LEXICAL_SCORE for score in scores.values())
-    if config.SEARCH_USE_EMBEDDING and query and not has_lexical_results:
-        semantic = _semantic_scores(kb, query, candidates)
-        if semantic:
-            lexical_max = max(scores.values(), default=0.0) or 1.0
-            semantic_max = max(semantic.values(), default=0.0) or 1.0
-            for item in candidates:
-                lexical_part = scores[item.id] / lexical_max if scores[item.id] else 0.0
-                semantic_part = max(semantic.get(item.id, 0.0), 0.0) / semantic_max
-                scores[item.id] = 0.7 * lexical_part + 0.3 * semantic_part
-            return [
-                item
-                for score, item in _diversify_scored((scores[item.id], item) for item in candidates)
-                if score > 0
-                and (lexical[item.id] >= _MIN_LEXICAL_SCORE or item.id in semantic)
-            ]
-
     return [
-        item for score, item in _diversify_scored((scores[item.id], item) for item in candidates)
+        item
+        for score, item in _diversify_scored((scores[item.id], item) for item in candidates)
         if score >= _MIN_LEXICAL_SCORE
     ]
 
@@ -357,7 +288,7 @@ def search_items(
             combined_query.replace(normalize_search_query(implicit_category), " ")
         )
     if combined_query:
-        ranked = _rank(kb, candidates, combined_query, use_pinyin)
+        ranked = _rank(candidates, combined_query, use_pinyin)
     elif raw_terms and not resolved_province and not implicit_category:
         ranked = []
     else:

@@ -31,13 +31,6 @@ from .config import (
     XF_API_SECRET,
     XF_APP_ID,
     XF_ASR_HOST,
-    XF_ASR_RES_ID,
-    XF_LEGACY_ASR_HOST,
-    XF_MULTILINGUAL_API_KEY,
-    XF_MULTILINGUAL_API_SECRET,
-    XF_MULTILINGUAL_APP_ID,
-    XF_MULTILINGUAL_ASR_HOST,
-    XF_MULTILINGUAL_LANGUAGE_HINT,
 )
 from .dataset import item_to_dict
 from .language import (
@@ -48,7 +41,7 @@ from .language import (
     normalize_locale_hint,
 )
 from .sessions import SessionStore
-from .voice import AutoXfyunStream, VoiceProviderError
+from .voice import VoiceProviderError, XfyunStream
 
 
 MAX_CHAT_CHARS = 4000
@@ -145,10 +138,6 @@ def create_app(
         text = text.strip()
         if not text:
             raise HTTPException(status_code=422, detail="empty_text")
-        # The locale attached to an assistant turn is authoritative for every
-        # segment in that turn.  Inspect text only when an older client did
-        # not send a resolved locale; otherwise a canonical Chinese project
-        # name inside an English sentence could unexpectedly change voices.
         requested_locale = normalize_locale_hint(locale)
         language_profile = get_language_profile(
             requested_locale or detect_locale(text),
@@ -271,21 +260,13 @@ def create_app(
             return
         await websocket.accept()
         connection_id = uuid.uuid4().hex
-        asr_stream: AutoXfyunStream | None = None
+        asr_stream: XfyunStream | None = None
         asr_start_task: asyncio.Task[None] | None = None
         answer_task: asyncio.Task[None] | None = None
-        # Finalizing ASR is independent for each ended utterance.  Keeping a
-        # single task here meant that a second VAD start cancelled the first
-        # provider final, so a perfectly valid sentence simply disappeared.
         finalize_tasks: set[asyncio.Task[None]] = set()
         batch_results: dict[int, str] = {}
         batch_candidates: dict[int, tuple[str, ...]] = {}
         batch_languages: dict[int, str] = {}
-        batch_asr_modes: dict[int, str] = {}
-        # The browser may split one spoken turn into several VAD utterances.
-        # Keep each provider hypothesis until its final arrives, then publish
-        # the ordered concatenation so a late partial from the first segment
-        # cannot erase the prefix while the second segment is being recognized.
         batch_partials: dict[int, str] = {}
         pending_user_speaking: set[int] = set()
         partial_revision = 0
@@ -302,8 +283,6 @@ def create_app(
         send_lock = asyncio.Lock()
 
         def update_voice_context(event: dict[str, Any]) -> None:
-            """Keep only bounded, non-sensitive recognition context from the browser."""
-
             nonlocal session_id, voice_category, voice_context_titles, voice_locale_hint
             category = str(event.get("category") or "").strip()
             voice_category = category[:200]
@@ -353,7 +332,7 @@ def create_app(
                         return tuple(recent)
             return tuple(recent)
 
-        def make_asr_stream(on_partial: Any) -> AutoXfyunStream:
+        def make_asr_stream(on_partial: Any) -> XfyunStream:
             recent = recent_voice_items()
             recent_titles = [str(getattr(item, "title", "") or "") for item in recent]
             hotwords: list[str] = []
@@ -365,29 +344,17 @@ def create_app(
                     hotwords.append(title)
                 if len(hotwords) >= MAX_VOICE_CONTEXT_TITLES + MAX_VOICE_RECENT_ITEMS:
                     break
-            preferred_mode = (
-                AutoXfyunStream.DIALECT
-                if is_chinese_locale(voice_locale_hint)
-                else AutoXfyunStream.MULTILINGUAL
-            )
-            return AutoXfyunStream(
+            return XfyunStream(
                 app_id=XF_APP_ID,
                 api_key=XF_API_KEY,
                 api_secret=XF_API_SECRET,
-                multilingual_app_id=XF_MULTILINGUAL_APP_ID,
-                multilingual_api_key=XF_MULTILINGUAL_API_KEY,
-                multilingual_api_secret=XF_MULTILINGUAL_API_SECRET,
                 host=XF_ASR_HOST,
-                multilingual_host=XF_MULTILINGUAL_ASR_HOST,
-                multilingual_language_hint=XF_MULTILINGUAL_LANGUAGE_HINT,
-                legacy_host=XF_LEGACY_ASR_HOST,
+                language="zh_cn",
+                accent="mandarin",
+                domain="slm",
+                dynamic_correction=True,
                 on_partial=on_partial,
                 hotwords=tuple(hotwords),
-                resource_id=XF_ASR_RES_ID,
-                # Probe on every utterance so one conversation can naturally
-                # switch between a Chinese dialect and English/Japanese/Korean.
-                mode=AutoXfyunStream.AUTO,
-                preferred_mode=preferred_mode,
             )
 
         async def send(payload: dict[str, Any]) -> None:
@@ -434,7 +401,6 @@ def create_app(
             batch_results.clear()
             batch_candidates.clear()
             batch_languages.clear()
-            batch_asr_modes.clear()
             batch_partials.clear()
             pending_user_speaking.clear()
             batch_pending.clear()
@@ -448,8 +414,6 @@ def create_app(
             ).strip()
 
         async def send_batch_partial(utterance_id: int, text: str) -> None:
-            """Publish the current ordered ASR hypothesis for this batch."""
-
             nonlocal partial_revision
             if utterance_id not in batch_partials:
                 return
@@ -461,8 +425,6 @@ def create_app(
             await send(
                 {
                     "type": "user.partial",
-                    # The latest id owns the visible bubble; the text includes
-                    # all earlier utterance hypotheses in order.
                     "utterance_id": max(batch_partials),
                     "revision": partial_revision,
                     "text": combined,
@@ -580,14 +542,7 @@ def create_app(
             answer_task = asyncio.create_task(answer(question, turn_id, locale_hint))
 
         async def commit_voice_batch(generation: int) -> None:
-            """Commit one settled group of overlapping VAD utterances."""
-
             nonlocal partial_revision
-
-            # A text/interrupt/connection cleanup invalidates the generation
-            # before canceling finalize tasks.  The canceled task can reach
-            # this function from its finally block, so reject it before
-            # waiting for the batch lock (which the cleanup may hold).
             if generation != batch_generation:
                 return
             async with batch_lock:
@@ -608,7 +563,6 @@ def create_app(
                     if candidate
                 )
                 provider_languages = [batch_languages.pop(item_id, "") for item_id in ordered_ids]
-                asr_modes = [batch_asr_modes.pop(item_id, "") for item_id in ordered_ids]
                 raw_text = " ".join(
                     results[item_id].strip() for item_id in ordered_ids if results[item_id].strip()
                 )
@@ -662,18 +616,15 @@ def create_app(
                         "raw_text": raw_text,
                         "normalizations": normalizations,
                         "locale": resolved_locale,
-                        "asr_engine": next((mode for mode in reversed(asr_modes) if mode), "auto"),
+                        "asr_engine": "chinese",
                     }
                 )
-                # This batch is complete. Do not let its partial prefix leak
-                # into the next VAD turn; there are no pending finalizers to
-                # invalidate, so the generation remains unchanged.
                 batch_partials.clear()
                 partial_revision = 0
                 await start_answer(canonical_text, "new_utterance", resolved_locale)
 
         async def finish_utterance(
-            stream: AutoXfyunStream,
+            stream: XfyunStream,
             start_task: asyncio.Task[None],
             utterance_id: int,
             generation: int,
@@ -704,13 +655,7 @@ def create_app(
                 if generation == batch_generation:
                     batch_results[utterance_id] = transcript
                     batch_candidates[utterance_id] = stream.candidates
-                    selected_mode = str(getattr(stream, "selected_mode", "") or "")
-                    detected_language = str(getattr(stream, "detected_language", "") or "")
-                    batch_asr_modes[utterance_id] = selected_mode
-                    batch_languages[utterance_id] = detected_language
-                    # The provider final is authoritative for this segment;
-                    # keep it in the batch until commit so a late partial
-                    # cannot replace the calibrated text.
+                    batch_languages[utterance_id] = stream.detected_language
                     batch_partials[utterance_id] = transcript
             except asyncio.CancelledError:
                 raise
@@ -724,7 +669,6 @@ def create_app(
                 if generation == batch_generation:
                     batch_results[utterance_id] = ""
                     batch_candidates[utterance_id] = ()
-                    batch_asr_modes[utterance_id] = ""
                     batch_languages[utterance_id] = ""
                 await send({"type": "error", "message": "语音识别暂时不可用"})
             finally:
@@ -733,7 +677,7 @@ def create_app(
                 batch_pending.discard(utterance_id)
                 await commit_voice_batch(generation)
 
-        async def start_asr(stream: AutoXfyunStream, utterance_id: int) -> None:
+        async def start_asr(stream: XfyunStream, utterance_id: int) -> None:
             started_at = time.perf_counter()
             LOGGER.info(
                 "voice.asr.connect.start connection=%s utterance=%s",
@@ -749,7 +693,7 @@ def create_app(
             )
 
         def schedule_finalize(
-            stream: AutoXfyunStream,
+            stream: XfyunStream,
             start_task: asyncio.Task[None],
             utterance_id: int,
         ) -> None:
@@ -785,9 +729,6 @@ def create_app(
                 event_type = event.get("type")
                 if event_type == "utterance.start":
                     async with batch_lock:
-                        # VAD only proves that the microphone heard energy.
-                        # Keep the current answer alive until ASR produces
-                        # speech (or the client explicitly confirms barge-in).
                         utterance_sequence += 1
                         utterance_id = utterance_sequence
                         batch_partials[utterance_id] = ""
@@ -817,9 +758,6 @@ def create_app(
 
                         async def send_partial(text: str, current: int = utterance_id) -> None:
                             nonlocal partial_logged
-                            # Do not drop an older segment's hypothesis when a
-                            # new VAD onset takes ownership. It remains part of
-                            # the same batch and is sent with the newer prefix.
                             if current not in batch_partials:
                                 return
                             if current in pending_user_speaking and _contains_spoken_text(text):
@@ -846,11 +784,6 @@ def create_app(
                         else:
                             pending_user_speaking.discard(utterance_id)
                         asr_stream = make_asr_stream(send_partial)
-                        # Provider setup is deliberately concurrent with the
-                        # browser receive loop. XfyunStream buffers incoming
-                        # PCM until the socket opens, so the user can interrupt
-                        # immediately and the first syllable is still flushed
-                        # in order after the handshake.
                         asr_start_task = asyncio.create_task(start_asr(asr_stream, utterance_id))
                         if utterance_id not in pending_user_speaking:
                             await send(
@@ -883,10 +816,6 @@ def create_app(
                             {"type": "utterance.rejected", "utterance_id": utterance_sequence}
                         )
                 elif event_type == "barge_in":
-                    # Batch commit and confirmed barge-in both replace the
-                    # active answer. Serialize them so a concurrently
-                    # committing ASR batch cannot create an answer just after
-                    # the interruption has already been handled.
                     async with batch_lock:
                         LOGGER.info(
                             "voice.barge_in connection=%s utterance=%s",

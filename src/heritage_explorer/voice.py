@@ -1,8 +1,7 @@
 """Streaming Xunfei ASR transport for browser-captured 16 kHz PCM audio.
 
 叙华只使用讯飞“中英识别大模型”这一条实时识别链路。该模型本身支持
-普通话、英语以及 202 种中文方言免切换识别，因此不再并行探测方言模型
-和多语种模型，也不再做三路结果仲裁。
+普通话、英语以及 202 种中文方言免切换识别。
 """
 
 from __future__ import annotations
@@ -38,10 +37,8 @@ class _FinishRequest:
 class XfyunStream:
     """One utterance over Xunfei's streaming IAT WebSocket protocol."""
 
-    host = "iat.xf-yun.com"
     path = "/v1"
     chunk_size = 1280
-    # 1280 bytes at 16 kHz, 16-bit, mono PCM represent exactly 40 ms.
     frame_interval = 0.04
 
     def __init__(
@@ -50,30 +47,26 @@ class XfyunStream:
         app_id: str,
         api_key: str,
         api_secret: str,
+        host: str,
         on_partial: Callable[[str], Awaitable[None]] | None = None,
         hotwords: str | list[str] | tuple[str, ...] | None = None,
-        resource_id: str | None = None,
-        host: str | None = None,
         path: str = "/v1",
         language: str = "zh_cn",
         accent: str = "mandarin",
         domain: str = "slm",
-        language_hint: str = "",
         dynamic_correction: bool = True,
         eos: int = 1800,
     ) -> None:
         self.app_id = app_id.strip()
         self.api_key = api_key.strip()
         self.api_secret = api_secret.strip()
-        self.host = str(host or type(self).host).strip()
+        self.host = host.strip()
         self.path = str(path or "/v1").strip()
         self.language = str(language or "zh_cn").strip()
         self.accent = str(accent or "mandarin").strip()
         self.domain = str(domain or "slm").strip()
-        self.language_hint = str(language_hint or "").strip()
         self.dynamic_correction = bool(dynamic_correction)
         self.eos = min(max(int(eos), 600), 10000)
-        self.resource_id = (resource_id or "").strip()
         self._hotword_spec = self._format_hotwords(hotwords)
         self._socket: ClientConnection | None = None
         self._receiver: asyncio.Task[None] | None = None
@@ -96,7 +89,7 @@ class XfyunStream:
 
     @property
     def configured(self) -> bool:
-        return bool(self.app_id and self.api_key and self.api_secret)
+        return bool(self.app_id and self.api_key and self.api_secret and self.host)
 
     @staticmethod
     def _format_hotwords(hotwords: str | list[str] | tuple[str, ...] | None) -> str:
@@ -496,10 +489,7 @@ class XfyunStream:
         }
 
     def _header(self, status: int) -> dict[str, object]:
-        header: dict[str, object] = {"app_id": self.app_id, "status": status}
-        if self.resource_id:
-            header["res_id"] = self.resource_id
-        return header
+        return {"app_id": self.app_id, "status": status}
 
     def _first_packet(self, audio: str) -> dict[str, object]:
         iat: dict[str, object] = {
@@ -511,8 +501,6 @@ class XfyunStream:
         }
         if self.dynamic_correction:
             iat["dwa"] = "wpgs"
-        if self.language_hint:
-            iat["ln"] = self.language_hint
         if self._hotword_spec:
             iat["dhw"] = self._hotword_spec
         return {
@@ -534,93 +522,4 @@ class XfyunStream:
         }
 
 
-class AutoXfyunStream:
-    """Compatibility facade backed by one Xunfei Chinese/English ASR stream.
-
-    Older callers still pass the three-stream configuration fields.  They are
-    intentionally accepted here so the browser WebSocket contract can stay
-    unchanged while the runtime only opens the official Chinese/English model
-    endpoint (``zh_cn`` + ``mandarin``).  That model also covers 202 Chinese
-    dialects, so no multilingual/dialect arbitration is necessary.
-    """
-
-    CHINESE = "chinese"
-    DIALECT = "dialect"  # compatibility-only constants for older callers
-    MULTILINGUAL = "multilingual"
-    LEGACY = "legacy"
-    AUTO = "auto"
-
-    def __init__(
-        self,
-        *,
-        app_id: str,
-        api_key: str,
-        api_secret: str,
-        multilingual_app_id: str = "",
-        multilingual_api_key: str = "",
-        multilingual_api_secret: str = "",
-        host: str | None = None,
-        multilingual_host: str | None = None,
-        multilingual_language_hint: str = "",
-        legacy_host: str | None = "iat.xf-yun.com",
-        on_partial: Callable[[str], Awaitable[None]] | None = None,
-        hotwords: str | list[str] | tuple[str, ...] | None = None,
-        resource_id: str | None = None,
-        mode: str = AUTO,
-        preferred_mode: str = DIALECT,
-    ) -> None:
-        # The unused parameters stay in the signature temporarily so a rolling
-        # deployment does not require an atomic api.py/config.py migration.
-        del (
-            multilingual_app_id,
-            multilingual_api_key,
-            multilingual_api_secret,
-            host,
-            multilingual_host,
-            multilingual_language_hint,
-            mode,
-            preferred_mode,
-        )
-        self._stream = XfyunStream(
-            app_id=app_id,
-            api_key=api_key,
-            api_secret=api_secret,
-            host=legacy_host or "iat.xf-yun.com",
-            language="zh_cn",
-            accent="mandarin",
-            domain="slm",
-            dynamic_correction=True,
-            on_partial=on_partial,
-            hotwords=hotwords,
-            resource_id=resource_id,
-        )
-        self._selected_mode = ""
-
-    async def start(self) -> None:
-        await self._stream.start()
-
-    async def send_audio(self, data: bytes) -> None:
-        await self._stream.send_audio(data)
-
-    async def finish(self) -> str:
-        result = await self._stream.finish()
-        self._selected_mode = self.CHINESE
-        return result
-
-    async def close(self) -> None:
-        await self._stream.close()
-
-    @property
-    def selected_mode(self) -> str:
-        return self._selected_mode or self.CHINESE
-
-    @property
-    def detected_language(self) -> str:
-        return self._stream.detected_language
-
-    @property
-    def candidates(self) -> tuple[str, ...]:
-        return self._stream.candidates
-
-
-__all__ = ["AutoXfyunStream", "VoiceProviderError", "XfyunStream"]
+__all__ = ["VoiceProviderError", "XfyunStream"]

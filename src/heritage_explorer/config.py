@@ -1,4 +1,4 @@
-"""Application paths and environment-backed settings."""
+"""Application paths and required environment-backed settings."""
 
 from __future__ import annotations
 
@@ -30,34 +30,17 @@ AI_FIRST_TOKEN_TIMEOUT = float(os.environ["AI_FIRST_TOKEN_TIMEOUT"])
 AI_FIRST_TOKEN_MAX_ATTEMPTS = min(max(int(os.environ["AI_FIRST_TOKEN_MAX_ATTEMPTS"]), 1), 2)
 AI_MAX_CONTEXT_CHARS = int(os.environ["AI_MAX_CONTEXT_CHARS"])
 
-# Browser duplex voice: streaming speech recognition through Xunfei IAT.
-# Speech output is scheduled in the browser so barge-in can stop it immediately.
 XF_APP_ID = os.environ["XF_APP_ID"]
 XF_API_KEY = os.environ["XF_API_KEY"]
 XF_API_SECRET = os.environ["XF_API_SECRET"]
-XF_ASR_RES_ID = os.environ["XF_ASR_RES_ID"]
+XF_ASR_HOST = os.environ["XF_ASR_HOST"]
 
-# AutoXfyunStream still accepts the old three-stream call shape internally,
-# but the runtime uses only this one explicitly configured endpoint.
-XF_ASR_HOST = ""
-XF_LEGACY_ASR_HOST = os.environ["XF_ASR_HOST"]
+# Temporary internal aliases for the current voice transport call shape.
+# They are not deployment settings and deliberately do not appear in .env.
+XF_ASR_RES_ID = ""
+XF_LEGACY_ASR_HOST = XF_ASR_HOST
 XF_MULTILINGUAL_APP_ID = ""
 XF_MULTILINGUAL_API_KEY = ""
 XF_MULTILINGUAL_API_SECRET = ""
 XF_MULTILINGUAL_ASR_HOST = ""
 XF_MULTILINGUAL_LANGUAGE_HINT = ""
-
-EMBEDDING_API_KEY = os.environ["EMBEDDING_API_KEY"]
-EMBEDDING_BASE_URL = os.environ["EMBEDDING_BASE_URL"]
-EMBEDDING_MODEL = os.environ["EMBEDDING_MODEL"]
-EMBEDDING_TIMEOUT = int(os.environ["EMBEDDING_TIMEOUT"])
-EMBEDDING_BATCH_SIZE = int(os.environ["EMBEDDING_BATCH_SIZE"])
-EMBEDDING_WORKERS = int(os.environ["EMBEDDING_WORKERS"])
-EMBEDDING_REQUEST_TIMEOUT = float(os.environ["EMBEDDING_REQUEST_TIMEOUT"])
-EMBEDDING_MAX_RETRIES = int(os.environ["EMBEDDING_MAX_RETRIES"])
-EMBEDDING_RETRY_BACKOFF = float(os.environ["EMBEDDING_RETRY_BACKOFF"])
-EMBEDDING_REQUEST_DELAY = float(os.environ["EMBEDDING_REQUEST_DELAY"])
-EMBEDDING_INDEX_PATH = env_path("EMBEDDING_INDEX_PATH")
-EMBEDDING_TEXT_MAX_CHARS = int(os.environ["EMBEDDING_TEXT_MAX_CHARS"])
-EMBEDDING_MIN_SCORE = float(os.environ["EMBEDDING_MIN_SCORE"])
-SEARCH_USE_EMBEDDING = os.environ["SEARCH_USE_EMBEDDING"] == "1"

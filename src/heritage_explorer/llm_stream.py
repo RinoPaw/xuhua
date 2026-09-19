@@ -8,6 +8,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 
 LOGGER = logging.getLogger(__name__)
+LLM_ITERATOR_CLOSE_TIMEOUT = 1.0
 
 
 class LLMFirstTokenTimeout(RuntimeError):
@@ -22,12 +23,33 @@ class LLMEmptyStream(RuntimeError):
         self.attempts = attempts
 
 
-async def close_iterator(iterator: object | None) -> None:
+def _consume_task_result(task: asyncio.Task[object]) -> None:
+    try:
+        task.result()
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
+async def close_iterator(
+    iterator: object | None,
+    *,
+    timeout: float = LLM_ITERATOR_CLOSE_TIMEOUT,
+) -> None:
+    """Close a provider iterator without allowing shutdown to block forever."""
+
     if iterator is None:
         return
     close = getattr(iterator, "aclose", None)
-    if close is not None:
-        await close()
+    if close is None:
+        return
+    task = asyncio.ensure_future(close())
+    done, _pending = await asyncio.wait({task}, timeout=max(float(timeout), 0.001))
+    if done:
+        await asyncio.gather(task, return_exceptions=True)
+        return
+    LOGGER.warning("llm.iterator.close_timeout timeout=%.3fs", timeout)
+    task.cancel()
+    task.add_done_callback(_consume_task_result)
 
 
 async def stream_with_first_token_retry(
@@ -143,6 +165,7 @@ async def stream_with_first_token_retry(
 __all__ = [
     "LLMEmptyStream",
     "LLMFirstTokenTimeout",
+    "LLM_ITERATOR_CLOSE_TIMEOUT",
     "close_iterator",
     "stream_with_first_token_retry",
 ]

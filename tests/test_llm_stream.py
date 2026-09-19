@@ -5,6 +5,7 @@ import asyncio
 from heritage_explorer.llm_stream import (
     LLMEmptyStream,
     LLMFirstTokenTimeout,
+    close_iterator,
     stream_with_first_token_retry,
 )
 
@@ -115,3 +116,17 @@ def test_cancel_event_stops_waiting_stream_without_emitting_text():
         return output
 
     assert asyncio.run(run()) == []
+
+
+def test_iterator_close_is_bounded_when_provider_shutdown_is_slow():
+    class SlowCloseIterator:
+        async def aclose(self):
+            await asyncio.sleep(0.2)
+
+    async def run():
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        await close_iterator(SlowCloseIterator(), timeout=0.01)
+        return loop.time() - started
+
+    assert asyncio.run(run()) < 0.1

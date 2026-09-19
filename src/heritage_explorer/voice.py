@@ -46,6 +46,7 @@ class XfyunStream:
     path = "/v1"
     chunk_size = 1280
     frame_interval = 0.04
+    finish_timeout = 8.0
 
     def __init__(
         self,
@@ -225,8 +226,11 @@ class XfyunStream:
                     self._send_queue.put_nowait(request)
             if empty:
                 return ""
-            await asyncio.shield(request.done)
-            await asyncio.wait_for(self._done.wait(), timeout=8)
+            await asyncio.wait_for(
+                asyncio.shield(request.done),
+                timeout=self.finish_timeout,
+            )
+            await asyncio.wait_for(self._done.wait(), timeout=self.finish_timeout)
         except TimeoutError as exc:
             raise VoiceProviderError("voice_provider_timeout") from exc
         finally:

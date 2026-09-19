@@ -22,6 +22,7 @@ export class VoiceMediaController {
     this.context = null;
     this.source = null;
     this.processor = null;
+    this.muted = false;
   }
 
   async requestStream() {
@@ -30,6 +31,7 @@ export class VoiceMediaController {
       audio: { ...DEFAULT_AUDIO_CONSTRAINTS },
     });
     this.stream = stream;
+    this.applyMuteState();
     return stream;
   }
 
@@ -54,12 +56,16 @@ export class VoiceMediaController {
     return context;
   }
 
-  setMuted(muted) {
-    const disabled = Boolean(muted);
+  applyMuteState() {
     this.stream?.getAudioTracks?.().forEach((track) => {
-      track.enabled = !disabled;
+      track.enabled = !this.muted;
     });
-    return disabled;
+  }
+
+  setMuted(muted) {
+    this.muted = Boolean(muted);
+    this.applyMuteState();
+    return this.muted;
   }
 
   stop() {

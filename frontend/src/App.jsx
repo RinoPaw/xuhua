@@ -11,6 +11,7 @@ import {
   VoiceStatusRow,
 } from "./components/VoiceControls.jsx";
 import { REALTIME_VOICE_STATUS, useVoiceConversation } from "./hooks/useVoiceConversation.js";
+import { cancelTurnBestEffort, nextActiveTurnId } from "./lib/chatLifecycle.js";
 import { createConversationSessionId } from "./lib/conversationSession.js";
 import {
   conversationReducer,
@@ -77,19 +78,17 @@ function App() {
 
   const cancelActive = useCallback(async () => {
     abortRef.current?.abort();
-    if (sessionRef.current && turnRef.current) {
-      try {
-        await fetch(
-          apiUrl(
-            `/api/chat/${encodeURIComponent(sessionRef.current)}/turn/${encodeURIComponent(turnRef.current)}/cancel`,
-          ),
-          { method: "POST" },
-        );
-      } catch {
-        // The local stream is already stopped.
-      }
-    }
+    const sessionId = sessionRef.current;
+    const turnId = turnRef.current;
     turnRef.current = null;
+    if (sessionId && turnId) {
+      cancelTurnBestEffort({
+        fetchFn: fetch,
+        url: apiUrl(
+          `/api/chat/${encodeURIComponent(sessionId)}/turn/${encodeURIComponent(turnId)}/cancel`,
+        ),
+      });
+    }
   }, []);
 
   const prepareSubmission = useCallback(() => {
@@ -152,7 +151,10 @@ function App() {
           if (["turn.failed", "turn.cancelled"].includes(type)) {
             realtimeRef.current?.stopSpeaking?.();
           }
-          if (event.turn_id) turnRef.current = event.turn_id;
+          turnRef.current = nextActiveTurnId(turnRef.current, {
+            type,
+            turn_id: event.turn_id,
+          });
         } catch {
           // Ignore malformed heartbeat frames.
         }

@@ -9,15 +9,21 @@ from __future__ import annotations
 import asyncio
 import base64
 from collections.abc import Awaitable, Callable
-from email.utils import formatdate
-import hashlib
-import hmac
 import json
 import logging
-import re
-from urllib.parse import urlencode
 
 from websockets.asyncio.client import ClientConnection, connect
+
+from .xfyun_protocol import (
+    TranscriptAccumulator,
+    extract_candidates,
+    extract_language,
+    extract_text,
+    format_hotwords,
+    is_last_result,
+    is_status_two,
+    signed_url as build_signed_url,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -75,9 +81,12 @@ class XfyunStream:
         self._buffer = bytearray()
         self._send_queue: asyncio.Queue[bytes | _FinishRequest] = asyncio.Queue()
         self._send_lock = asyncio.Lock()
-        self._pieces: dict[int, str] = {}
-        self._candidate_pieces: dict[int, tuple[str, ...]] = {}
-        self._language_pieces: dict[int, str] = {}
+        self._transcript = TranscriptAccumulator()
+        # Keep the old internal dictionaries as aliases for debugging and any
+        # downstream tests that inspected them before the protocol extraction.
+        self._pieces = self._transcript.pieces
+        self._candidate_pieces = self._transcript.candidate_pieces
+        self._language_pieces = self._transcript.language_pieces
         self._sequence = 0
         self._first = True
         self._has_audio = False
@@ -93,57 +102,15 @@ class XfyunStream:
 
     @staticmethod
     def _format_hotwords(hotwords: str | list[str] | tuple[str, ...] | None) -> str:
-        """Return Xunfei's ``dhw`` value, bounded to 1024 UTF-8 bytes."""
-
-        if hotwords is None:
-            return ""
-        values = [hotwords] if isinstance(hotwords, str) else hotwords
-        cleaned: list[str] = []
-        seen: set[str] = set()
-        for value in values:
-            text = str(value or "")
-            for item in re.split(r"[|,，、;；\r\n\t]+", text):
-                item = "".join(item.split())
-                if not item or item in seen:
-                    continue
-                seen.add(item)
-                cleaned.append(item)
-
-        prefix = "utf-8;"
-        remaining = 1024 - len(prefix.encode("utf-8"))
-        selected: list[str] = []
-        used = 0
-        for item in cleaned:
-            encoded = item.encode("utf-8")
-            required = len(encoded) if not selected else len(encoded) + 1
-            if required <= remaining - used:
-                selected.append(item)
-                used += required
-                continue
-            if not selected and remaining > 0:
-                item = encoded[:remaining].decode("utf-8", errors="ignore")
-                if item:
-                    selected.append(item)
-            break
-        return prefix + "|".join(selected) if selected else ""
+        return format_hotwords(hotwords)
 
     def signed_url(self) -> str:
-        date = formatdate(usegmt=True)
-        origin = f"host: {self.host}\ndate: {date}\nGET {self.path} HTTP/1.1"
-        digest = hmac.new(
-            self.api_secret.encode(), origin.encode(), digestmod=hashlib.sha256
-        ).digest()
-        signature = base64.b64encode(digest).decode()
-        authorization = (
-            f'api_key="{self.api_key}", algorithm="hmac-sha256", '
-            f'headers="host date request-line", signature="{signature}"'
+        return build_signed_url(
+            host=self.host,
+            path=self.path,
+            api_key=self.api_key,
+            api_secret=self.api_secret,
         )
-        params = {
-            "authorization": base64.b64encode(authorization.encode()).decode(),
-            "date": date,
-            "host": self.host,
-        }
-        return f"wss://{self.host}{self.path}?{urlencode(params)}"
 
     async def start(self) -> None:
         if not self.configured:
@@ -351,123 +318,37 @@ class XfyunStream:
 
     @staticmethod
     def extract_text(result: dict[str, object]) -> str:
-        return XfyunStream.extract_candidates(result)[0]
+        return extract_text(result)
 
     @staticmethod
     def extract_candidates(result: dict[str, object]) -> tuple[str, ...]:
-        """Extract full-text hypotheses, preserving provider candidate order."""
-
-        words: list[list[str]] = []
-        segments = result.get("ws", [])
-        if not isinstance(segments, list):
-            return ("",)
-        for segment in segments:
-            raw_candidates = segment.get("cw", []) if isinstance(segment, dict) else []
-            if not isinstance(raw_candidates, list):
-                continue
-            candidates = []
-            for candidate in raw_candidates:
-                if isinstance(candidate, dict):
-                    word = str(candidate.get("w", ""))
-                    if word:
-                        candidates.append(word)
-            if candidates:
-                words.append(candidates)
-        if not words:
-            return ("",)
-        count = max(len(items) for items in words)
-        output: list[str] = []
-        for index in range(count):
-            output.append(
-                "".join(items[index] if index < len(items) else items[0] for items in words)
-            )
-        return tuple(output)
+        return extract_candidates(result)
 
     @staticmethod
     def _is_status_two(value: object) -> bool:
-        return value == 2 or value == "2"
+        return is_status_two(value)
 
     @staticmethod
     def _is_last_result(value: object) -> bool:
-        return value is True or value == "true" or value == 1 or value == "1"
+        return is_last_result(value)
 
     def apply_result(self, result: dict[str, object]) -> bool:
-        candidates = self.extract_candidates(result)
-        piece = candidates[0] if candidates else ""
-        sequence = int(result.get("sn", max(self._pieces, default=-1) + 1))
-        replacement = result.get("rg") if result.get("pgs") == "rpl" else None
-        if isinstance(replacement, list) and len(replacement) == 2:
-            start, end = int(replacement[0]), int(replacement[1])
-            for key in range(start, end + 1):
-                self._pieces.pop(key, None)
-                self._candidate_pieces.pop(key, None)
-                self._language_pieces.pop(key, None)
-        if piece:
-            self._pieces[sequence] = piece
-        if candidates and any(candidates):
-            self._candidate_pieces[sequence] = tuple(
-                candidate
-                for index, candidate in enumerate(candidates)
-                if candidate and candidate not in candidates[:index]
-            )
-        source_language = self.extract_language(result)
-        if source_language:
-            self._language_pieces[sequence] = source_language
-        return bool(piece or replacement)
+        return self._transcript.apply(result)
 
     def current_text(self) -> str:
-        return "".join(self._pieces[key] for key in sorted(self._pieces)).strip()
+        return self._transcript.text
 
     @staticmethod
     def extract_language(result: dict[str, object]) -> str:
-        """Return the dominant provider ``cw.lg`` source-language tag."""
-
-        counts: dict[str, int] = {}
-        segments = result.get("ws", [])
-        if not isinstance(segments, list):
-            return ""
-        for segment in segments:
-            candidates = segment.get("cw", []) if isinstance(segment, dict) else []
-            if not isinstance(candidates, list):
-                continue
-            for candidate in candidates:
-                if not isinstance(candidate, dict):
-                    continue
-                language = str(candidate.get("lg") or "").strip().casefold()
-                if language:
-                    counts[language] = counts.get(language, 0) + 1
-                    break
-        return max(counts, key=counts.get) if counts else ""
+        return extract_language(result)
 
     @property
     def detected_language(self) -> str:
-        counts: dict[str, int] = {}
-        for language in self._language_pieces.values():
-            counts[language] = counts.get(language, 0) + 1
-        return max(counts, key=counts.get) if counts else ""
+        return self._transcript.detected_language
 
     @property
     def alternative_texts(self) -> tuple[str, ...]:
-        """Final, de-duplicated full-transcript hypotheses (top-1 first)."""
-
-        if not self._candidate_pieces:
-            text = self.current_text()
-            return (text,) if text else ()
-        keys = sorted(self._candidate_pieces)
-        count = max(len(self._candidate_pieces[key]) for key in keys)
-        texts: list[str] = []
-        for index in range(count):
-            parts = []
-            for key in keys:
-                candidates = self._candidate_pieces[key]
-                parts.append(candidates[index] if index < len(candidates) else candidates[0])
-            text = "".join(parts).strip()
-            if text and text not in texts:
-                texts.append(text)
-        top1 = self.current_text()
-        if top1 and top1 not in texts:
-            texts.insert(0, top1)
-        return tuple(texts)
+        return self._transcript.alternatives
 
     @property
     def candidates(self) -> tuple[str, ...]:

@@ -80,7 +80,7 @@ class SessionStore:
         session_id: str,
         turn: ConversationTurn,
         cancel_event: asyncio.Event | None = None,
-    ) -> None:
+    ) -> bool:
         with self._lock:
             self._purge_locked()
             session = self._get_or_create_locked(session_id)
@@ -91,15 +91,16 @@ class SessionStore:
                 if active is not cancel_event or cancel_event.is_set():
                     session.touch()
                     self._evict_locked()
-                    return
+                    return False
             elif active is not None and active.is_set():
                 session.touch()
                 self._evict_locked()
-                return
+                return False
             session.turns.append(turn)
             del session.turns[:-self.max_turns]
             session.touch()
             self._evict_locked()
+            return True
 
     def begin_turn(
         self,

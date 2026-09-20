@@ -224,14 +224,15 @@ def _diversify_scored(
     return selected + ordered[prefix_length:]
 
 
-def _pinyin_forms(text: str) -> list[str]:
+@lru_cache(maxsize=16384)
+def _pinyin_forms(text: str) -> tuple[str, ...]:
     if not text:
-        return []
+        return ()
     try:
         from pypinyin import lazy_pinyin
     except ImportError:
-        return []
-    return ["".join(lazy_pinyin(text)).lower()]
+        return ()
+    return ("".join(lazy_pinyin(text)).lower(),)
 
 
 def _pinyin_score(item: HeritageItem, query: str) -> float:

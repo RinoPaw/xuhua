@@ -10,7 +10,7 @@ import time
 from typing import Any
 
 import edge_tts
-from fastapi import FastAPI, HTTPException, Path as ApiPath, Query, Request
+from fastapi import FastAPI, HTTPException, Path as ApiPath, Query, Request, Response
 from fastapi.responses import StreamingResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field
@@ -157,7 +157,11 @@ def create_app(
         ]
 
     @app.post("/api/tts")
-    async def prepare_speech(body: TtsRequest, request: Request) -> dict[str, str]:
+    async def prepare_speech(
+        body: TtsRequest,
+        request: Request,
+        response: Response,
+    ) -> dict[str, str]:
         text = body.text.strip()
         if not text:
             raise HTTPException(status_code=422, detail="empty_text")
@@ -172,6 +176,7 @@ def create_app(
             )
         except TtsTicketCapacity as exc:
             raise HTTPException(status_code=503, detail="tts_ticket_capacity") from exc
+        response.headers["Cache-Control"] = "no-store"
         return {"token": token}
 
     @app.get("/api/tts/{token}")

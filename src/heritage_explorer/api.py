@@ -43,6 +43,7 @@ from .config import (
 )
 from .dataset import item_to_dict
 from .language import detect_locale, get_language_profile, normalize_locale_hint
+from .request_limits import RequestBodyLimitMiddleware
 from .tts_tickets import TtsTicketCapacity, TtsTicketStore
 from .voice import XfyunStream
 from .voice_transport import register_voice_route
@@ -125,6 +126,7 @@ def create_app(
 
     app = FastAPI(title="叙华", version=__version__, lifespan=lifespan)
     app.add_middleware(AdmissionMiddleware, controller=admission)
+    app.add_middleware(RequestBodyLimitMiddleware)
 
     @app.get("/healthz")
     @app.get("/api/health")

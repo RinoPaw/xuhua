@@ -2,10 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deriveVoiceStatus,
   isVoiceAssistantPending,
-  normalizeVoiceId,
-  normalizeVoiceText,
   REALTIME_VOICE_STATUS,
-  voiceActionsForServerStatus,
   VOICE_OUTPUT_PHASE,
   VOICE_TRANSPORT_PHASE,
 } from "./voiceState.js";
@@ -15,7 +12,6 @@ import {
   beginBargeInCandidate as makeBargeInCandidate,
   confirmBargeIn,
   createBargeInState,
-  shouldConfirmBargeInText,
 } from "./bargeInState.js";
 import {
   applyFinalReveal,
@@ -24,23 +20,18 @@ import {
   resetPartialReveal,
 } from "../lib/partialReveal.js";
 import {
-  assistantEventLocale,
   compactRecognitionContext,
   VoiceTurnTracker,
 } from "../lib/voiceProtocol.js";
 import {
-  acceptVoiceUtteranceMessage,
   createVoiceInputState,
   processVoiceInputFrame,
   resetVoiceInputPhase,
   resetVoiceOnset,
 } from "../lib/voiceInput.js";
+import { routeVoiceServerEvent } from "../lib/voiceEventRouter.js";
 import { VoiceMediaController } from "../lib/voiceMedia.js";
 import { VoiceOutputController } from "../lib/voiceOutput.js";
-import {
-  acceptServerVoiceError,
-  acceptServerVoiceStatus,
-} from "../lib/voiceServerEvents.js";
 import {
   openVoiceSocket,
   parseSocketMessage,
@@ -148,7 +139,12 @@ export function useBrowserDuplexVoice({
     if (voiceInputRef.current.utteranceActive
       || voiceOutputRef.current?.pipelineActive
       || isVoiceAssistantPending(voiceMachineRef.current)) return false;
-    dispatchMany(voiceActionsForServerStatus(REALTIME_VOICE_STATUS.LISTENING));
+    dispatchMany([
+      { type: "fault.clear" },
+      { type: "input.idle" },
+      { type: "turn.idle" },
+      { type: "output.idle" },
+    ]);
     return true;
   }, [dispatchMany, voiceMachineRef]);
 
@@ -158,10 +154,6 @@ export function useBrowserDuplexVoice({
       { type: "turn.thinking" },
     ]);
   }, [dispatchMany]);
-
-  const acceptUtteranceMessage = useCallback((message, options) => {
-    return acceptVoiceUtteranceMessage(voiceInputRef.current, message, options);
-  }, []);
 
   const reportError = useCallback((value) => {
     const next = value instanceof Error ? value : new Error(String(value || "voice_error"));
@@ -295,6 +287,51 @@ export function useBrowserDuplexVoice({
     return voiceOutputRef.current?.finish("", locale) ?? false;
   }, [beginSpeechStream]);
 
+  const routeServerEvent = useCallback((message) => {
+    const recognition = compactRecognitionContext(recognitionContextRef.current);
+    return routeVoiceServerEvent(message, {
+      state: {
+        input: voiceInputRef.current,
+        machine: voiceMachineRef.current,
+        status: deriveVoiceStatus(voiceMachineRef.current),
+        turns: voiceTurnsRef.current,
+        output: voiceOutputRef.current,
+        bargeInPhase: bargeInRef.current.phase,
+        localeHint: recognition.locale_hint,
+      },
+      actions: {
+        dispatchMany,
+        clearPartialReveal,
+        clearBargeInCandidate,
+        confirmBargeInFromAsr,
+        stopSpeech,
+        settleListening,
+        markThinking,
+        publishUserPartial,
+        publishUserTranscript,
+        appendSpeechDelta,
+        finishSpeechStream,
+        clearError: () => setError(null),
+        reportError,
+      },
+      callbacks: callbacks.current,
+    });
+  }, [
+    appendSpeechDelta,
+    clearBargeInCandidate,
+    clearPartialReveal,
+    confirmBargeInFromAsr,
+    dispatchMany,
+    finishSpeechStream,
+    markThinking,
+    publishUserPartial,
+    publishUserTranscript,
+    reportError,
+    settleListening,
+    stopSpeech,
+    voiceMachineRef,
+  ]);
+
   const processAudio = useCallback((samples, inputRate) => {
     if (mutedRef.current) return;
     const socket = socketRef.current;
@@ -395,124 +432,7 @@ export function useBrowserDuplexVoice({
       startSocket.onmessage = (event) => {
         if (socketRef.current !== startSocket) return;
         const message = parseSocketMessage(event);
-        if (!message) return;
-
-        if (message.type === "status") {
-          const decision = acceptServerVoiceStatus(message, {
-            inputState: voiceInputRef.current,
-            currentStatus: deriveVoiceStatus(voiceMachineRef.current),
-            bargeInTentative: bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE,
-            activeTurn: voiceTurnsRef.current.current,
-            assistantPending: isVoiceAssistantPending(voiceMachineRef.current),
-            ignoredTurns: voiceTurnsRef.current.ignoredTurns,
-            speechPipeline: Boolean(voiceOutputRef.current?.pipelineActive),
-            speechActive: Boolean(voiceOutputRef.current?.playing),
-          });
-          if (!decision.accepted) return;
-          if (decision.activeTurn) voiceTurnsRef.current.setActive(decision.activeTurn);
-          dispatchMany(voiceActionsForServerStatus(decision.status));
-          return;
-        }
-
-        if (message.type === "user.transcript") {
-          if (!acceptUtteranceMessage(message)) return;
-          voiceInputRef.current.activeUtteranceId = 0;
-          const transcript = normalizeVoiceText(message.text);
-          if (!transcript) {
-            clearPartialReveal(true);
-            callbacks.current.onUserPartial?.("", message);
-            const wasCandidate = bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE;
-            if (wasCandidate) clearBargeInCandidate();
-            if (!wasCandidate) settleListening();
-            return;
-          }
-
-          if (bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE) {
-            confirmBargeInFromAsr();
-          } else if (voiceOutputRef.current?.pipelineActive || voiceOutputRef.current?.playing) {
-            stopSpeech(true, false);
-          } else {
-            voiceTurnsRef.current.ignoreActive();
-          }
-          markThinking();
-          publishUserTranscript(message, transcript);
-          return;
-        }
-
-        if (message.type === "user.partial") {
-          if (!acceptUtteranceMessage(message)) return;
-          if (bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE) {
-            if (!shouldConfirmBargeInText(message.text)) return;
-            confirmBargeInFromAsr();
-          }
-          publishUserPartial(message);
-          return;
-        }
-
-        if (message.type === "assistant.delta") {
-          if (!voiceTurnsRef.current.accept(message)) return;
-          const locale = assistantEventLocale(
-            message,
-            compactRecognitionContext(recognitionContextRef.current).locale_hint,
-          );
-          callbacks.current.onAssistantTranscript?.(
-            message.text || "",
-            { done: false, locale },
-          );
-          appendSpeechDelta(message.text || "", locale);
-          return;
-        }
-
-        if (message.type === "assistant.done") {
-          if (!voiceTurnsRef.current.accept(message)) return;
-          const locale = assistantEventLocale(
-            message,
-            compactRecognitionContext(recognitionContextRef.current).locale_hint,
-          );
-          callbacks.current.onAssistantTranscript?.(
-            message.text || "",
-            { done: true, locale },
-          );
-          finishSpeechStream(message.text || "", locale);
-          const turnId = normalizeVoiceId(message.turn_id);
-          if (turnId) voiceTurnsRef.current.ignore(turnId);
-          return;
-        }
-
-        if (message.type === "assistant.cancelled") {
-          if (!voiceTurnsRef.current.accept(message)) return;
-          stopSpeech(false, false);
-          setError(null);
-          settleListening();
-          return;
-        }
-
-        if (message.type === "utterance.rejected") {
-          if (!acceptUtteranceMessage(message)) return;
-          clearPartialReveal(true);
-          callbacks.current.onUserPartial?.("", message);
-          const wasCandidate = bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE;
-          if (wasCandidate) clearBargeInCandidate();
-          if (!wasCandidate) settleListening();
-          voiceInputRef.current.activeUtteranceId = 0;
-          return;
-        }
-
-        if (message.type === "sources") {
-          if (!voiceTurnsRef.current.accept(message)) return;
-          callbacks.current.onSources?.(message.items || []);
-          return;
-        }
-
-        if (message.type === "error") {
-          if (!acceptServerVoiceError(message, {
-            activeTurn: voiceTurnsRef.current.current,
-            assistantPending: isVoiceAssistantPending(voiceMachineRef.current),
-            ignoredTurns: voiceTurnsRef.current.ignoredTurns,
-          })) return;
-          stopSpeech(false, false);
-          reportError(message.message || "voice_error");
-        }
+        if (message) routeServerEvent(message);
       };
 
       startSocket.onclose = (event) => {
@@ -543,24 +463,15 @@ export function useBrowserDuplexVoice({
       reportError(startError);
     }
   }, [
-    acceptUtteranceMessage,
-    appendSpeechDelta,
     cleanup,
-    clearBargeInCandidate,
     clearPartialReveal,
     connected,
-    confirmBargeInFromAsr,
-    dispatchMany,
     dispatchVoice,
-    finishSpeechStream,
-    markThinking,
     processAudio,
-    publishUserPartial,
-    publishUserTranscript,
     reportError,
+    routeServerEvent,
     sendRecognitionContext,
     settleListening,
-    stopSpeech,
     voiceMachineRef,
     websocketPath,
   ]);

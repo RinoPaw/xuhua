@@ -139,16 +139,16 @@ export class BrowserVoiceSession {
     return this.connection.sendJson(payload);
   }
 
-  sendRecognitionContext() {
+  sendRecognitionContext(context = this.getRecognitionContext()) {
     return this.send({
       type: "context",
-      ...compactRecognitionContext(this.getRecognitionContext()),
+      ...compactRecognitionContext(context),
     });
   }
 
-  syncRecognitionContext() {
+  syncRecognitionContext(context = this.getRecognitionContext()) {
     if (!this.connection.connected) return false;
-    return this.sendRecognitionContext();
+    return this.sendRecognitionContext(context);
   }
 
   clearBargeInCandidate() {
@@ -200,14 +200,6 @@ export class BrowserVoiceSession {
   finishSpeechStream(fallbackText = "", locale = "") {
     if (!this.output?.pipelineActive) this.beginSpeechStream(locale);
     return this.output?.finish(fallbackText, locale) ?? false;
-  }
-
-  speak(text, locale = "") {
-    const content = String(text || "").trim();
-    if (!content) return false;
-    this.beginSpeechStream(locale);
-    this.output?.append(content, locale);
-    return this.output?.finish("", locale) ?? false;
   }
 
   routeServerEvent(message) {
@@ -308,12 +300,6 @@ export class BrowserVoiceSession {
     const sent = this.send({ type: "text", text });
     if (sent) this.markThinking();
     return sent;
-  }
-
-  cancelResponse() {
-    this.stopSpeech(true);
-    this.settleListening();
-    return true;
   }
 
   destroy() {

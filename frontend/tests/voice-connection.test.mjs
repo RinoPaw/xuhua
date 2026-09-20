@@ -96,6 +96,21 @@ test("connection owns socket message routing, media samples, and sends", async (
   assert.deepEqual(socket.sent, [JSON.stringify({ type: "context" }), "binary"]);
 });
 
+test("connection send methods report a socket-close race without throwing", () => {
+  const connection = new VoiceConnectionController({
+    media: makeMedia(),
+    openState: 1,
+    closingState: 2,
+  });
+  connection.socket = {
+    readyState: 1,
+    send() { throw new Error("closed_between_check_and_send"); },
+  };
+
+  assert.equal(connection.sendJson({ type: "context" }), false);
+  assert.equal(connection.sendRaw("pcm"), false);
+});
+
 test("stale connection start cannot replace a newer session", async () => {
   const media = makeMedia();
   const opens = [deferred(), deferred()];

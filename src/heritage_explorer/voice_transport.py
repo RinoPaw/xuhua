@@ -84,6 +84,7 @@ def register_voice_route(
     assistant: AssistantService,
     sessions: SessionStore,
     knowledge_base: KnowledgeBase,
+    available: bool,
     app_id: str,
     api_key: str,
     api_secret: str,
@@ -96,7 +97,7 @@ def register_voice_route(
 
     @app.websocket("/api/voice")
     async def browser_voice(websocket: WebSocket) -> None:
-        if not (app_id.strip() and api_key.strip() and api_secret.strip()):
+        if not available:
             await websocket.close(code=1013, reason="voice_unavailable")
             return
 

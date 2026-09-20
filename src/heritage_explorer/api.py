@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 from . import __version__
 from .admission import (
     AdmissionController,
+    AdmissionDenied,
     AdmissionMiddleware,
     AdmissionPolicy,
     client_key_from_scope,
@@ -184,11 +185,21 @@ def create_app(
 
     @app.get("/api/tts/{token}")
     async def synthesize_speech(
+        request: Request,
         token: str = ApiPath(..., min_length=16, max_length=128),
     ) -> StreamingResponse:
         ticket = tts_tickets.get(token)
         if ticket is None:
             raise HTTPException(status_code=404, detail="tts_ticket_not_found")
+        try:
+            await admission.charge("tts", client_key_from_scope(request.scope))
+        except AdmissionDenied as exc:
+            status = 503 if exc.reason == "capacity" else 429
+            raise HTTPException(
+                status_code=status,
+                detail=f"tts_{exc.reason}",
+                headers={"Retry-After": str(exc.retry_after)},
+            ) from exc
 
         language_profile = get_language_profile(
             normalize_locale_hint(ticket.locale) or detect_locale(ticket.text)

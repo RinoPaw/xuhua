@@ -194,7 +194,7 @@ def create_app(
         if ticket is None:
             raise HTTPException(status_code=404, detail="tts_ticket_not_found")
         try:
-            await admission.charge("tts", client_key_from_scope(request.scope))
+            lease = await admission.acquire("tts", client_key_from_scope(request.scope))
         except AdmissionDenied as exc:
             status = 503 if exc.reason == "capacity" else 429
             raise HTTPException(
@@ -217,30 +217,33 @@ def create_app(
         )
 
         async def audio_stream() -> AsyncIterator[bytes]:
-            communicate = edge_tts.Communicate(
-                ticket.text,
-                voice=language_profile.tts_voice,
-                rate="-2%",
-                pitch="+0Hz",
-            )
-            first_chunk = True
-            async for chunk in communicate.stream():
-                if chunk.get("type") == "audio" and chunk.get("data"):
-                    if first_chunk:
-                        first_chunk = False
-                        LOGGER.info(
-                            "[trace=%s segment=%s] tts.first_audio_chunk +%.3fs",
-                            ticket.trace_id or "-",
-                            ticket.segment,
-                            time.perf_counter() - started,
-                        )
-                    yield chunk["data"]
-            LOGGER.info(
-                "[trace=%s segment=%s] tts.stream.complete +%.3fs",
-                ticket.trace_id or "-",
-                ticket.segment,
-                time.perf_counter() - started,
-            )
+            try:
+                communicate = edge_tts.Communicate(
+                    ticket.text,
+                    voice=language_profile.tts_voice,
+                    rate="-2%",
+                    pitch="+0Hz",
+                )
+                first_chunk = True
+                async for chunk in communicate.stream():
+                    if chunk.get("type") == "audio" and chunk.get("data"):
+                        if first_chunk:
+                            first_chunk = False
+                            LOGGER.info(
+                                "[trace=%s segment=%s] tts.first_audio_chunk +%.3fs",
+                                ticket.trace_id or "-",
+                                ticket.segment,
+                                time.perf_counter() - started,
+                            )
+                        yield chunk["data"]
+                LOGGER.info(
+                    "[trace=%s segment=%s] tts.stream.complete +%.3fs",
+                    ticket.trace_id or "-",
+                    ticket.segment,
+                    time.perf_counter() - started,
+                )
+            finally:
+                await lease.release()
 
         return StreamingResponse(
             audio_stream(),

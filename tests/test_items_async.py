@@ -43,6 +43,7 @@ class SearchProbe:
 class DummyAssistant:
     def __init__(self, search: SearchProbe) -> None:
         self.search = search
+        self.sessions = SessionStore()
 
     async def aclose(self) -> None:
         return
@@ -53,11 +54,7 @@ class DummyAssistant:
 
 
 def make_app(search: SearchProbe):
-    return create_app(
-        assistant=DummyAssistant(search),  # type: ignore[arg-type]
-        search=search,  # type: ignore[arg-type]
-        sessions=SessionStore(),
-    )
+    return create_app(assistant=DummyAssistant(search))  # type: ignore[arg-type]
 
 
 def test_items_search_runs_outside_the_asgi_event_loop_thread() -> None:

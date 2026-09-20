@@ -20,7 +20,6 @@ from .language import (
     normalize_locale_hint,
 )
 from .sessions import SessionStore
-from .task_scope import TaskSet, TaskSlot, cancel_task
 from .voice import VoiceProviderError
 from .voice_events import (
     AssistantCancelledEvent,
@@ -34,6 +33,7 @@ from .voice_events import (
     VoiceServerEvent,
     VoiceStatusEvent,
 )
+from .voice_lifecycle import VoiceConnectionScope
 from .voice_protocol import (
     BargeInCommand,
     ContextCommand,
@@ -123,7 +123,7 @@ class VoiceBatchState:
 
 
 class VoiceSessionRuntime:
-    """Own mutable conversation state and child tasks for one voice connection."""
+    """Own mutable conversation state for one voice connection."""
 
     def __init__(
         self,
@@ -156,11 +156,7 @@ class VoiceSessionRuntime:
 
         self.context = VoiceContextState()
         self.batch = VoiceBatchState()
-        self.asr_stream: Any | None = None
-        self.asr_start = TaskSlot()
-        self.answer_tasks = TaskSlot()
-        self.finalizers = TaskSet()
-        self.active_turn_id: str | None = None
+        self.lifecycle = VoiceConnectionScope()
         self.utterance_sequence = 0
         self.batch_lock = asyncio.Lock()
 
@@ -215,14 +211,16 @@ class VoiceSessionRuntime:
     async def send(self, event: VoiceServerEvent) -> None:
         await self.emit(event)
 
-    async def stop_finalize_tasks(self) -> None:
-        await self.finalizers.cancel_all()
-
-    async def close_active_asr(self) -> None:
-        stream, self.asr_stream = self.asr_stream, None
-        await self.asr_start.cancel()
-        if stream is not None:
-            await stream.close()
+    def log_answer_cancel(self, reason: str) -> None:
+        task = self.lifecycle.answer_task
+        turn_id = self.lifecycle.active_turn_id
+        if task is not None and not task.done():
+            LOGGER.info(
+                "voice.answer.cancel connection=%s turn=%s reason=%s",
+                self.connection_id,
+                turn_id or "-",
+                reason,
+            )
 
     async def send_batch_partial(self, utterance_id: int, text: str) -> None:
         if utterance_id not in self.batch.partials:
@@ -241,16 +239,8 @@ class VoiceSessionRuntime:
         )
 
     async def stop_answer(self, reason: str) -> None:
-        task, turn_id = self.answer_tasks.take(), self.active_turn_id
-        self.active_turn_id = None
-        if task is not None and not task.done():
-            LOGGER.info(
-                "voice.answer.cancel connection=%s turn=%s reason=%s",
-                self.connection_id,
-                turn_id or "-",
-                reason,
-            )
-        await cancel_task(task)
+        self.log_answer_cancel(reason)
+        await self.lifecycle.cancel_answer()
 
     async def answer(self, question: str, turn_id: str, locale_hint: str = "") -> None:
         answer_locale = detect_locale(
@@ -278,7 +268,7 @@ class VoiceSessionRuntime:
                 category=self.context.category,
                 locale_hint=answer_locale,
             ):
-                if self.active_turn_id != turn_id:
+                if self.lifecycle.active_turn_id != turn_id:
                     return
                 self.context.session_id = event.session_id
                 if event.type == "response.text.delta":
@@ -351,10 +341,7 @@ class VoiceSessionRuntime:
                 )
             )
         finally:
-            current_task = asyncio.current_task()
-            if self.active_turn_id == turn_id:
-                self.active_turn_id = None
-                self.answer_tasks.clear_if(current_task)
+            self.lifecycle.clear_answer_if(asyncio.current_task(), turn_id)
 
     async def start_answer(
         self,
@@ -364,8 +351,8 @@ class VoiceSessionRuntime:
     ) -> None:
         await self.stop_answer(reason)
         turn_id = uuid.uuid4().hex
-        self.active_turn_id = turn_id
-        self.answer_tasks.create(
+        self.lifecycle.start_answer(
+            turn_id,
             self.answer(question, turn_id, locale_hint),
             name=f"voice-answer-{turn_id}",
         )
@@ -376,7 +363,7 @@ class VoiceSessionRuntime:
         async with self.batch_lock:
             if (
                 generation != self.batch.generation
-                or self.asr_stream is not None
+                or self.lifecycle.asr_stream is not None
                 or self.batch.pending
                 or not self.batch.results
             ):
@@ -552,7 +539,7 @@ class VoiceSessionRuntime:
         utterance_id: int,
     ) -> None:
         self.batch.pending.add(utterance_id)
-        self.finalizers.create(
+        self.lifecycle.start_finalizer(
             self.finish_utterance(
                 stream,
                 start_task,
@@ -563,8 +550,9 @@ class VoiceSessionRuntime:
         )
 
     async def handle_audio(self, data: bytes) -> None:
-        if self.asr_stream is not None:
-            await self.asr_stream.send_audio(data)
+        stream = self.lifecycle.asr_stream
+        if stream is not None:
+            await stream.send_audio(data)
 
     async def handle_utterance_start(
         self,
@@ -583,9 +571,8 @@ class VoiceSessionRuntime:
                 command.threshold if command.threshold is not None else "-",
             )
 
-            if self.asr_stream is not None:
-                previous_stream, self.asr_stream = self.asr_stream, None
-                previous_start = self.asr_start.take()
+            if self.lifecycle.asr_stream is not None:
+                previous_stream, previous_start = self.lifecycle.detach_asr()
                 previous_id = utterance_id - 1
                 LOGGER.info(
                     "voice.vad.utterance_implicit_end connection=%s utterance=%s",
@@ -598,7 +585,7 @@ class VoiceSessionRuntime:
                         previous_start,
                         previous_id,
                     )
-                else:
+                elif previous_stream is not None:
                     await previous_stream.close()
 
             partial_logged = False
@@ -633,9 +620,10 @@ class VoiceSessionRuntime:
             else:
                 self.batch.pending_user_speaking.discard(utterance_id)
 
-            self.asr_stream = self.make_asr_stream(send_partial)
-            self.asr_start.create(
-                self.start_asr(self.asr_stream, utterance_id),
+            stream = self.make_asr_stream(send_partial)
+            self.lifecycle.start_asr(
+                stream,
+                self.start_asr(stream, utterance_id),
                 name=f"voice-asr-start-{utterance_id}",
             )
             if utterance_id not in self.batch.pending_user_speaking:
@@ -647,7 +635,7 @@ class VoiceSessionRuntime:
                 )
 
     async def handle_utterance_end(self) -> None:
-        if self.asr_stream is None:
+        if self.lifecycle.asr_stream is None:
             return
         async with self.batch_lock:
             utterance_id = self.utterance_sequence
@@ -656,8 +644,9 @@ class VoiceSessionRuntime:
                 self.connection_id,
                 utterance_id,
             )
-            completed_stream, self.asr_stream = self.asr_stream, None
-            completed_start = self.asr_start.take()
+            completed_stream, completed_start = self.lifecycle.detach_asr()
+            if completed_stream is None:
+                return
             if completed_start is not None:
                 self.schedule_finalize(
                     completed_stream,
@@ -670,8 +659,8 @@ class VoiceSessionRuntime:
     async def handle_utterance_cancel(self) -> None:
         async with self.batch_lock:
             self.batch.clear()
-            await self.stop_finalize_tasks()
-            await self.close_active_asr()
+            await self.lifecycle.cancel_finalizers()
+            await self.lifecycle.cancel_asr()
             await self.send(UtteranceRejectedEvent(self.utterance_sequence))
 
     async def handle_barge_in(self) -> None:
@@ -694,8 +683,8 @@ class VoiceSessionRuntime:
             return
         async with self.batch_lock:
             self.batch.clear()
-            await self.stop_finalize_tasks()
-            await self.close_active_asr()
+            await self.lifecycle.cancel_finalizers()
+            await self.lifecycle.cancel_asr()
             await self.start_answer(command.text, "text_input")
 
     def handle_context(self, command: ContextCommand) -> None:
@@ -705,8 +694,8 @@ class VoiceSessionRuntime:
         async with self.batch_lock:
             await self.stop_answer("client_interrupt")
             self.batch.clear()
-            await self.stop_finalize_tasks()
-            await self.close_active_asr()
+            await self.lifecycle.cancel_finalizers()
+            await self.lifecycle.cancel_asr()
             await self.send(
                 VoiceStatusEvent(
                     "listening",
@@ -732,9 +721,8 @@ class VoiceSessionRuntime:
 
     async def close(self) -> None:
         self.batch.clear()
-        await self.stop_finalize_tasks()
-        await self.stop_answer("connection_closed")
-        await self.close_active_asr()
+        self.log_answer_cancel("connection_closed")
+        await self.lifecycle.close()
 
 
 __all__ = [

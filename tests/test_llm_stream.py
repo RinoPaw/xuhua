@@ -66,6 +66,66 @@ def test_timeout_reports_final_attempt_count():
     assert asyncio.run(run()) == 2
 
 
+def test_timeout_does_not_wait_forever_for_cancellation_resistant_provider():
+    attempts = 0
+
+    class StubbornIterator:
+        def __init__(self) -> None:
+            self.release = asyncio.Event()
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                await self.release.wait()
+            except asyncio.CancelledError:
+                await self.release.wait()
+            raise StopAsyncIteration
+
+        async def aclose(self) -> None:
+            self.release.set()
+
+    class SuccessfulIterator:
+        def __init__(self) -> None:
+            self.sent = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.sent:
+                raise StopAsyncIteration
+            self.sent = True
+            return "第二次成功"
+
+        async def aclose(self) -> None:
+            return
+
+    def factory():
+        nonlocal attempts
+        attempts += 1
+        return StubbornIterator() if attempts == 1 else SuccessfulIterator()
+
+    async def run():
+        started = asyncio.get_running_loop().time()
+        output = [
+            item
+            async for item in stream_with_first_token_retry(
+                factory,
+                asyncio.Event(),
+                timeout=0.005,
+                max_attempts=2,
+                log_context="test",
+            )
+        ]
+        return output, asyncio.get_running_loop().time() - started
+
+    output, elapsed = asyncio.run(run())
+    assert output == ["第二次成功"]
+    assert elapsed < 0.8
+
+
 def test_empty_stream_reports_final_attempt_count():
     async def empty_stream():
         if False:

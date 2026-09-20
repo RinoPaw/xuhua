@@ -67,6 +67,7 @@ def register_voice_route(
         batch_results: dict[int, str] = {}
         batch_candidates: dict[int, tuple[str, ...]] = {}
         batch_languages: dict[int, str] = {}
+        batch_failures: set[int] = set()
         batch_partials: dict[int, str] = {}
         pending_user_speaking: set[int] = set()
         partial_revision = 0
@@ -201,6 +202,7 @@ def register_voice_route(
             batch_results.clear()
             batch_candidates.clear()
             batch_languages.clear()
+            batch_failures.clear()
             batch_partials.clear()
             pending_user_speaking.clear()
             batch_pending.clear()
@@ -358,6 +360,8 @@ def register_voice_route(
                 results = dict(batch_results)
                 batch_results.clear()
                 ordered_ids = sorted(results)
+                failures = {item_id for item_id in ordered_ids if item_id in batch_failures}
+                batch_failures.difference_update(ordered_ids)
                 asr_candidates = tuple(
                     candidate
                     for item_id in ordered_ids
@@ -372,7 +376,19 @@ def register_voice_route(
                 if not raw_text:
                     batch_partials.clear()
                     partial_revision = 0
-                    await send({"type": "utterance.rejected", "utterance_id": committed_id})
+                    if failures:
+                        await send(
+                            {
+                                "type": "error",
+                                "utterance_id": committed_id,
+                                "code": "asr_unavailable",
+                                "message": "语音识别暂时不可用",
+                            }
+                        )
+                    else:
+                        await send(
+                            {"type": "utterance.rejected", "utterance_id": committed_id}
+                        )
                     return
                 provider_locale = next(
                     (
@@ -469,7 +485,7 @@ def register_voice_route(
                     batch_results[utterance_id] = ""
                     batch_candidates[utterance_id] = ()
                     batch_languages[utterance_id] = ""
-                await send({"type": "error", "message": "语音识别暂时不可用"})
+                    batch_failures.add(utterance_id)
             finally:
                 await stream.close()
                 pending_user_speaking.discard(utterance_id)

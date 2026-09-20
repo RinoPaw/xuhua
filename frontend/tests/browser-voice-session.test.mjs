@@ -200,7 +200,7 @@ test("disconnected typed input has no voice-session side effects", () => {
   assert.equal(harness.calls.some((entry) => entry[0] === "input.supersede"), false);
 });
 
-test("failed typed socket send preserves the active local voice generation", () => {
+test("failed typed socket send does not commit a new turn and tears down transport", () => {
   const harness = createHarness();
   harness.connection.connected = true;
   harness.connection.sendJson = () => false;
@@ -208,12 +208,25 @@ test("failed typed socket send preserves the active local voice generation", () 
   const callCount = harness.calls.length;
 
   assert.equal(harness.session.sendText("汴绣"), false);
-  assert.equal(harness.input.state.utteranceActive, true);
+  assert.equal(harness.connection.connected, false);
+  assert.equal(harness.input.state.utteranceActive, false);
   const newCalls = harness.calls.slice(callCount);
   assert.equal(newCalls.some((entry) => entry[0] === "input.supersede"), false);
-  assert.equal(newCalls.some((entry) => entry[0] === "transcript.clear"), false);
   assert.equal(newCalls.some((entry) => entry[0] === "callback.bargeIn"), false);
   assert.notEqual(harness.machine.turn, "thinking");
+  assert.equal(harness.machine.transport, "idle");
+  assert.equal(harness.errors.at(-1), "voice_socket_send_failed");
+});
+
+test("failed connected context sync tears down the unusable socket", async () => {
+  const harness = createHarness();
+  await harness.session.start();
+  harness.connection.sendJson = () => false;
+
+  assert.equal(harness.session.syncRecognitionContext(), false);
+  assert.equal(harness.connection.connected, false);
+  assert.equal(harness.machine.transport, "idle");
+  assert.equal(harness.errors.at(-1), "voice_socket_send_failed");
 });
 
 test("runtime send failure tears down the voice transport and reports a fault", async () => {

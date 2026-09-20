@@ -7,13 +7,14 @@ import {
   processVoiceInputFrame,
   resetVoiceInputPhase,
   supersedeVoiceUtterance,
+  VOICE_INPUT_LIMITS,
 } from "../src/lib/voiceInput.js";
 
 function constantSamples(length, value) {
   return Float32Array.from({ length }, () => value);
 }
 
-test("voice input emits onset, retained PCM and transcribing transition", () => {
+test("voice input emits onset, retained PCM and transcribing transition after 420ms silence", () => {
   const state = createVoiceInputState();
   const onset = processVoiceInputFrame(state, {
     samples: constantSamples(960, 0.1), // 60 ms at 16 kHz
@@ -23,6 +24,7 @@ test("voice input emits onset, retained PCM and transcribing transition", () => 
     agentBusy: false,
   });
 
+  assert.equal(VOICE_INPUT_LIMITS.silenceMs, 420);
   assert.equal(onset.started?.utteranceId, 1);
   assert.equal(onset.started?.shouldInterrupt, false);
   assert.equal(onset.nextStatus, "user_speaking");
@@ -31,10 +33,20 @@ test("voice input emits onset, retained PCM and transcribing transition", () => 
   assert.ok(onset.actions.some((action) => action.kind === "binary"));
   assert.equal(state.utteranceActive, true);
 
+  const stillOpen = processVoiceInputFrame(state, {
+    samples: constantSamples(1600, 0),
+    inputRate: 16000,
+    now: 1420,
+    transportReady: true,
+    agentBusy: false,
+  });
+  assert.equal(stillOpen.actions.some((action) => action.payload?.type === "utterance.end"), false);
+  assert.equal(state.utteranceActive, true);
+
   const ending = processVoiceInputFrame(state, {
     samples: constantSamples(1600, 0),
     inputRate: 16000,
-    now: 1800,
+    now: 1421,
     transportReady: true,
     agentBusy: false,
   });

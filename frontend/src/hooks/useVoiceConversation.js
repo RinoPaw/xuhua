@@ -6,7 +6,6 @@ import {
 } from "./voiceState.js";
 import { useVoiceMachineState } from "./useVoiceMachineState.js";
 import { BrowserVoiceSession } from "../lib/browserVoiceSession.js";
-import { compactRecognitionContext } from "../lib/voiceProtocol.js";
 
 export { REALTIME_VOICE_STATUS };
 
@@ -36,7 +35,6 @@ export function useVoiceConversation({
 
   const recognitionContextRef = useRef(recognitionContext);
   recognitionContextRef.current = recognitionContext;
-  const recognitionContextKey = JSON.stringify(compactRecognitionContext(recognitionContext));
 
   const callbacksRef = useRef({
     onUserPartial,
@@ -92,8 +90,8 @@ export function useVoiceConversation({
   );
 
   useEffect(() => {
-    if (connected) sessionRef.current.syncRecognitionContext();
-  }, [connected, recognitionContextKey]);
+    if (connected) sessionRef.current.syncRecognitionContext(recognitionContext);
+  }, [connected, recognitionContext]);
 
   useEffect(() => () => {
     sessionRef.current?.destroy();

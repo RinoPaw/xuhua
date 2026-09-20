@@ -108,6 +108,19 @@ test("completed assistant event reconciles streamed text, sources and suggestion
   assert.deepEqual(next.messages.at(-1).suggestions, ["它有哪些针法？", "现在如何传承？"]);
 });
 
+test("interrupting a live realtime answer marks only that answer cancelled", () => {
+  let next = conversationReducer(state(), { type: "realtime.user", text: "介绍汴绣" });
+  next = conversationReducer(next, { type: "realtime.answer.delta", text: "汴绣是" });
+  next = conversationReducer(next, { type: "realtime.interrupted" });
+
+  assert.equal(next.phase, "realtime");
+  assert.equal(next.messages.at(-1).status, "cancelled");
+
+  next = conversationReducer(next, { type: "realtime.answer.done", text: "汴绣是传统美术" });
+  next = conversationReducer(next, { type: "realtime.interrupted" });
+  assert.equal(next.messages.at(-1).status, "complete");
+});
+
 test("rotateAndLimit de-duplicates and rotates deterministically", () => {
   assert.deepEqual(rotateAndLimit(["甲", "乙", "甲", "丙"], 1, 2), ["乙", "丙"]);
 });

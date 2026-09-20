@@ -91,6 +91,37 @@ test("voice input controller routes frame actions and semantic input transitions
   assert.equal(input.bargeIn.startedAt, 1200);
 });
 
+test("voice input controller stops the frame batch on transport send failure", () => {
+  const sent = [];
+  const connection = {
+    connected: true,
+    sendJson(payload) { sent.push(["json", payload]); return false; },
+    sendRaw(payload) { sent.push(["raw", payload]); return true; },
+  };
+  let failures = 0;
+  const input = new VoiceInputController({
+    processFrame: () => ({
+      actions: [
+        { kind: "json", payload: { type: "utterance.start" } },
+        { kind: "binary", payload: "pcm" },
+      ],
+      spectrum: null,
+      started: { utteranceId: 3, shouldInterrupt: true },
+      nextStatus: null,
+    }),
+  });
+
+  input.process(new Float32Array([0]), 48000, {
+    connection,
+    output: {},
+    onTransportFailure: () => { failures += 1; },
+  });
+
+  assert.deepEqual(sent, [["json", { type: "utterance.start" }]]);
+  assert.equal(failures, 1);
+  assert.equal(input.bargeInPhase, BARGE_IN_PHASE.IDLE);
+});
+
 test("voice input controller emits speaking and transcribing phases", () => {
   const connection = makeConnection();
   const phases = [];

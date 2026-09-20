@@ -4,6 +4,7 @@ import test from "node:test";
 import { BrowserVoiceSession } from "../src/lib/browserVoiceSession.js";
 import {
   createVoiceMachineState,
+  deriveVoiceStatus,
   reduceVoiceMachine,
 } from "../src/hooks/voiceState.js";
 
@@ -186,6 +187,27 @@ test("disconnected typed input has no voice-session side effects", () => {
   assert.equal(harness.input.state.utteranceActive, true);
   assert.equal(harness.sent.length, 0);
   assert.equal(harness.calls.some((entry) => entry[0] === "input.supersede"), false);
+});
+
+test("TTS terminal clears pending output machine state", async () => {
+  const harness = createHarness();
+  await harness.session.start();
+  harness.session.dispatchMany([
+    { type: "turn.idle" },
+    { type: "output.pending" },
+  ]);
+  harness.output.pipelineActive = false;
+
+  assert.equal(deriveVoiceStatus(harness.machine), "responding");
+  harness.session.handleOutputTerminal({ failed: false });
+
+  assert.equal(harness.machine.output, "idle");
+  assert.equal(harness.machine.turn, "idle");
+  assert.equal(deriveVoiceStatus(harness.machine), "listening");
+  assert.equal(
+    harness.calls.some((entry) => entry[0] === "input.block" && entry[1] === 450),
+    true,
+  );
 });
 
 test("connection cleanup resets turn identity from the old socket", () => {

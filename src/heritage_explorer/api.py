@@ -88,6 +88,12 @@ def create_app(
     sessions = assistant.sessions
     admission = admission or create_default_admission_controller()
     kb = search.knowledge_base
+    voice_available = bool(
+        XF_APP_ID.strip()
+        and XF_API_KEY.strip()
+        and XF_API_SECRET.strip()
+        and XF_ASR_HOST.strip()
+    )
     prepare_asr_normalization(kb)
 
     @asynccontextmanager
@@ -112,7 +118,6 @@ def create_app(
             {item.level for item in kb.items if item.level},
             key=lambda value: (level_order.get(value, 99), value),
         )
-        xfyun_ready = bool(XF_APP_ID.strip() and XF_API_KEY.strip() and XF_API_SECRET.strip())
         return {
             "app_version": __version__,
             "schema_version": kb.schema_version,
@@ -123,8 +128,8 @@ def create_app(
             "levels": levels,
             "capabilities": {
                 "text_chat": True,
-                "realtime_voice": xfyun_ready,
-                "voice_provider": "xfyun" if xfyun_ready else "",
+                "realtime_voice": voice_available,
+                "voice_provider": "xfyun" if voice_available else "",
             },
         }
 
@@ -268,6 +273,7 @@ def create_app(
         assistant=assistant,
         sessions=sessions,
         knowledge_base=kb,
+        available=voice_available,
         app_id=XF_APP_ID,
         api_key=XF_API_KEY,
         api_secret=XF_API_SECRET,

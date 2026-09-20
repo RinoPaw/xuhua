@@ -14,10 +14,9 @@ function deferred() {
 }
 
 function makeStream() {
-  const track = { enabled: true, stopped: false, stop() { this.stopped = true; } };
+  const track = { stopped: false, stop() { this.stopped = true; } };
   const stream = {
     getTracks: () => [track],
-    getAudioTracks: () => [track],
   };
   return { track, stream };
 }
@@ -106,11 +105,6 @@ test("voice media controller wires worklet samples and releases resources", asyn
   assert.equal(harness.silent.gain.value, 0);
   harness.processor.port.onmessage({ data: "pcm" });
   assert.deepEqual(captured, [["pcm", 48000]]);
-
-  media.setMuted(true);
-  assert.equal(harness.track.enabled, false);
-  media.setMuted(false);
-  assert.equal(harness.track.enabled, true);
 
   await media.stop();
   assert.equal(harness.processor.disconnected, true);

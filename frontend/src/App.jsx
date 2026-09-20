@@ -11,7 +11,11 @@ import {
   VoiceStatusRow,
 } from "./components/VoiceControls.jsx";
 import { REALTIME_VOICE_STATUS, useVoiceConversation } from "./hooks/useVoiceConversation.js";
-import { cancelTurnBestEffort, nextActiveTurnId } from "./lib/chatLifecycle.js";
+import {
+  cancelTurnBestEffort,
+  isTerminalTurnEvent,
+  nextActiveTurnId,
+} from "./lib/chatLifecycle.js";
 import { createConversationSessionId } from "./lib/conversationSession.js";
 import {
   conversationReducer,
@@ -119,6 +123,7 @@ function App() {
     let eventName = "message";
     let dataLines = [];
     let firstTextLogged = false;
+    let terminalReceived = false;
 
     const consume = (block) => {
       if (!isCurrent()) return;
@@ -130,6 +135,7 @@ function App() {
         try {
           const event = JSON.parse(dataLines.join("\n"));
           const type = event.type || eventName;
+          if (isTerminalTurnEvent(type)) terminalReceived = true;
           dispatch({ type: "event", event: { ...event, type } });
           if (type === "response.text.delta") {
             if (!firstTextLogged) {
@@ -189,8 +195,10 @@ function App() {
           break;
         }
       }
+      if (isCurrent() && !terminalReceived) throw new Error("stream_ended_before_terminal");
     } catch (error) {
       if (error?.name !== "AbortError" && isCurrent()) {
+        realtimeRef.current?.stopSpeaking?.();
         dispatch({ type: "error", message: "回答服务暂时不可用" });
       }
     } finally {

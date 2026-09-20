@@ -11,8 +11,15 @@ def test_positive_runtime_values_reject_zero_and_negative(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="XUHUA_TEST_INT must be positive"):
         positive_int("XUHUA_TEST_INT")
-    with pytest.raises(ValueError, match="XUHUA_TEST_FLOAT must be positive"):
+    with pytest.raises(ValueError, match="finite positive"):
         positive_float("XUHUA_TEST_FLOAT")
+
+
+def test_positive_float_rejects_non_finite_values(monkeypatch) -> None:
+    for value in ("nan", "inf", "-inf"):
+        monkeypatch.setenv("XUHUA_TEST_FLOAT", value)
+        with pytest.raises(ValueError, match="finite positive"):
+            positive_float("XUHUA_TEST_FLOAT")
 
 
 def test_port_number_enforces_tcp_port_range(monkeypatch) -> None:

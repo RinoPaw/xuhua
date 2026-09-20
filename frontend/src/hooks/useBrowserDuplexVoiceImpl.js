@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  deriveVoiceStatus,
   normalizeVoiceId,
   normalizeVoiceText,
   REALTIME_VOICE_STATUS,
+  VOICE_OUTPUT_PHASE,
+  VOICE_TRANSPORT_PHASE,
 } from "./voiceState.js";
+import { useVoiceMachineState } from "./useVoiceMachineState.js";
 import {
   BARGE_IN_PHASE,
   beginBargeInCandidate as makeBargeInCandidate,
@@ -52,20 +56,26 @@ export function useBrowserDuplexVoice({
   onSources,
   onError,
 } = {}) {
-  const [status, setStatus] = useState(REALTIME_VOICE_STATUS.IDLE);
+  const {
+    state: voiceMachine,
+    stateRef: voiceMachineRef,
+    status,
+    dispatch: dispatchVoice,
+    setDisplayStatus,
+  } = useVoiceMachineState();
   const [error, setError] = useState(null);
   const [isMuted, setMuted] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isSpeechPending, setSpeechPending] = useState(false);
   const [spectrum, setSpectrum] = useState(() => Array(24).fill(0));
+
+  const connected = voiceMachine.transport === VOICE_TRANSPORT_PHASE.CONNECTED;
+  const isPlaying = voiceMachine.output === VOICE_OUTPUT_PHASE.SPEAKING;
+  const isSpeechPending = voiceMachine.output !== VOICE_OUTPUT_PHASE.IDLE;
 
   const socketRef = useRef(null);
   const recognitionContextRef = useRef(recognitionContext);
   recognitionContextRef.current = recognitionContext;
   const recognitionContextKey = JSON.stringify(compactRecognitionContext(recognitionContext));
   const transportGenerationRef = useRef(0);
-  const statusRef = useRef(status);
   const voiceInputRef = useRef(createVoiceInputState());
   const voiceMediaRef = useRef(null);
   const voiceOutputRef = useRef(null);
@@ -139,9 +149,8 @@ export function useBrowserDuplexVoice({
       && (voiceInputRef.current.utteranceActive
         || voiceOutputRef.current?.pipelineActive
         || assistantPendingRef.current)) return;
-    statusRef.current = value;
-    setStatus(value);
-  }, []);
+    setDisplayStatus(value);
+  }, [setDisplayStatus]);
 
   const acceptUtteranceMessage = useCallback((message, options) => {
     return acceptVoiceUtteranceMessage(voiceInputRef.current, message, options);
@@ -172,10 +181,17 @@ export function useBrowserDuplexVoice({
           console.info(`[叙华][trace=${trace}] tts.sentence.complete segment=${event.segment} +${elapsed.toFixed(3)}s`);
         }
       },
-      onPlayingChange: (playing) => setIsPlaying(playing),
+      onPlayingChange: (playing) => {
+        if (playing) {
+          dispatchVoice({ type: "output.speaking" });
+        } else if (voiceOutputRef.current?.pipelineActive) {
+          dispatchVoice({ type: "output.pending" });
+        } else {
+          dispatchVoice({ type: "output.idle" });
+        }
+      },
       onTerminal: ({ failed }) => {
         assistantPendingRef.current = false;
-        setSpeechPending(false);
         inputBlockedUntilRef.current = performance.now() + 450;
         setStatusValue(REALTIME_VOICE_STATUS.LISTENING);
         if (failed) reportError("speech_output_failed");
@@ -205,13 +221,14 @@ export function useBrowserDuplexVoice({
     assistantTurnRef.current = "";
     voiceOutputRef.current?.stop();
     assistantPendingRef.current = false;
-    setSpeechPending(false);
+    dispatchVoice({ type: "output.idle" });
+    dispatchVoice({ type: "turn.idle" });
     inputBlockedUntilRef.current = bargeIn ? 0 : performance.now() + 450;
     if (bargeIn) {
       if (notifyServer) send({ type: "barge_in" });
       callbacks.current.onBargeIn?.();
     }
-  }, [clearBargeInCandidate, send]);
+  }, [clearBargeInCandidate, dispatchVoice, send]);
 
   const confirmBargeInFromAsr = useCallback(() => {
     const confirmed = confirmBargeIn(bargeInRef.current);
@@ -237,12 +254,12 @@ export function useBrowserDuplexVoice({
 
   const beginSpeechStream = useCallback((locale = "") => {
     assistantPendingRef.current = true;
-    setSpeechPending(true);
+    dispatchVoice({ type: "output.pending" });
     const generation = voiceOutputRef.current?.begin(locale);
     resetVoiceOnset(voiceInputRef.current);
     setStatusValue(REALTIME_VOICE_STATUS.THINKING);
     return generation;
-  }, [setStatusValue]);
+  }, [dispatchVoice, setStatusValue]);
 
   const appendSpeechDelta = useCallback((text, locale = "") => {
     const delta = String(text || "");
@@ -316,11 +333,12 @@ export function useBrowserDuplexVoice({
     if (socket && socket.readyState < WebSocket.CLOSING) {
       socket.close(1000, "client_stop");
     }
-    setConnected(false);
-  }, [clearBargeInCandidate, clearPartialReveal, stopSpeech]);
+    dispatchVoice({ type: "transport.idle" });
+  }, [clearBargeInCandidate, clearPartialReveal, dispatchVoice, stopSpeech]);
 
   const start = useCallback(async () => {
-    if (connected || statusRef.current === REALTIME_VOICE_STATUS.CONNECTING) return;
+    if (connected
+      || deriveVoiceStatus(voiceMachineRef.current) === REALTIME_VOICE_STATUS.CONNECTING) return;
     const generation = transportGenerationRef.current + 1;
     transportGenerationRef.current = generation;
     clearPartialReveal(true);
@@ -364,7 +382,7 @@ export function useBrowserDuplexVoice({
         if (message.type === "status") {
           const decision = acceptServerVoiceStatus(message, {
             inputState: voiceInputRef.current,
-            currentStatus: statusRef.current,
+            currentStatus: deriveVoiceStatus(voiceMachineRef.current),
             bargeInTentative: bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE,
             activeTurn: assistantTurnRef.current,
             assistantPending: assistantPendingRef.current,
@@ -503,10 +521,11 @@ export function useBrowserDuplexVoice({
 
       startSocket.onclose = (event) => {
         const isCurrentSocket = socketRef.current === startSocket;
+        const statusBeforeClose = deriveVoiceStatus(voiceMachineRef.current);
         if (isCurrentSocket) cleanup();
         if (isCurrentSocket
           && event.code !== 1000
-          && statusRef.current !== REALTIME_VOICE_STATUS.IDLE) {
+          && statusBeforeClose !== REALTIME_VOICE_STATUS.IDLE) {
           reportError("voice_socket_closed");
         }
       };
@@ -517,7 +536,7 @@ export function useBrowserDuplexVoice({
         return;
       }
 
-      setConnected(true);
+      dispatchVoice({ type: "transport.connected" });
       setStatusValue(REALTIME_VOICE_STATUS.LISTENING);
     } catch (startError) {
       if (transportGenerationRef.current !== generation) {
@@ -535,6 +554,7 @@ export function useBrowserDuplexVoice({
     clearPartialReveal,
     connected,
     confirmBargeInFromAsr,
+    dispatchVoice,
     finishSpeechStream,
     processAudio,
     publishUserPartial,
@@ -543,14 +563,15 @@ export function useBrowserDuplexVoice({
     sendRecognitionContext,
     setStatusValue,
     stopSpeech,
+    voiceMachineRef,
     websocketPath,
   ]);
 
   const stop = useCallback(() => {
     cleanup();
     setError(null);
-    setStatusValue(REALTIME_VOICE_STATUS.IDLE);
-  }, [cleanup, setStatusValue]);
+    dispatchVoice({ type: "fault.clear" });
+  }, [cleanup, dispatchVoice]);
 
   const toggleMute = useCallback(() => {
     const next = !mutedRef.current;

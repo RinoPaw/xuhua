@@ -11,6 +11,16 @@ function makeTraceId() {
   return globalThis.crypto?.randomUUID?.() || `tts-${Date.now()}`;
 }
 
+export function normalizeSpeechText(value) {
+  return String(value || "")
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gmu, "")
+    .replace(/^[ \t]*[-+*][ \t]+/gmu, "")
+    .replace(/(\*\*|__)([^\n]*?)\1/gu, "$2")
+    .replace(/`([^`\n]+)`/gu, "$1")
+    .replace(/[ \t]+/gu, " ")
+    .trim();
+}
+
 export class VoiceOutputController {
   constructor({
     websocketPath = "/api/voice",
@@ -72,7 +82,7 @@ export class VoiceOutputController {
   }
 
   enqueue(segment, reason) {
-    const content = String(segment || "").replace(/[#*_`>-]/g, " ").trim();
+    const content = normalizeSpeechText(segment);
     if (!content) return false;
     const url = buildTtsUrl({
       websocketPath: this.websocketPath,

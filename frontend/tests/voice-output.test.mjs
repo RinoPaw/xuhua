@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { VoiceOutputController } from "../src/lib/voiceOutput.js";
+import { VoiceOutputController, normalizeSpeechText } from "../src/lib/voiceOutput.js";
 
 function makeSchedulerHarness() {
   const calls = [];
@@ -29,6 +29,13 @@ function makeSchedulerHarness() {
     get options() { return options; },
   };
 }
+
+test("speech normalization removes markdown without dropping semantic operators", () => {
+  assert.equal(
+    normalizeSpeechText("### 温度\n\n**最低** -2°C，且 3 > 2。\n- 列表项\n`汴绣`"),
+    "温度\n\n最低 -2°C，且 3 > 2。\n列表项\n汴绣",
+  );
+});
 
 test("voice output snapshots locale and queues first sentence before completion", () => {
   const harness = makeSchedulerHarness();

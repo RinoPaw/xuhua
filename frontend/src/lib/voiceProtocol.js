@@ -27,6 +27,17 @@ export function assistantEventLocale(message, fallback = DEFAULT_LOCALE) {
   );
 }
 
+function ttsEndpoint(websocketPath) {
+  const value = String(websocketPath || "/api/voice");
+  if (/^wss?:\/\//iu.test(value)) {
+    const url = new URL(value);
+    url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+    url.pathname = url.pathname.replace(/\/voice$/, "/tts");
+    return url.toString();
+  }
+  return value.replace(/\/voice$/, "/tts");
+}
+
 export function buildTtsUrl({
   websocketPath,
   text,
@@ -35,9 +46,10 @@ export function buildTtsUrl({
   reason,
   locale,
 }) {
-  const ttsPath = String(websocketPath || "/api/voice").replace(/\/voice$/, "/tts");
+  const ttsPath = ttsEndpoint(websocketPath);
   const speechLocale = resolveSpeechLocale(locale);
-  return `${ttsPath}?text=${encodeURIComponent(String(text || ""))}`
+  const separator = ttsPath.includes("?") ? "&" : "?";
+  return `${ttsPath}${separator}text=${encodeURIComponent(String(text || ""))}`
     + `&trace_id=${encodeURIComponent(String(traceId || ""))}`
     + `&segment=${encodeURIComponent(String(segment ?? 0))}`
     + `&reason=${encodeURIComponent(String(reason || ""))}`

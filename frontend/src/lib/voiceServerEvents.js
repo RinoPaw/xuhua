@@ -1,4 +1,5 @@
 import {
+  normalizeUtteranceId,
   normalizeVoiceId,
   REALTIME_VOICE_STATUS,
   shouldAcceptServerTurn,
@@ -12,6 +13,49 @@ const SERVER_STATUS_MAP = Object.freeze({
   transcribing: REALTIME_VOICE_STATUS.TRANSCRIBING,
   thinking: REALTIME_VOICE_STATUS.THINKING,
 });
+
+const SERVER_EVENT_TYPES = new Set([
+  "ready",
+  "status",
+  "user.partial",
+  "user.transcript",
+  "utterance.rejected",
+  "assistant.delta",
+  "sources",
+  "assistant.done",
+  "assistant.cancelled",
+  "error",
+]);
+
+const UTTERANCE_EVENTS = new Set([
+  "user.partial",
+  "user.transcript",
+  "utterance.rejected",
+]);
+
+export function decodeVoiceServerEvent(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const type = String(value.type || "").trim();
+  if (!SERVER_EVENT_TYPES.has(type)) return null;
+
+  const message = { ...value, type };
+  if (type === "status" && !SERVER_STATUS_MAP[message.status]) return null;
+
+  if (UTTERANCE_EVENTS.has(type)) {
+    const utteranceId = normalizeUtteranceId(message.utterance_id);
+    if (!utteranceId) return null;
+    message.utterance_id = utteranceId;
+  }
+
+  if (message.turn_id !== undefined) {
+    message.turn_id = normalizeVoiceId(message.turn_id);
+  }
+  if (message.session_id !== undefined) {
+    message.session_id = normalizeVoiceId(message.session_id);
+  }
+
+  return message;
+}
 
 export function resolveServerVoiceStatus(message) {
   return SERVER_STATUS_MAP[message?.status] || "";

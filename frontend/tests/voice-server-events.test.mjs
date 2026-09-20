@@ -4,10 +4,29 @@ import test from "node:test";
 import {
   acceptServerVoiceError,
   acceptServerVoiceStatus,
+  decodeVoiceServerEvent,
   resolveServerVoiceStatus,
 } from "../src/lib/voiceServerEvents.js";
 import { createVoiceInputState } from "../src/lib/voiceInput.js";
 import { REALTIME_VOICE_STATUS } from "../src/hooks/voiceState.js";
+
+test("server event decoder accepts only the current protocol", () => {
+  assert.deepEqual(
+    decodeVoiceServerEvent({
+      type: "user.transcript",
+      utterance_id: "3",
+      text: "汴绣",
+    }),
+    {
+      type: "user.transcript",
+      utterance_id: 3,
+      text: "汴绣",
+    },
+  );
+  assert.equal(decodeVoiceServerEvent({ type: "future.event" }), null);
+  assert.equal(decodeVoiceServerEvent({ type: "user.partial", utterance_id: 0 }), null);
+  assert.equal(decodeVoiceServerEvent([]), null);
+});
 
 test("server status map normalizes protocol values", () => {
   assert.equal(resolveServerVoiceStatus({ status: "listening" }), REALTIME_VOICE_STATUS.LISTENING);

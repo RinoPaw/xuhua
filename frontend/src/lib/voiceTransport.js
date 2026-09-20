@@ -1,3 +1,4 @@
+import { decodeVoiceServerEvent } from "./voiceServerEvents.js";
 import { websocketUrl } from "./voiceProtocol.js";
 
 export function sendSocketJson(socket, payload, openState = globalThis.WebSocket?.OPEN ?? 1) {
@@ -8,7 +9,7 @@ export function sendSocketJson(socket, payload, openState = globalThis.WebSocket
 
 export function parseSocketMessage(event) {
   try {
-    return JSON.parse(event?.data);
+    return decodeVoiceServerEvent(JSON.parse(event?.data));
   } catch {
     return null;
   }

@@ -43,8 +43,13 @@ test("sendSocketJson only sends on an open transport", () => {
   assert.equal(sendSocketJson(socket, { type: "ignored" }, 1), false);
 });
 
-test("parseSocketMessage rejects malformed frames", () => {
+test("parseSocketMessage returns only canonical server events", () => {
   assert.deepEqual(parseSocketMessage({ data: '{"type":"ready"}' }), { type: "ready" });
+  assert.deepEqual(
+    parseSocketMessage({ data: '{"type":"user.partial","utterance_id":"2","text":"汴"}' }),
+    { type: "user.partial", utterance_id: 2, text: "汴" },
+  );
+  assert.equal(parseSocketMessage({ data: '{"type":"future.event"}' }), null);
   assert.equal(parseSocketMessage({ data: "{" }), null);
 });
 

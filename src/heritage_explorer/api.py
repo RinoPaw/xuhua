@@ -86,13 +86,30 @@ def create_app(
     sessions: SessionStore | None = None,
     admission: AdmissionController | None = None,
 ) -> FastAPI:
-    search = (
-        search or (getattr(assistant, "search", None) if assistant else None) or SearchService()
-    )
-    sessions = (
-        sessions or (getattr(assistant, "sessions", None) if assistant else None) or SessionStore()
-    )
-    assistant = assistant or AssistantService(search=search, sessions=sessions)
+    if assistant is None:
+        owned_search = search or SearchService()
+        owned_sessions = sessions or SessionStore()
+        assistant = AssistantService(search=owned_search, sessions=owned_sessions)
+    else:
+        owned_search = getattr(assistant, "search", None)
+        owned_sessions = getattr(assistant, "sessions", None)
+        if owned_search is None:
+            if search is None:
+                raise ValueError("assistant must own its search service")
+            assistant.search = search
+            owned_search = search
+        elif search is not None and search is not owned_search:
+            raise ValueError("search must be the assistant-owned search service")
+        if owned_sessions is None:
+            if sessions is None:
+                raise ValueError("assistant must own its session store")
+            assistant.sessions = sessions
+            owned_sessions = sessions
+        elif sessions is not None and sessions is not owned_sessions:
+            raise ValueError("sessions must be the assistant-owned session store")
+
+    search = assistant.search
+    sessions = assistant.sessions
     admission = admission or create_default_admission_controller()
     kb = search.knowledge_base
     prepare_asr_normalization(kb)

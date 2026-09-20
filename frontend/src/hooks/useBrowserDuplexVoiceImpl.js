@@ -446,6 +446,18 @@ export function useBrowserDuplexVoice({
           return;
         }
 
+        if (message.type === "assistant.cancelled") {
+          if (!acceptAssistantTurn(
+            message,
+            assistantTurnRef,
+            ignoredAssistantTurnsRef.current,
+          )) return;
+          stopSpeech(false, false);
+          setError(null);
+          setStatusValue(REALTIME_VOICE_STATUS.LISTENING);
+          return;
+        }
+
         if (message.type === "utterance.rejected") {
           if (!acceptUtteranceMessage(message)) return;
           const wasCandidate = bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE;

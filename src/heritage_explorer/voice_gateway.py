@@ -249,7 +249,7 @@ def register_voice_route(
             await stop_task(task)
 
         async def answer(question: str, turn_id: str, locale_hint: str = "") -> None:
-            nonlocal session_id
+            nonlocal answer_task, active_turn_id, session_id
             answer_locale = detect_locale(question, hint=locale_hint or voice_locale_hint)
             LOGGER.info(
                 "voice.agent.thinking connection=%s turn=%s question_chars=%s",
@@ -322,6 +322,15 @@ def register_voice_route(
                                 "message": message,
                             }
                         )
+                    elif event.type == "turn.cancelled":
+                        await send(
+                            {
+                                "type": "assistant.cancelled",
+                                "session_id": event.session_id,
+                                "turn_id": event.turn_id,
+                                "reason": str(event.payload.get("reason") or "cancelled"),
+                            }
+                        )
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -333,6 +342,12 @@ def register_voice_route(
                 await send(
                     {"type": "error", "turn_id": turn_id, "message": "回答服务暂时不可用"}
                 )
+            finally:
+                current_task = asyncio.current_task()
+                if active_turn_id == turn_id:
+                    active_turn_id = None
+                    if answer_task is current_task:
+                        answer_task = None
 
         async def start_answer(
             question: str,

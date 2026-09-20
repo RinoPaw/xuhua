@@ -18,7 +18,7 @@ services:
       - key: AI_BASE_URL
         value: https://api.deepseek.com
       - key: AI_MODEL
-        value: deepseek-v4-flash
+        value: deepseek-flash
       - key: AI_TIMEOUT
         value: 60
       - key: AI_FIRST_TOKEN_TIMEOUT

@@ -85,7 +85,6 @@ class RequestBodyLimitMiddleware:
         while True:
             message = await receive()
             if message.get("type") == "http.disconnect":
-                await self.app(scope, lambda: _constant_message(message), send)
                 return
             if message.get("type") != "http.request":
                 continue
@@ -105,16 +104,12 @@ class RequestBodyLimitMiddleware:
 
         async def replay_receive() -> dict[str, Any]:
             nonlocal replayed
-            if replayed:
-                return {"type": "http.disconnect"}
-            replayed = True
-            return {"type": "http.request", "body": body, "more_body": False}
+            if not replayed:
+                replayed = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return await receive()
 
         await self.app(scope, replay_receive, send)
-
-
-async def _constant_message(message: dict[str, Any]) -> dict[str, Any]:
-    return message
 
 
 __all__ = [

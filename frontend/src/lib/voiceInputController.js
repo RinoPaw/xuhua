@@ -1,0 +1,128 @@
+import {
+  BARGE_IN_PHASE,
+  beginBargeInCandidate as makeBargeInCandidate,
+  confirmBargeIn,
+  createBargeInState,
+} from "../hooks/bargeInState.js";
+import {
+  createVoiceInputState,
+  processVoiceInputFrame,
+  resetVoiceInputPhase,
+  resetVoiceOnset,
+} from "./voiceInput.js";
+
+function defaultNow() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+
+/** Owns browser microphone/VAD state, barge-in onset state, and input gating. */
+export class VoiceInputController {
+  constructor({ now = defaultNow, processFrame = processVoiceInputFrame } = {}) {
+    this.now = now;
+    this.processFrame = processFrame;
+    this.state = createVoiceInputState();
+    this.bargeIn = createBargeInState();
+    this.blockedUntil = 0;
+    this.muted = false;
+  }
+
+  get bargeInPhase() {
+    return this.bargeIn.phase;
+  }
+
+  get utteranceActive() {
+    return this.state.utteranceActive;
+  }
+
+  reset({ resetIds = true, discardResampler = true } = {}) {
+    resetVoiceInputPhase(this.state, { resetIds, discardResampler });
+    this.clearBargeInCandidate();
+    return this.state;
+  }
+
+  resetOnset() {
+    resetVoiceOnset(this.state);
+    return this.state;
+  }
+
+  clearBargeInCandidate() {
+    this.bargeIn = createBargeInState();
+    return true;
+  }
+
+  beginBargeInCandidate(utteranceId, startedAt) {
+    if (this.bargeIn.phase === BARGE_IN_PHASE.TENTATIVE) return false;
+    this.bargeIn = makeBargeInCandidate(this.bargeIn, utteranceId, startedAt);
+    return true;
+  }
+
+  confirmBargeInCandidate() {
+    const confirmed = confirmBargeIn(this.bargeIn);
+    if (!confirmed.confirmed) return false;
+    this.bargeIn = confirmed.state;
+    return true;
+  }
+
+  blockFor(durationMs = 450) {
+    this.blockedUntil = this.now() + Math.max(0, Number(durationMs) || 0);
+    return this.blockedUntil;
+  }
+
+  unblock() {
+    this.blockedUntil = 0;
+  }
+
+  setMuted(muted) {
+    this.muted = Boolean(muted);
+    if (this.muted) {
+      this.state.resampler?.reset();
+      this.resetOnset();
+    }
+    return this.muted;
+  }
+
+  toggleMuted() {
+    return this.setMuted(!this.muted);
+  }
+
+  process(samples, inputRate, {
+    connection,
+    output,
+    assistantPending = false,
+    onSpectrum = () => {},
+    onSpeaking = () => {},
+    onTranscribing = () => {},
+  } = {}) {
+    if (this.muted) return null;
+
+    const result = this.processFrame(this.state, {
+      samples,
+      inputRate,
+      now: this.now(),
+      blockedUntil: this.blockedUntil,
+      transportReady: Boolean(connection?.connected),
+      playbackActive: Boolean(output?.playing),
+      agentBusy: Boolean(output?.pipelineActive || assistantPending || output?.playing),
+      bargeInTentative: this.bargeIn.phase === BARGE_IN_PHASE.TENTATIVE,
+    });
+
+    if (result.spectrum) onSpectrum(result.spectrum);
+
+    result.actions.forEach((action, index) => {
+      if (!connection?.connected) return;
+      if (action.kind === "json") connection.sendJson(action.payload);
+      else connection.sendRaw(action.payload);
+
+      if (index === 0 && result.started) {
+        if (result.started.shouldInterrupt) {
+          this.beginBargeInCandidate(result.started.utteranceId, this.state.utteranceStartedAt);
+        } else if (result.nextStatus === "user_speaking") {
+          onSpeaking();
+        }
+      }
+    });
+
+    if (!result.started && result.nextStatus === "transcribing") onTranscribing();
+    return result;
+  }
+}

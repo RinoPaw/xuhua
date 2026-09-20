@@ -7,20 +7,9 @@ import {
   VOICE_TRANSPORT_PHASE,
 } from "./voiceState.js";
 import { useVoiceMachineState } from "./useVoiceMachineState.js";
-import {
-  BARGE_IN_PHASE,
-  beginBargeInCandidate as makeBargeInCandidate,
-  confirmBargeIn,
-  createBargeInState,
-} from "./bargeInState.js";
 import { VoiceConnectionController } from "../lib/voiceConnection.js";
 import { routeVoiceServerEvent } from "../lib/voiceEventRouter.js";
-import {
-  createVoiceInputState,
-  processVoiceInputFrame,
-  resetVoiceInputPhase,
-  resetVoiceOnset,
-} from "../lib/voiceInput.js";
+import { VoiceInputController } from "../lib/voiceInputController.js";
 import { VoiceOutputController } from "../lib/voiceOutput.js";
 import {
   compactRecognitionContext,
@@ -57,13 +46,10 @@ export function useBrowserDuplexVoice({
   recognitionContextRef.current = recognitionContext;
   const recognitionContextKey = JSON.stringify(compactRecognitionContext(recognitionContext));
   const voiceConnectionRef = useRef(null);
-  const voiceInputRef = useRef(createVoiceInputState());
+  const voiceInputRef = useRef(null);
   const voiceOutputRef = useRef(null);
   const voiceTurnsRef = useRef(null);
   const voiceTranscriptRef = useRef(null);
-  const mutedRef = useRef(false);
-  const inputBlockedUntilRef = useRef(0);
-  const bargeInRef = useRef(createBargeInState());
   const callbacks = useRef({
     onUserPartial,
     onUserTranscript,
@@ -82,6 +68,7 @@ export function useBrowserDuplexVoice({
   };
 
   if (!voiceConnectionRef.current) voiceConnectionRef.current = new VoiceConnectionController();
+  if (!voiceInputRef.current) voiceInputRef.current = new VoiceInputController();
   if (!voiceTurnsRef.current) voiceTurnsRef.current = new VoiceTurnTracker();
   if (!voiceTranscriptRef.current) {
     voiceTranscriptRef.current = new VoiceTranscriptPresenter({
@@ -90,7 +77,7 @@ export function useBrowserDuplexVoice({
   }
 
   const settleListening = useCallback(() => {
-    if (voiceInputRef.current.utteranceActive
+    if (voiceInputRef.current?.utteranceActive
       || voiceOutputRef.current?.pipelineActive
       || isVoiceAssistantPending(voiceMachineRef.current)) return false;
     dispatchMany([
@@ -150,7 +137,7 @@ export function useBrowserDuplexVoice({
         }
       },
       onTerminal: ({ failed }) => {
-        inputBlockedUntilRef.current = performance.now() + 450;
+        voiceInputRef.current?.blockFor(450);
         settleListening();
         if (failed) reportError("speech_output_failed");
       },
@@ -170,7 +157,7 @@ export function useBrowserDuplexVoice({
   }, [send]);
 
   const clearBargeInCandidate = useCallback(() => {
-    bargeInRef.current = createBargeInState();
+    return voiceInputRef.current?.clearBargeInCandidate() ?? false;
   }, []);
 
   const stopSpeech = useCallback((bargeIn = false, notifyServer = true) => {
@@ -181,7 +168,8 @@ export function useBrowserDuplexVoice({
       { type: "output.idle" },
       { type: "turn.idle" },
     ]);
-    inputBlockedUntilRef.current = bargeIn ? 0 : performance.now() + 450;
+    if (bargeIn) voiceInputRef.current?.unblock();
+    else voiceInputRef.current?.blockFor(450);
     if (bargeIn) {
       if (notifyServer) send({ type: "barge_in" });
       callbacks.current.onBargeIn?.();
@@ -189,26 +177,11 @@ export function useBrowserDuplexVoice({
   }, [clearBargeInCandidate, dispatchMany, send]);
 
   const confirmBargeInFromAsr = useCallback(() => {
-    const confirmed = confirmBargeIn(bargeInRef.current);
-    if (!confirmed.confirmed) return false;
-    clearBargeInCandidate();
+    if (!voiceInputRef.current?.confirmBargeInCandidate()) return false;
     stopSpeech(true, true);
     dispatchVoice({ type: "input.speaking" });
     return true;
-  }, [clearBargeInCandidate, dispatchVoice, stopSpeech]);
-
-  const beginBargeInCandidate = useCallback((utteranceId, startedAt) => {
-    if (bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE) return false;
-    if (!voiceOutputRef.current?.pipelineActive
-      && !isVoiceAssistantPending(voiceMachineRef.current)
-      && !voiceOutputRef.current?.playing) return false;
-    bargeInRef.current = makeBargeInCandidate(
-      bargeInRef.current,
-      utteranceId,
-      startedAt,
-    );
-    return true;
-  }, [voiceMachineRef]);
+  }, [dispatchVoice, stopSpeech]);
 
   const beginSpeechStream = useCallback((locale = "") => {
     dispatchMany([
@@ -217,7 +190,7 @@ export function useBrowserDuplexVoice({
       { type: "output.pending" },
     ]);
     const generation = voiceOutputRef.current?.begin(locale);
-    resetVoiceOnset(voiceInputRef.current);
+    voiceInputRef.current?.resetOnset();
     return generation;
   }, [dispatchMany]);
 
@@ -245,13 +218,13 @@ export function useBrowserDuplexVoice({
     const recognition = compactRecognitionContext(recognitionContextRef.current);
     return routeVoiceServerEvent(message, {
       state: {
-        input: voiceInputRef.current,
+        input: voiceInputRef.current.state,
         machine: voiceMachineRef.current,
         status: deriveVoiceStatus(voiceMachineRef.current),
         turns: voiceTurnsRef.current,
         output: voiceOutputRef.current,
         presenter: voiceTranscriptRef.current,
-        bargeInPhase: bargeInRef.current.phase,
+        bargeInPhase: voiceInputRef.current.bargeInPhase,
         localeHint: recognition.locale_hint,
       },
       actions: {
@@ -282,57 +255,23 @@ export function useBrowserDuplexVoice({
   ]);
 
   const processAudio = useCallback((samples, inputRate) => {
-    if (mutedRef.current) return;
-    const connection = voiceConnectionRef.current;
-    const input = voiceInputRef.current;
-    const output = voiceOutputRef.current;
-    const result = processVoiceInputFrame(input, {
-      samples,
-      inputRate,
-      now: performance.now(),
-      blockedUntil: inputBlockedUntilRef.current,
-      transportReady: Boolean(connection?.connected),
-      playbackActive: Boolean(output?.playing),
-      agentBusy: Boolean(
-        output?.pipelineActive
-        || isVoiceAssistantPending(voiceMachineRef.current)
-        || output?.playing
-      ),
-      bargeInTentative: bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE,
+    voiceInputRef.current?.process(samples, inputRate, {
+      connection: voiceConnectionRef.current,
+      output: voiceOutputRef.current,
+      assistantPending: isVoiceAssistantPending(voiceMachineRef.current),
+      onSpectrum: setSpectrum,
+      onSpeaking: () => dispatchVoice({ type: "input.speaking" }),
+      onTranscribing: () => dispatchVoice({ type: "input.transcribing" }),
     });
-
-    if (result.spectrum) setSpectrum(result.spectrum);
-
-    result.actions.forEach((action, index) => {
-      if (!connection?.connected) return;
-      if (action.kind === "json") connection.sendJson(action.payload);
-      else connection.sendRaw(action.payload);
-
-      if (index === 0 && result.started) {
-        if (result.started.shouldInterrupt) {
-          beginBargeInCandidate(result.started.utteranceId, input.utteranceStartedAt);
-        } else if (result.nextStatus === "user_speaking") {
-          dispatchVoice({ type: "input.speaking" });
-        }
-      }
-    });
-
-    if (!result.started && result.nextStatus === "transcribing") {
-      dispatchVoice({ type: "input.transcribing" });
-    }
-  }, [beginBargeInCandidate, dispatchVoice, voiceMachineRef]);
+  }, [dispatchVoice, voiceMachineRef]);
 
   const cleanup = useCallback(() => {
     voiceTranscriptRef.current?.clear(true);
     stopSpeech(false);
-    resetVoiceInputPhase(voiceInputRef.current, {
-      resetIds: true,
-      discardResampler: true,
-    });
-    clearBargeInCandidate();
+    voiceInputRef.current?.reset({ resetIds: true, discardResampler: true });
     voiceConnectionRef.current?.stop();
     dispatchVoice({ type: "transport.idle" });
-  }, [clearBargeInCandidate, dispatchVoice, stopSpeech]);
+  }, [dispatchVoice, stopSpeech]);
 
   const start = useCallback(async () => {
     const connection = voiceConnectionRef.current;
@@ -342,10 +281,7 @@ export function useBrowserDuplexVoice({
       || deriveVoiceStatus(voiceMachineRef.current) === REALTIME_VOICE_STATUS.CONNECTING) return;
 
     voiceTranscriptRef.current?.clear(true);
-    resetVoiceInputPhase(voiceInputRef.current, {
-      resetIds: true,
-      discardResampler: true,
-    });
+    voiceInputRef.current?.reset({ resetIds: true, discardResampler: true });
     setError(null);
     dispatchVoice({ type: "transport.connecting" });
 
@@ -389,13 +325,8 @@ export function useBrowserDuplexVoice({
   }, [cleanup]);
 
   const toggleMute = useCallback(() => {
-    const next = !mutedRef.current;
-    mutedRef.current = next;
+    const next = voiceInputRef.current.toggleMuted();
     setMuted(next);
-    if (next) {
-      voiceInputRef.current.resampler?.reset();
-      resetVoiceOnset(voiceInputRef.current);
-    }
     voiceConnectionRef.current?.media.setMuted(next);
     return next;
   }, []);

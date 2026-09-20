@@ -2,10 +2,31 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable
+import logging
 from typing import Any
 
 from .task_scope import TaskSet, TaskSlot, cancel_task
+
+
+LOGGER = logging.getLogger(__name__)
+
+
+async def close_resource(resource: Any | None, *, label: str) -> None:
+    """Close one owned resource without letting provider cleanup failures escape."""
+
+    if resource is None:
+        return
+    close = getattr(resource, "close", None)
+    if close is None:
+        return
+    try:
+        await close()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        LOGGER.warning("%s.close_failed", label, exc_info=True)
 
 
 class VoiceConnectionScope:
@@ -85,8 +106,7 @@ class VoiceConnectionScope:
     async def cancel_asr(self) -> None:
         stream, start_task = self.detach_asr()
         await cancel_task(start_task)
-        if stream is not None:
-            await stream.close()
+        await close_resource(stream, label="voice.asr")
 
     def start_finalizer(
         self,
@@ -107,4 +127,4 @@ class VoiceConnectionScope:
         await self.cancel_asr()
 
 
-__all__ = ["VoiceConnectionScope"]
+__all__ = ["VoiceConnectionScope", "close_resource"]

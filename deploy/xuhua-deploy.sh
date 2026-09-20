@@ -159,6 +159,14 @@ atomic_copy() {
   return 1
 }
 
+compose_snapshot_for() {
+  printf '%s.%s\n' "$last_good_compose" "$1"
+}
+
+env_snapshot_for() {
+  printf '%s.%s.%s.env\n' "$last_good_compose" "$1" "$2"
+}
+
 record_failure() {
   atomic_write_line "$failed_sha_file" "$commit_sha $env_revision $(date +%s)"
 }
@@ -219,32 +227,45 @@ wait_for_healthy() {
 }
 
 remember_success() {
-  local compose_snapshot existing_good="" existing_snapshot=""
-  compose_snapshot="${last_good_compose}.${commit_sha}"
+  local compose_snapshot env_snapshot existing_good="" existing_env_revision=""
+  local existing_compose="" existing_env=""
+  compose_snapshot="$(compose_snapshot_for "$commit_sha")"
+  env_snapshot="$(env_snapshot_for "$commit_sha" "$env_revision")"
   atomic_copy "$compose_file" "$compose_snapshot"
+  atomic_copy "$env_file" "$env_snapshot"
 
   if [[ -r "$last_good_sha_file" ]]; then
-    read -r existing_good <"$last_good_sha_file" || true
-    existing_snapshot="${last_good_compose}.${existing_good}"
-    if [[ "$existing_good" =~ ^[0-9a-f]{40}$ && "$existing_good" != "$commit_sha" && -f "$existing_snapshot" ]]; then
-      atomic_write_line "$previous_good_sha_file" "$existing_good"
+    read -r existing_good existing_env_revision <"$last_good_sha_file" || true
+    existing_compose="$(compose_snapshot_for "$existing_good")"
+    existing_env="$(env_snapshot_for "$existing_good" "$existing_env_revision")"
+    if [[ "$existing_good" =~ ^[0-9a-f]{40}$ \
+      && -n "$existing_env_revision" \
+      && ( "$existing_good" != "$commit_sha" || "$existing_env_revision" != "$env_revision" ) \
+      && -f "$existing_compose" \
+      && -f "$existing_env" ]]; then
+      atomic_write_line "$previous_good_sha_file" "$existing_good $existing_env_revision"
     fi
   fi
 
-  atomic_write_line "$last_good_sha_file" "$commit_sha"
+  atomic_write_line "$last_good_sha_file" "$commit_sha $env_revision"
   rm -f -- "$failed_sha_file"
 }
 
 cleanup_old_images() {
-  local tag keep_current="" keep_previous=""
+  local tag keep_current="" keep_current_env="" keep_previous="" keep_previous_env=""
   if [[ -r "$last_good_sha_file" ]]; then
-    read -r keep_current <"$last_good_sha_file" || true
+    read -r keep_current keep_current_env <"$last_good_sha_file" || true
   fi
   if [[ -r "$previous_good_sha_file" ]]; then
-    read -r keep_previous <"$previous_good_sha_file" || true
+    read -r keep_previous keep_previous_env <"$previous_good_sha_file" || true
   fi
   while read -r tag; do
-    if [[ "$tag" =~ ^xuhua:([0-9a-f]{40})$ && "${BASH_REMATCH[1]}" != "$commit_sha" && "${BASH_REMATCH[1]}" != "$previous_commit" && "${BASH_REMATCH[1]}" != "$restore_commit" && "${BASH_REMATCH[1]}" != "$keep_current" && "${BASH_REMATCH[1]}" != "$keep_previous" ]]; then
+    if [[ "$tag" =~ ^xuhua:([0-9a-f]{40})$ \
+      && "${BASH_REMATCH[1]}" != "$commit_sha" \
+      && "${BASH_REMATCH[1]}" != "$previous_commit" \
+      && "${BASH_REMATCH[1]}" != "$restore_commit" \
+      && "${BASH_REMATCH[1]}" != "$keep_current" \
+      && "${BASH_REMATCH[1]}" != "$keep_previous" ]]; then
       docker image rm "$tag" >/dev/null 2>&1 || true
     fi
   done < <(docker image ls xuhua --format '{{.Repository}}:{{.Tag}}')
@@ -252,47 +273,76 @@ cleanup_old_images() {
 
 previous_was_healthy=0
 restore_commit=""
+restore_env_revision=""
 restore_compose=""
+restore_env=""
 
 select_restore_target() {
-  local candidate="" snapshot="" pointer="" persisted_current="" persisted_snapshot="" state_error=0
+  local candidate="" candidate_env_revision="" snapshot="" env_snapshot="" pointer=""
+  local persisted_current="" persisted_env_revision="" persisted_snapshot="" persisted_env=""
+  local state_error=0
 
-  if [[ "$previous_was_healthy" == "1" && "$previous_commit" =~ ^[0-9a-f]{40}$ && "$previous_commit" != "$commit_sha" ]] && docker image inspect "xuhua:$previous_commit" >/dev/null 2>&1; then
-    snapshot="${last_good_compose}.${previous_commit}"
+  if [[ "$previous_was_healthy" == "1" \
+    && "$previous_commit" =~ ^[0-9a-f]{40}$ \
+    && -n "$previous_env_revision" \
+    && ( "$previous_commit" != "$commit_sha" || "$previous_env_revision" != "$env_revision" ) ]] \
+    && docker image inspect "xuhua:$previous_commit" >/dev/null 2>&1; then
+    snapshot="$(compose_snapshot_for "$previous_commit")"
     if [[ ! -f "$snapshot" ]]; then
       [[ -f "$last_good_compose" ]] || return 2
       atomic_copy "$last_good_compose" "$snapshot" || return 2
     fi
 
-    if [[ -r "$last_good_sha_file" ]]; then
-      read -r persisted_current <"$last_good_sha_file" || true
-    fi
-    if [[ "$persisted_current" =~ ^[0-9a-f]{40}$ && "$persisted_current" != "$previous_commit" ]]; then
-      persisted_snapshot="${last_good_compose}.${persisted_current}"
-      if [[ -f "$persisted_snapshot" ]]; then
-        atomic_write_line "$previous_good_sha_file" "$persisted_current" || return 2
-      fi
-      atomic_write_line "$last_good_sha_file" "$previous_commit" || return 2
-    elif [[ "$persisted_current" != "$previous_commit" ]]; then
-      atomic_write_line "$last_good_sha_file" "$previous_commit" || return 2
+    env_snapshot="$(env_snapshot_for "$previous_commit" "$previous_env_revision")"
+    if [[ ! -f "$env_snapshot" ]]; then
+      # Migration from the old SHA-only state is safe only when the external
+      # env file still exactly matches the environment of the running container.
+      [[ "$previous_env_revision" == "$env_revision" ]] || return 2
+      atomic_copy "$env_file" "$env_snapshot" || return 2
     fi
 
+    if [[ -r "$last_good_sha_file" ]]; then
+      read -r persisted_current persisted_env_revision <"$last_good_sha_file" || true
+    fi
+    if [[ "$persisted_current" =~ ^[0-9a-f]{40}$ \
+      && -n "$persisted_env_revision" \
+      && ( "$persisted_current" != "$previous_commit" || "$persisted_env_revision" != "$previous_env_revision" ) ]]; then
+      persisted_snapshot="$(compose_snapshot_for "$persisted_current")"
+      persisted_env="$(env_snapshot_for "$persisted_current" "$persisted_env_revision")"
+      if [[ -f "$persisted_snapshot" && -f "$persisted_env" ]]; then
+        atomic_write_line "$previous_good_sha_file" "$persisted_current $persisted_env_revision" || return 2
+      fi
+    fi
+    atomic_write_line "$last_good_sha_file" "$previous_commit $previous_env_revision" || return 2
+
     restore_commit="$previous_commit"
+    restore_env_revision="$previous_env_revision"
     restore_compose="$snapshot"
+    restore_env="$env_snapshot"
     return 0
   fi
 
   for pointer in "$last_good_sha_file" "$previous_good_sha_file"; do
     candidate=""
+    candidate_env_revision=""
     [[ -r "$pointer" ]] || continue
-    read -r candidate <"$pointer" || continue
-    snapshot="${last_good_compose}.${candidate}"
-    if [[ "$candidate" =~ ^[0-9a-f]{40}$ && "$candidate" != "$commit_sha" && -f "$snapshot" ]] && docker image inspect "xuhua:$candidate" >/dev/null 2>&1; then
+    read -r candidate candidate_env_revision <"$pointer" || continue
+    snapshot="$(compose_snapshot_for "$candidate")"
+    env_snapshot="$(env_snapshot_for "$candidate" "$candidate_env_revision")"
+    if [[ "$candidate" =~ ^[0-9a-f]{40}$ \
+      && -n "$candidate_env_revision" \
+      && ( "$candidate" != "$commit_sha" || "$candidate_env_revision" != "$env_revision" ) \
+      && -f "$snapshot" \
+      && -f "$env_snapshot" ]] \
+      && docker image inspect "xuhua:$candidate" >/dev/null 2>&1; then
       restore_commit="$candidate"
+      restore_env_revision="$candidate_env_revision"
       restore_compose="$snapshot"
+      restore_env="$env_snapshot"
       return 0
     fi
-    if [[ "$candidate" =~ ^[0-9a-f]{40}$ && "$candidate" != "$commit_sha" ]]; then
+    if [[ "$candidate" =~ ^[0-9a-f]{40}$ \
+      && ( "$candidate" != "$commit_sha" || "$candidate_env_revision" != "$env_revision" ) ]]; then
       state_error=1
     fi
   done
@@ -304,13 +354,19 @@ select_restore_target() {
 }
 
 restore_previous() {
-  if [[ "$restore_commit" =~ ^[0-9a-f]{40}$ && -f "$restore_compose" ]] && docker image inspect "xuhua:$restore_commit" >/dev/null 2>&1; then
-    echo "Restoring previously healthy image $restore_commit." >&2
+  if [[ "$restore_commit" =~ ^[0-9a-f]{40}$ \
+    && -n "$restore_env_revision" \
+    && -f "$restore_compose" \
+    && -f "$restore_env" ]] \
+    && docker image inspect "xuhua:$restore_commit" >/dev/null 2>&1; then
+    echo "Restoring previously healthy deployment $restore_commit ($restore_env_revision)." >&2
     export XUHUA_COMMIT="$restore_commit"
+    export XUHUA_ENV_FILE="$restore_env"
+    export XUHUA_ENV_REVISION="$restore_env_revision"
     if compose_with "$restore_compose" up -d --no-build --force-recreate app && wait_for_healthy; then
       return 0
     fi
-    echo "The previous image did not recover successfully." >&2
+    echo "The previous deployment did not recover successfully." >&2
   fi
 
   echo "Stopping the failed candidate container." >&2
@@ -328,26 +384,29 @@ if [[ "$previous_commit" == "$commit_sha" && "$previous_env_revision" == "$env_r
 fi
 
 if [[ "$recent_failure" == "1" && "$previous_was_healthy" == "1" ]]; then
-  echo "Keeping the healthy running version while failed commit $commit_sha cools down." >&2
+  echo "Keeping the healthy running version while failed deployment $commit_sha ($env_revision) cools down." >&2
   exit 0
 fi
 
 restore_selection_status=0
 select_restore_target || restore_selection_status=$?
 if [[ "$restore_selection_status" == "2" ]]; then
-  echo "Rollback state is inconsistent; preserving the current container and refusing deployment." >&2
+  echo "Rollback state is incomplete; preserving the current container and refusing deployment." >&2
   exit 1
 fi
 
 if [[ "$previous_was_healthy" != "1" && "$restore_commit" =~ ^[0-9a-f]{40}$ ]]; then
-  echo "No healthy container is running; restoring the last verified version before building." >&2
+  echo "No healthy container is running; restoring the last verified deployment before building." >&2
   restore_previous
   if [[ "$recent_failure" == "1" ]]; then
     exit 0
   fi
   previous_commit="$restore_commit"
+  previous_env_revision="$restore_env_revision"
   previous_was_healthy=1
   export XUHUA_COMMIT="$commit_sha"
+  export XUHUA_ENV_FILE="$env_file"
+  export XUHUA_ENV_REVISION="$env_revision"
 fi
 
 activation_started=0
@@ -379,8 +438,9 @@ fi
 
 reuse_candidate_image=0
 known_good_sha=""
+known_good_env_revision=""
 if [[ -r "$last_good_sha_file" ]]; then
-  read -r known_good_sha <"$last_good_sha_file" || true
+  read -r known_good_sha known_good_env_revision <"$last_good_sha_file" || true
   if [[ "$known_good_sha" == "$commit_sha" ]] && docker image inspect "xuhua:$commit_sha" >/dev/null 2>&1; then
     reuse_candidate_image=1
   fi
@@ -401,8 +461,8 @@ else
 fi
 
 if wait_for_healthy; then
-  deployment_succeeded=1
   remember_success
+  deployment_succeeded=1
   cleanup_old_images
   exit 0
 fi

@@ -1,5 +1,9 @@
+import json
+
 from heritage_explorer.voice_protocol import (
     ContextCommand,
+    MAX_CONTEXT_TITLES,
+    MAX_VOICE_TEXT_CHARS,
     TextCommand,
     UtteranceStartCommand,
     decode_voice_command,
@@ -42,11 +46,36 @@ def test_context_command_canonicalizes_browser_aliases() -> None:
     }
 
 
+def test_context_command_bounds_untrusted_title_collections() -> None:
+    raw = json.dumps(
+        {
+            "type": "context",
+            "session_id": "s" * 1000,
+            "category": "类" * 1000,
+            "locale_hint": "x" * 1000,
+            "visible_items": [{"title": f"项目-{index}"} for index in range(100)],
+        },
+        ensure_ascii=False,
+    )
+    command = decode_voice_command(raw)
+    assert isinstance(command, ContextCommand)
+    assert len(command.session_id) == 128
+    assert len(command.category) == 200
+    assert len(command.locale_hint) == 64
+    assert len(command.titles) == MAX_CONTEXT_TITLES
+
+
 def test_text_command_is_canonicalized_at_protocol_boundary() -> None:
     assert decode_voice_command('{"type":"text","text":"  汴绣  "}') == TextCommand("汴绣")
+    assert decode_voice_command(json.dumps({"type": "text", "text": "a" * MAX_VOICE_TEXT_CHARS})) \
+        == TextCommand("a" * MAX_VOICE_TEXT_CHARS)
+    assert decode_voice_command(
+        json.dumps({"type": "text", "text": "a" * (MAX_VOICE_TEXT_CHARS + 1)})
+    ) is None
 
 
 def test_invalid_and_unknown_frames_are_ignored() -> None:
     assert decode_voice_command("not-json") is None
     assert decode_voice_command("[]") is None
+    assert decode_voice_command('{"type":"text","text":""}') is None
     assert decode_voice_command('{"type":"future.command"}') is None

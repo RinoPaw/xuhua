@@ -142,7 +142,9 @@ function App() {
   }, [realtime]);
 
   useEffect(() => {
-    chatEnd.current?.scrollIntoView({ behavior: "auto", block: "end" });
+    if (state.messages.at(-1)) {
+      chatEnd.current?.scrollIntoView({ behavior: "auto", block: "end" });
+    }
   }, [state.messages]);
 
   const available = Boolean(meta?.capabilities?.realtime_voice);

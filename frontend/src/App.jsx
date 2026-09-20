@@ -156,8 +156,6 @@ function App() {
   );
   const levels = Array.isArray(meta?.levels) ? meta.levels : [];
   const showLevelFilter = levels.length > 1;
-  const results = items;
-  const shownTotal = total;
   const personaMode = realtime.isPlaying ? "speaking" : "idle";
   const welcomePrompts = useMemo(() => {
     const visibleItems = items.filter((item) => item?.title);
@@ -302,7 +300,6 @@ function App() {
               <VoiceStatusRow
                 status={voiceStatus}
                 connected={connected}
-                error={state.error || friendlyVoiceError(realtime.error, available)}
                 hasUserPartial={hasUserPartial}
                 hasAssistantBubble={hasAssistantBubble}
               />
@@ -417,8 +414,8 @@ function App() {
                   </label>
                 </div>
                 <div className="result-head">
-                  <span>{loading && results.length === 0 ? "检索中" : `共 ${shownTotal} 项`}</span>
-                  <span>{loading && results.length === 0 ? "载入中" : `已载入 ${results.length}`}</span>
+                  <span>{loading && items.length === 0 ? "检索中" : `共 ${total} 项`}</span>
+                  <span>{loading && items.length === 0 ? "载入中" : `已载入 ${items.length}`}</span>
                 </div>
               </div>
               <div className="source-list-frame">
@@ -428,13 +425,13 @@ function App() {
                   aria-busy={loading}
                   onScroll={handleSourceScroll}
                 >
-                  {results.map((item) => (
+                  {items.map((item) => (
                     <SourceItem key={item.id} item={item} onOpen={openItem} />
                   ))}
-                  {!loading && !searchError && results.length === 0 && (
+                  {!loading && !searchError && items.length === 0 && (
                     <div className="empty-state">没有匹配项目</div>
                   )}
-                  {loading && results.length > 0 && (
+                  {loading && items.length > 0 && (
                     <div className="source-list-status" aria-live="polite">继续加载中</div>
                   )}
                   {!loading && searchError && (
@@ -446,8 +443,8 @@ function App() {
                       加载失败，点击重试
                     </button>
                   )}
-                  {!loading && !searchError && !hasMoreItems && results.length > 0 && (
-                    <div className="source-list-status">已显示全部 {shownTotal} 项</div>
+                  {!loading && !searchError && !hasMoreItems && items.length > 0 && (
+                    <div className="source-list-status">已显示全部 {total} 项</div>
                   )}
                 </div>
               </div>

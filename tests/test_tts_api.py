@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 import heritage_explorer.api as api_module
+from heritage_explorer.admission import AdmissionController, AdmissionPolicy
 from heritage_explorer.api import create_app
 from heritage_explorer.dataset import KnowledgeBase
 from heritage_explorer.models import SearchResponse
@@ -70,3 +71,37 @@ def test_tts_text_is_exchanged_for_a_reusable_short_stream_token(monkeypatch) ->
         assert retry.content == b"firstsecond"
 
     assert [call["text"] for call in _FakeCommunicate.calls] == ["汴绣是什么？", "汴绣是什么？"]
+
+
+def test_invalid_tts_token_does_not_spend_synthesis_rate_budget(monkeypatch) -> None:
+    _FakeCommunicate.calls.clear()
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", _FakeCommunicate)
+    admission = AdmissionController(
+        {
+            "tts_ticket": AdmissionPolicy(1, 10, 10),
+            "tts": AdmissionPolicy(1, 1, 1),
+        }
+    )
+    app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        prepared = client.post(
+            "/api/tts",
+            json={"text": "汴绣", "locale": "zh-CN"},
+        )
+        assert prepared.status_code == 200
+        token = prepared.json()["token"]
+
+        missing = client.get(f"/api/tts/{'x' * 32}")
+        assert missing.status_code == 404
+
+        valid = client.get(f"/api/tts/{token}")
+        assert valid.status_code == 200
+        assert valid.content == b"firstsecond"
+
+        replay = client.get(f"/api/tts/{token}?tts_retry=1")
+        assert replay.status_code == 429
+        assert replay.json()["detail"] == "tts_global_rate"
+        assert replay.headers["retry-after"] == "60"
+
+    assert [call["text"] for call in _FakeCommunicate.calls] == ["汴绣"]

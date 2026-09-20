@@ -66,9 +66,9 @@ class ChatRequest(BaseModel):
 class TtsRequest(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_TTS_CHARS)
     locale: str = Field(default="", max_length=64)
-    trace_id: str = Field(default="", max_length=128)
+    trace_id: str = Field(default="", max_length=128, pattern=r"^[A-Za-z0-9._:-]*$")
     segment: int = Field(default=0, ge=0, le=999)
-    reason: str = Field(default="", max_length=40)
+    reason: str = Field(default="", max_length=40, pattern=r"^[A-Za-z0-9._:-]*$")
 
 
 def create_default_admission_controller() -> AdmissionController:

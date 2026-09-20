@@ -1,3 +1,4 @@
+import { normalizeEndpoint } from "./apiEndpoint.js";
 import { decodeVoiceServerEvent } from "./voiceServerEvents.js";
 import { websocketUrl } from "./voiceProtocol.js";
 
@@ -26,7 +27,7 @@ export async function openVoiceSocket(
   } = {},
 ) {
   if (typeof WebSocketImpl !== "function") throw new Error("voice_socket_unavailable");
-  const socket = new WebSocketImpl(websocketUrl(path, baseUrl));
+  const socket = new WebSocketImpl(websocketUrl(normalizeEndpoint(path), baseUrl));
   socket.binaryType = "arraybuffer";
 
   try {

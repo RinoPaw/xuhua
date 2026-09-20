@@ -67,11 +67,12 @@ function createHarness() {
   };
   const turns = {
     current: "turn-1",
-    ignoredTurns: new Set(),
+    ignoredTurns: new Set(["old-turn"]),
     ignoreActive() { calls.push(["turn.ignore", this.current]); this.current = ""; return true; },
     accept(message) { if (!message?.turn_id) return false; this.current = message.turn_id; return true; },
     setActive(id) { this.current = id; return true; },
     ignore(id) { this.ignoredTurns.add(id); if (this.current === id) this.current = ""; return true; },
+    reset() { this.current = ""; this.ignoredTurns.clear(); calls.push(["turn.reset"]); },
   };
   const transcript = {
     clear(reset) { calls.push(["transcript.clear", reset]); },
@@ -165,6 +166,18 @@ test("browser voice session sends text through one turn transition", () => {
     { type: "text", text: "汴绣是什么" },
   ]);
   assert.equal(harness.machine.turn, "thinking");
+});
+
+test("connection cleanup resets turn identity from the old socket", () => {
+  const harness = createHarness();
+  harness.turns.current = "turn-2";
+  harness.turns.ignoredTurns.add("turn-1");
+
+  harness.session.stop();
+
+  assert.equal(harness.turns.current, "");
+  assert.equal(harness.turns.ignoredTurns.size, 0);
+  assert.equal(harness.calls.some((entry) => entry[0] === "turn.reset"), true);
 });
 
 test("unexpected socket close is cleaned up and reported once", async () => {

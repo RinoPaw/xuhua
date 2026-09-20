@@ -26,7 +26,6 @@ export class VoiceMediaController {
     this.context = null;
     this.source = null;
     this.processor = null;
-    this.muted = false;
     this.generation = 0;
     this.streamGeneration = 0;
   }
@@ -45,7 +44,6 @@ export class VoiceMediaController {
     this.stream = stream;
     this.streamGeneration = generation;
     if (previous && previous !== stream) stopStream(previous);
-    this.applyMuteState();
     return stream;
   }
 
@@ -80,18 +78,6 @@ export class VoiceMediaController {
     this.source = source;
     this.processor = processor;
     return context;
-  }
-
-  applyMuteState() {
-    this.stream?.getAudioTracks?.().forEach((track) => {
-      track.enabled = !this.muted;
-    });
-  }
-
-  setMuted(muted) {
-    this.muted = Boolean(muted);
-    this.applyMuteState();
-    return this.muted;
   }
 
   release(stream) {

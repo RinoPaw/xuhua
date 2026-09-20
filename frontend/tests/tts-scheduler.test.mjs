@@ -139,6 +139,36 @@ test("completion with no generated segment terminates cleanly", () => {
   assert.equal(terminals[0].failed, false);
 });
 
+test("stop aborts pending source preparation and stale resolution cannot create audio", async () => {
+  const audios = [];
+  let resolveSource;
+  let sourceSignal = null;
+  const scheduler = new TtsScheduler({
+    prepareSource: ({ signal }) => {
+      sourceSignal = signal;
+      return new Promise((resolve) => { resolveSource = resolve; });
+    },
+    createAudio: (url) => {
+      const audio = new FakeAudio(url);
+      audios.push(audio);
+      return audio;
+    },
+  });
+
+  scheduler.begin();
+  assert.equal(scheduler.enqueue("不会复活。", { locale: "zh-CN" }), true);
+  assert.equal(audios.length, 0);
+  assert.equal(sourceSignal?.aborted, false);
+
+  scheduler.stop();
+  assert.equal(sourceSignal?.aborted, true);
+  resolveSource("/api/tts/stale-token");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(audios.length, 0);
+  assert.equal(scheduler.segmentCount, 0);
+});
+
 test("retries a failed network TTS segment twice, then falls back without failing the voice session", () => {
   const audio = new FakeAudio("/tts/0");
   const events = [];

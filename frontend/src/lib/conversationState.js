@@ -69,8 +69,16 @@ function appendTurn(state, text, phase) {
 
 function updateRealtimeUserPartial(state, text) {
   const content = String(text || "").trim();
-  if (!content) return state;
   const last = state.messages.at(-1);
+  if (!content) {
+    if (last?.role !== "user" || last.status !== "transcribing") return state;
+    return {
+      ...state,
+      phase: "realtime",
+      error: "",
+      messages: state.messages.slice(0, -1),
+    };
+  }
   if (last?.role === "user" && last.status === "transcribing") {
     return {
       ...state,

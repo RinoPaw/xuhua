@@ -383,6 +383,8 @@ export function useBrowserDuplexVoice({
           voiceInputRef.current.activeUtteranceId = 0;
           const transcript = normalizeVoiceText(message.text);
           if (!transcript) {
+            clearPartialReveal(true);
+            callbacks.current.onUserPartial?.("", message);
             const wasCandidate = bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE;
             if (wasCandidate) clearBargeInCandidate();
             if (!wasCandidate) setStatusValue(REALTIME_VOICE_STATUS.LISTENING);
@@ -469,6 +471,8 @@ export function useBrowserDuplexVoice({
 
         if (message.type === "utterance.rejected") {
           if (!acceptUtteranceMessage(message)) return;
+          clearPartialReveal(true);
+          callbacks.current.onUserPartial?.("", message);
           const wasCandidate = bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE;
           if (wasCandidate) clearBargeInCandidate();
           if (!wasCandidate) setStatusValue(REALTIME_VOICE_STATUS.LISTENING);

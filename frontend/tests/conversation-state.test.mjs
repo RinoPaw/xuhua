@@ -35,6 +35,16 @@ test("realtime partials reuse one transcribing user bubble", () => {
   assert.equal(final.messages[0].status, "complete");
 });
 
+test("an empty realtime partial withdraws only the pending transcription bubble", () => {
+  const partial = conversationReducer(state(), { type: "realtime.user.partial", text: "汴" });
+  const rejected = conversationReducer(partial, { type: "realtime.user.partial", text: "" });
+  assert.deepEqual(rejected.messages, []);
+
+  const complete = conversationReducer(state(), { type: "realtime.user", text: "汴绣" });
+  const untouched = conversationReducer(complete, { type: "realtime.user.partial", text: "" });
+  assert.deepEqual(untouched.messages, complete.messages);
+});
+
 test("a recovered realtime partial clears the previous voice error", () => {
   const first = conversationReducer(state(), { type: "realtime.user.partial", text: "汴" });
   const failed = conversationReducer(first, { type: "error", message: "语音识别暂时不可用" });

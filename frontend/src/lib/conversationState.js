@@ -75,6 +75,7 @@ function updateRealtimeUserPartial(state, text) {
     return {
       ...state,
       phase: "realtime",
+      error: "",
       messages: [...state.messages.slice(0, -1), { ...last, content }],
     };
   }

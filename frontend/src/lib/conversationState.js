@@ -67,6 +67,13 @@ function appendTurn(state, text, phase) {
   };
 }
 
+function discardRealtimeUserPartial(messages) {
+  const last = messages.at(-1);
+  return last?.role === "user" && last.status === "transcribing"
+    ? messages.slice(0, -1)
+    : messages;
+}
+
 function updateRealtimeUserPartial(state, text) {
   const content = String(text || "").trim();
   const last = state.messages.at(-1);
@@ -76,7 +83,7 @@ function updateRealtimeUserPartial(state, text) {
       ...state,
       phase: "realtime",
       error: "",
-      messages: state.messages.slice(0, -1),
+      messages: discardRealtimeUserPartial(state.messages),
     };
   }
   if (last?.role === "user" && last.status === "transcribing") {
@@ -236,7 +243,12 @@ export function conversationReducer(state, action) {
     return { ...state, phase: "realtime", error: "" };
   }
   if (action.type === "error") {
-    return { ...state, phase: "error", error: action.message || "连接暂时不可用" };
+    return {
+      ...state,
+      phase: "error",
+      error: action.message || "连接暂时不可用",
+      messages: discardRealtimeUserPartial(state.messages),
+    };
   }
   if (action.type === "clear.error") {
     return {

@@ -41,6 +41,8 @@ jobs:
       - run: uv run python -m compileall -q src scripts app.py
       - run: npm ci --no-audit --no-fund
         working-directory: frontend
+      - run: npm run lint
+        working-directory: frontend
       - run: npm run build
         working-directory: frontend
       - run: npm test

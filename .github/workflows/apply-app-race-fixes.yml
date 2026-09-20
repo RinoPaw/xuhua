@@ -1,0 +1,50 @@
+name: apply-app-race-fixes
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/apply-app-race-fixes.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch project browser error paths
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("frontend/src/App.jsx")
+          text = path.read_text(encoding="utf-8")
+
+          def replace_once(old: str, new: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"expected one match, got {count}: {old[:100]!r}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              '      if (metaResponse.ok) setMeta(await metaResponse.json());\n      if (categoriesResponse.ok) setCategories(await categoriesResponse.json());\n',
+              '      if (metaResponse.ok) setMeta(await metaResponse.json());\n      else setMeta({ levels: [], capabilities: { realtime_voice: false } });\n      if (categoriesResponse.ok) setCategories(await categoriesResponse.json());\n',
+          )
+          replace_once(
+              '              onBack={() => setSelected(null)}\n',
+              '              onBack={() => {\n                detailAbort.current?.abort();\n                detailAbort.current = null;\n                setDetailLoading(false);\n                setDetailError("");\n                setSelected(null);\n              }}\n',
+          )
+
+          path.write_text(text, encoding="utf-8")
+          PY
+      - name: Commit fixes and remove workflow
+        run: |
+          git config user.name "Rino"
+          git config user.email "71957726+RinoPaw@users.noreply.github.com"
+          git add frontend/src/App.jsx
+          git rm .github/workflows/apply-app-race-fixes.yml
+          git diff --cached --check
+          git commit -m "Fix project browser loading races"
+          git push

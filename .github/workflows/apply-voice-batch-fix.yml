@@ -1,5 +1,6 @@
 name: apply-voice-batch-fix
 
+# One-shot patch workflow; remove after it commits the gateway fix.
 on:
   push:
     branches: [main]

@@ -7,7 +7,9 @@ function normalizeTurnId(value) {
 
 export function websocketUrl(path, baseUrl = globalThis.location?.href || "http://localhost/") {
   const url = new URL(path, baseUrl);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  if (url.protocol === "https:") url.protocol = "wss:";
+  else if (url.protocol === "http:") url.protocol = "ws:";
+  else if (!["ws:", "wss:"].includes(url.protocol)) throw new Error("voice_socket_invalid_scheme");
   return url.toString();
 }
 

@@ -296,7 +296,9 @@ export class BrowserVoiceSession {
 
   sendText(value) {
     const text = String(value || "").trim();
-    if (!text) return false;
+    if (!text || !this.connection.connected) return false;
+    this.transcript.clear(true);
+    this.input.supersedeUtterance();
     this.stopSpeech(true);
     const sent = this.send({ type: "text", text });
     if (sent) this.markThinking();

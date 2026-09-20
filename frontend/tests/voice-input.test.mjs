@@ -6,6 +6,7 @@ import {
   createVoiceInputState,
   processVoiceInputFrame,
   resetVoiceInputPhase,
+  supersedeVoiceUtterance,
 } from "../src/lib/voiceInput.js";
 
 function constantSamples(length, value) {
@@ -93,5 +94,30 @@ test("utterance acceptance and full reset keep server ordering explicit", () => 
   assert.equal(state.latestUtteranceId, 0);
   assert.equal(state.activeUtteranceId, 0);
   assert.equal(state.nextUtteranceId, 0);
+  assert.equal(state.minimumUtteranceId, 1);
   assert.equal(state.resampler, null);
+});
+
+test("superseding input rejects the old utterance and preserves the next server id", () => {
+  const state = createVoiceInputState();
+  state.utteranceActive = true;
+  state.activeUtteranceId = 3;
+  state.latestUtteranceId = 2;
+  state.nextUtteranceId = 3;
+
+  assert.equal(supersedeVoiceUtterance(state), 4);
+  assert.equal(state.utteranceActive, false);
+  assert.equal(state.minimumUtteranceId, 4);
+  assert.equal(acceptVoiceUtteranceMessage(state, { utterance_id: 3 }), false);
+
+  const next = processVoiceInputFrame(state, {
+    samples: constantSamples(960, 0.1),
+    inputRate: 16000,
+    now: 2000,
+    transportReady: true,
+    agentBusy: false,
+  });
+  assert.equal(next.started?.utteranceId, 4);
+  assert.equal(state.activeUtteranceId, 4);
+  assert.equal(acceptVoiceUtteranceMessage(state, { utterance_id: 4 }), true);
 });

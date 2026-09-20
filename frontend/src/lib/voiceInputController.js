@@ -9,6 +9,7 @@ import {
   processVoiceInputFrame,
   resetVoiceInputPhase,
   resetVoiceOnset,
+  supersedeVoiceUtterance,
 } from "./voiceInput.js";
 
 function defaultNow() {
@@ -35,6 +36,12 @@ export class VoiceInputController {
 
   reset({ resetIds = true, discardResampler = true } = {}) {
     resetVoiceInputPhase(this.state, { resetIds, discardResampler });
+    this.clearBargeInCandidate();
+    return this.state;
+  }
+
+  supersedeUtterance() {
+    supersedeVoiceUtterance(this.state);
     this.clearBargeInCandidate();
     return this.state;
   }

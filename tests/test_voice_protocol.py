@@ -22,6 +22,13 @@ def test_decode_utterance_start_returns_typed_command() -> None:
     )
 
 
+def test_utterance_metrics_accept_only_finite_json_numbers() -> None:
+    command = decode_voice_command(
+        '{"type":"utterance.start","level":"0.31","threshold":true}'
+    )
+    assert command == UtteranceStartCommand(level=None, threshold=None)
+
+
 def test_context_command_canonicalizes_browser_aliases() -> None:
     command = decode_voice_command(
         '{"type":"context","session_id":"abc","category":"传统美术",'

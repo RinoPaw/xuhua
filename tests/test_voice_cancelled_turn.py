@@ -25,6 +25,10 @@ def make_kb() -> KnowledgeBase:
 
 
 class CancelledAssistant:
+    def __init__(self) -> None:
+        self.search = SearchService(make_kb())
+        self.sessions = SessionStore()
+
     async def stream_turn(
         self,
         question: str,
@@ -61,12 +65,7 @@ def test_cancelled_voice_turn_is_forwarded_to_browser(monkeypatch) -> None:
     monkeypatch.setattr(api_module, "XF_API_SECRET", "test-secret")
     monkeypatch.setattr(api_module, "XF_ASR_HOST", "iat.xf-yun.com")
 
-    search = SearchService(make_kb())
-    app = create_app(
-        assistant=CancelledAssistant(),  # type: ignore[arg-type]
-        search=search,
-        sessions=SessionStore(),
-    )
+    app = create_app(assistant=CancelledAssistant())  # type: ignore[arg-type]
 
     with TestClient(app) as client:
         with client.websocket_connect("/api/voice") as websocket:

@@ -75,7 +75,6 @@ jobs:
             -e XF_API_KEY= \
             -e XF_API_SECRET= \
             -e XF_ASR_HOST=iat.xf-yun.com \
-            -e RENDER=true \
             -e WEB_CONCURRENCY=4 \
             xuhua:verify
           trap 'docker rm -f xuhua-verify >/dev/null 2>&1 || true' EXIT

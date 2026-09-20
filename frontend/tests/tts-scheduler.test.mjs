@@ -169,6 +169,44 @@ test("stop aborts pending source preparation and stale resolution cannot create 
   assert.equal(scheduler.segmentCount, 0);
 });
 
+test("second source may resolve first but playback order remains stable", async () => {
+  const resolvers = [];
+  const audios = [];
+  const scheduler = new TtsScheduler({
+    prepareSource: ({ segment }) => new Promise((resolve) => { resolvers[segment] = resolve; }),
+    createAudio: (url) => {
+      const audio = new FakeAudio(url);
+      audios.push(audio);
+      return audio;
+    },
+  });
+
+  scheduler.begin();
+  scheduler.enqueue("第一句。", { locale: "zh-CN" });
+  scheduler.enqueue("第二句。", { locale: "zh-CN" });
+  scheduler.complete();
+
+  resolvers[1]("/api/tts/token-1");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(audios.length, 1);
+  assert.equal(audios[0].url, "/api/tts/token-1");
+  assert.equal(audios[0].playCalls, 0);
+  assert.equal(audios[0].loadCalls, 1);
+
+  resolvers[0]("/api/tts/token-0");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(audios.length, 2);
+  const first = audios.find((audio) => audio.url.endsWith("token-0"));
+  const second = audios.find((audio) => audio.url.endsWith("token-1"));
+  assert.equal(first.playCalls, 1);
+  assert.equal(second.playCalls, 0);
+
+  first.emit("ended");
+  assert.equal(second.playCalls, 1);
+  second.emit("ended");
+  assert.equal(scheduler.segmentCount, 0);
+});
+
 test("retries a failed network TTS segment twice, then falls back without failing the voice session", () => {
   const audio = new FakeAudio("/tts/0");
   const events = [];

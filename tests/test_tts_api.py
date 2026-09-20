@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi.testclient import TestClient
+import httpx
 
 import heritage_explorer.api as api_module
 from heritage_explorer.admission import AdmissionController, AdmissionPolicy
@@ -105,3 +108,52 @@ def test_invalid_tts_token_does_not_spend_synthesis_rate_budget(monkeypatch) -> 
         assert replay.headers["retry-after"] == "60"
 
     assert [call["text"] for call in _FakeCommunicate.calls] == ["汴绣"]
+
+
+def test_tts_holds_synthesis_capacity_for_the_full_stream(monkeypatch) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    class BlockingCommunicate:
+        def __init__(self, _text: str, **_kwargs: str) -> None:
+            pass
+
+        async def stream(self):
+            started.set()
+            yield {"type": "audio", "data": b"first"}
+            await release.wait()
+            yield {"type": "audio", "data": b"second"}
+
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", BlockingCommunicate)
+    admission = AdmissionController(
+        {
+            "tts_ticket": AdmissionPolicy(1, 10, 10),
+            "tts": AdmissionPolicy(1, 10, 10),
+        }
+    )
+    app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
+
+    async def scenario() -> None:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            first_ticket = await client.post("/api/tts", json={"text": "第一段"})
+            second_ticket = await client.post("/api/tts", json={"text": "第二段"})
+            first_path = f"/api/tts/{first_ticket.json()['token']}"
+            second_path = f"/api/tts/{second_ticket.json()['token']}"
+
+            first = asyncio.create_task(client.get(first_path))
+            await asyncio.wait_for(started.wait(), timeout=1)
+
+            second = await client.get(second_path)
+            assert second.status_code == 503
+            assert second.json()["detail"] == "tts_capacity"
+
+            release.set()
+            first_response = await asyncio.wait_for(first, timeout=1)
+            assert first_response.status_code == 200
+            assert first_response.content == b"firstsecond"
+
+            third = await client.get(second_path)
+            assert third.status_code == 200
+
+    asyncio.run(scenario())

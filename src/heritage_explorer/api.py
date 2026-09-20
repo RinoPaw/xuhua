@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 from .admission import AdmissionController, AdmissionMiddleware, AdmissionPolicy
-from .assistant import AssistantService, SearchService
+from .assistant import AssistantService
 from .asr_normalization import normalize_asr_final, prepare_asr_normalization
 from .config import (
     CHAT_MAX_CONCURRENCY,
@@ -37,7 +37,6 @@ from .config import (
 )
 from .dataset import item_to_dict
 from .language import detect_locale, get_language_profile, normalize_locale_hint
-from .sessions import SessionStore
 from .voice import XfyunStream
 from .voice_transport import register_voice_route
 
@@ -82,32 +81,9 @@ def create_default_admission_controller() -> AdmissionController:
 def create_app(
     *,
     assistant: AssistantService | None = None,
-    search: SearchService | None = None,
-    sessions: SessionStore | None = None,
     admission: AdmissionController | None = None,
 ) -> FastAPI:
-    if assistant is None:
-        owned_search = search or SearchService()
-        owned_sessions = sessions or SessionStore()
-        assistant = AssistantService(search=owned_search, sessions=owned_sessions)
-    else:
-        owned_search = getattr(assistant, "search", None)
-        owned_sessions = getattr(assistant, "sessions", None)
-        if owned_search is None:
-            if search is None:
-                raise ValueError("assistant must own its search service")
-            assistant.search = search
-            owned_search = search
-        elif search is not None and search is not owned_search:
-            raise ValueError("search must be the assistant-owned search service")
-        if owned_sessions is None:
-            if sessions is None:
-                raise ValueError("assistant must own its session store")
-            assistant.sessions = sessions
-            owned_sessions = sessions
-        elif sessions is not None and sessions is not owned_sessions:
-            raise ValueError("sessions must be the assistant-owned session store")
-
+    assistant = assistant or AssistantService()
     search = assistant.search
     sessions = assistant.sessions
     admission = admission or create_default_admission_controller()

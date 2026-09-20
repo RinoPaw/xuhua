@@ -112,7 +112,6 @@ class AdmissionController:
         client_id: object,
         *,
         hold_concurrency: bool,
-        charge_rate: bool,
     ) -> None:
         policy = self._policies.get(service)
         if policy is None:
@@ -124,45 +123,37 @@ class AdmissionController:
             if hold_concurrency and self._active[service] >= policy.max_concurrency:
                 raise AdmissionDenied(service, "capacity", 1)
 
-            if charge_rate:
-                global_bucket = self._global_usage[service]
-                self._trim(global_bucket, now)
-                if len(global_bucket) >= policy.max_per_minute:
-                    raise AdmissionDenied(
-                        service,
-                        "global_rate",
-                        self._retry_after(global_bucket, now),
-                    )
+            global_bucket = self._global_usage[service]
+            self._trim(global_bucket, now)
+            if len(global_bucket) >= policy.max_per_minute:
+                raise AdmissionDenied(
+                    service,
+                    "global_rate",
+                    self._retry_after(global_bucket, now),
+                )
 
-                client_bucket = self._client_usage.setdefault((service, client_key), deque())
-                self._trim(client_bucket, now)
-                if len(client_bucket) >= policy.max_per_client_per_minute:
-                    raise AdmissionDenied(
-                        service,
-                        "client_rate",
-                        self._retry_after(client_bucket, now),
-                    )
+            client_bucket = self._client_usage.setdefault((service, client_key), deque())
+            self._trim(client_bucket, now)
+            if len(client_bucket) >= policy.max_per_client_per_minute:
+                raise AdmissionDenied(
+                    service,
+                    "client_rate",
+                    self._retry_after(client_bucket, now),
+                )
 
-                global_bucket.append(now)
-                client_bucket.append(now)
-                self._prune_clients(now)
-
+            global_bucket.append(now)
+            client_bucket.append(now)
             if hold_concurrency:
                 self._active[service] += 1
+            self._prune_clients(now)
 
     async def acquire(self, service: str, client_id: object = "unknown") -> AdmissionLease:
-        """Charge rate budgets and reserve one concurrency slot."""
-        await self._admit(service, client_id, hold_concurrency=True, charge_rate=True)
+        await self._admit(service, client_id, hold_concurrency=True)
         return AdmissionLease(self, service)
 
     async def charge(self, service: str, client_id: object = "unknown") -> None:
         """Charge rolling-rate budgets without reserving a concurrency slot."""
-        await self._admit(service, client_id, hold_concurrency=False, charge_rate=True)
-
-    async def reserve(self, service: str) -> AdmissionLease:
-        """Reserve concurrency without charging rolling-rate budgets again."""
-        await self._admit(service, "", hold_concurrency=True, charge_rate=False)
-        return AdmissionLease(self, service)
+        await self._admit(service, client_id, hold_concurrency=False)
 
     async def _release(self, service: str) -> None:
         async with self._lock:
@@ -183,14 +174,14 @@ def client_key_from_scope(scope: Mapping[str, Any]) -> str:
 
 
 class AdmissionMiddleware:
-    """Hold concurrency only for expensive lifetimes; rate-charge cheap setup requests."""
+    """Hold concurrency for expensive lifetimes; rate-charge cheap setup requests."""
 
     ROUTES = {
         ("http", "POST", "/api/chat"): "chat",
         ("websocket", "", "/api/voice"): "voice",
     }
     RATE_ONLY_ROUTES = {
-        ("http", "POST", "/api/tts"): "tts",
+        ("http", "POST", "/api/tts"): "tts_ticket",
     }
 
     def __init__(self, app: Any, *, controller: AdmissionController) -> None:
@@ -205,14 +196,10 @@ class AdmissionMiddleware:
         return scope_type, method, path
 
     @classmethod
-    def is_tts_stream(cls, scope: Mapping[str, Any]) -> bool:
-        scope_type, method, path = cls.route_key(scope)
-        return scope_type == "http" and method == "GET" and path.startswith("/api/tts/")
-
-    @classmethod
     def service_for_scope(cls, scope: Mapping[str, Any]) -> str | None:
         key = cls.route_key(scope)
-        if cls.is_tts_stream(scope):
+        scope_type, method, path = key
+        if scope_type == "http" and method == "GET" and path.startswith("/api/tts/"):
             return "tts"
         return cls.ROUTES.get(key) or cls.RATE_ONLY_ROUTES.get(key)
 
@@ -252,11 +239,7 @@ class AdmissionMiddleware:
             return
 
         try:
-            lease = (
-                await self.controller.reserve(service)
-                if self.is_tts_stream(scope)
-                else await self.controller.acquire(service, client_id)
-            )
+            lease = await self.controller.acquire(service, client_id)
         except AdmissionDenied as exc:
             await self.reject(scope, send, exc)
             return

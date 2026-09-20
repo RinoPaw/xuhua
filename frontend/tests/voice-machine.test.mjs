@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createVoiceMachineState,
   deriveVoiceStatus,
+  isVoiceAssistantPending,
   REALTIME_VOICE_STATUS,
   reduceVoiceMachine,
   voiceActionsForServerStatus,
@@ -33,6 +34,25 @@ test("voice machine derives display status from orthogonal phases", () => {
 
   state = reduceVoiceMachine(state, { type: "input.speaking" });
   assert.equal(deriveVoiceStatus(state), REALTIME_VOICE_STATUS.USER_SPEAKING);
+});
+
+
+test("assistant activity is derived from turn and output phases", () => {
+  let state = {
+    ...createVoiceMachineState(),
+    transport: VOICE_TRANSPORT_PHASE.CONNECTED,
+  };
+  assert.equal(isVoiceAssistantPending(state), false);
+
+  state = reduceVoiceMachine(state, { type: "turn.thinking" });
+  assert.equal(isVoiceAssistantPending(state), true);
+
+  state = reduceVoiceMachine(state, { type: "turn.idle" });
+  state = reduceVoiceMachine(state, { type: "output.pending" });
+  assert.equal(isVoiceAssistantPending(state), true);
+
+  state = reduceVoiceMachine(state, { type: "output.idle" });
+  assert.equal(isVoiceAssistantPending(state), false);
 });
 
 

@@ -103,6 +103,12 @@ export function voiceActionsForServerStatus(status) {
   }
 }
 
+export function isVoiceAssistantPending(state) {
+  const current = state || createVoiceMachineState();
+  return current.turn !== VOICE_TURN_PHASE.IDLE
+    || current.output !== VOICE_OUTPUT_PHASE.IDLE;
+}
+
 export function deriveVoiceStatus(state) {
   const current = state || createVoiceMachineState();
   if (current.fault) return REALTIME_VOICE_STATUS.ERROR;

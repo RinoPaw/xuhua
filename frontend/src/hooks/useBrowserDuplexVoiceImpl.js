@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deriveVoiceStatus,
+  isVoiceAssistantPending,
   normalizeVoiceId,
   normalizeVoiceText,
   REALTIME_VOICE_STATUS,
@@ -82,7 +83,6 @@ export function useBrowserDuplexVoice({
   const voiceOutputRef = useRef(null);
   const mutedRef = useRef(false);
   const inputBlockedUntilRef = useRef(0);
-  const assistantPendingRef = useRef(false);
   const bargeInRef = useRef(createBargeInState());
   const assistantTurnRef = useRef("");
   const ignoredAssistantTurnsRef = useRef(new Set());
@@ -148,10 +148,10 @@ export function useBrowserDuplexVoice({
   const settleListening = useCallback(() => {
     if (voiceInputRef.current.utteranceActive
       || voiceOutputRef.current?.pipelineActive
-      || assistantPendingRef.current) return false;
+      || isVoiceAssistantPending(voiceMachineRef.current)) return false;
     dispatchMany(voiceActionsForServerStatus(REALTIME_VOICE_STATUS.LISTENING));
     return true;
-  }, [dispatchMany]);
+  }, [dispatchMany, voiceMachineRef]);
 
   const markThinking = useCallback(() => {
     dispatchMany([
@@ -205,7 +205,6 @@ export function useBrowserDuplexVoice({
         }
       },
       onTerminal: ({ failed }) => {
-        assistantPendingRef.current = false;
         inputBlockedUntilRef.current = performance.now() + 450;
         settleListening();
         if (failed) reportError("speech_output_failed");
@@ -234,7 +233,6 @@ export function useBrowserDuplexVoice({
     rememberIgnoredTurn(ignoredAssistantTurnsRef.current, assistantTurnRef.current);
     assistantTurnRef.current = "";
     voiceOutputRef.current?.stop();
-    assistantPendingRef.current = false;
     dispatchMany([
       { type: "output.idle" },
       { type: "turn.idle" },
@@ -258,7 +256,7 @@ export function useBrowserDuplexVoice({
   const beginBargeInCandidate = useCallback((utteranceId, startedAt) => {
     if (bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE) return false;
     if (!voiceOutputRef.current?.pipelineActive
-      && !assistantPendingRef.current
+      && !isVoiceAssistantPending(voiceMachineRef.current)
       && !voiceOutputRef.current?.playing) return false;
     bargeInRef.current = makeBargeInCandidate(
       bargeInRef.current,
@@ -266,10 +264,9 @@ export function useBrowserDuplexVoice({
       startedAt,
     );
     return true;
-  }, []);
+  }, [voiceMachineRef]);
 
   const beginSpeechStream = useCallback((locale = "") => {
-    assistantPendingRef.current = true;
     dispatchMany([
       { type: "input.idle" },
       { type: "turn.thinking" },
@@ -312,7 +309,11 @@ export function useBrowserDuplexVoice({
       blockedUntil: inputBlockedUntilRef.current,
       transportReady: Boolean(socket && socket.readyState === WebSocket.OPEN),
       playbackActive: Boolean(output?.playing),
-      agentBusy: Boolean(output?.pipelineActive || assistantPendingRef.current || output?.playing),
+      agentBusy: Boolean(
+        output?.pipelineActive
+        || isVoiceAssistantPending(voiceMachineRef.current)
+        || output?.playing
+      ),
       bargeInTentative: bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE,
     });
 
@@ -335,7 +336,7 @@ export function useBrowserDuplexVoice({
     if (!result.started && result.nextStatus === "transcribing") {
       dispatchVoice({ type: "input.transcribing" });
     }
-  }, [beginBargeInCandidate, dispatchVoice]);
+  }, [beginBargeInCandidate, dispatchVoice, voiceMachineRef]);
 
   const cleanup = useCallback(() => {
     transportGenerationRef.current += 1;
@@ -404,7 +405,7 @@ export function useBrowserDuplexVoice({
             currentStatus: deriveVoiceStatus(voiceMachineRef.current),
             bargeInTentative: bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE,
             activeTurn: assistantTurnRef.current,
-            assistantPending: assistantPendingRef.current,
+            assistantPending: isVoiceAssistantPending(voiceMachineRef.current),
             ignoredTurns: ignoredAssistantTurnsRef.current,
             speechPipeline: Boolean(voiceOutputRef.current?.pipelineActive),
             speechActive: Boolean(voiceOutputRef.current?.playing),
@@ -436,7 +437,6 @@ export function useBrowserDuplexVoice({
             rememberIgnoredTurn(ignoredAssistantTurnsRef.current, assistantTurnRef.current);
             assistantTurnRef.current = "";
           }
-          assistantPendingRef.current = true;
           markThinking();
           publishUserTranscript(message, transcript);
           return;
@@ -484,7 +484,6 @@ export function useBrowserDuplexVoice({
             message.text || "",
             { done: true, locale },
           );
-          assistantPendingRef.current = false;
           finishSpeechStream(message.text || "", locale);
           const turnId = normalizeVoiceId(message.turn_id);
           if (turnId) {
@@ -530,7 +529,7 @@ export function useBrowserDuplexVoice({
         if (message.type === "error") {
           if (!acceptServerVoiceError(message, {
             activeTurn: assistantTurnRef.current,
-            assistantPending: assistantPendingRef.current,
+            assistantPending: isVoiceAssistantPending(voiceMachineRef.current),
             ignoredTurns: ignoredAssistantTurnsRef.current,
           })) return;
           stopSpeech(false, false);
@@ -614,10 +613,7 @@ export function useBrowserDuplexVoice({
     if (!text) return false;
     stopSpeech(true);
     const sent = send({ type: "text", text });
-    if (sent) {
-      assistantPendingRef.current = true;
-      markThinking();
-    }
+    if (sent) markThinking();
     return sent;
   }, [markThinking, send, stopSpeech]);
 

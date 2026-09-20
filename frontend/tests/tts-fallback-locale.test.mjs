@@ -22,6 +22,7 @@ test("network TTS fallback preserves the resolved speech locale", () => {
   const timers = [];
   let fallbackOptions = null;
   const scheduler = new TtsScheduler({
+    prepareSource: () => "/api/tts/private-token",
     createAudio: () => audio,
     scheduleRetry: (callback) => {
       timers.push(callback);
@@ -35,10 +36,7 @@ test("network TTS fallback preserves the resolved speech locale", () => {
   });
 
   scheduler.begin();
-  scheduler.enqueue("粤剧历史悠久。", {
-    url: "/api/tts/private-token",
-    locale: "yue-HK",
-  });
+  scheduler.enqueue("粤剧历史悠久。", { locale: "yue-HK" });
   scheduler.complete();
 
   audio.fail();

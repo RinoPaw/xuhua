@@ -29,6 +29,7 @@ export function createVoiceInputState() {
     latestUtteranceId: 0,
     activeUtteranceId: 0,
     nextUtteranceId: 0,
+    minimumUtteranceId: 1,
   };
 }
 
@@ -44,8 +45,23 @@ export function resetVoiceInputPhase(state, { resetIds = false, discardResampler
     state.latestUtteranceId = 0;
     state.activeUtteranceId = 0;
     state.nextUtteranceId = 0;
+    state.minimumUtteranceId = 1;
   }
   return state;
+}
+
+export function supersedeVoiceUtterance(state) {
+  const lastIssued = Math.max(
+    Number(state.latestUtteranceId) || 0,
+    Number(state.activeUtteranceId) || 0,
+    Number(state.nextUtteranceId) || 0,
+    (Number(state.minimumUtteranceId) || 1) - 1,
+  );
+  resetVoiceInputPhase(state);
+  state.nextUtteranceId = lastIssued;
+  state.activeUtteranceId = 0;
+  state.minimumUtteranceId = lastIssued + 1;
+  return state.minimumUtteranceId;
 }
 
 export function resetVoiceOnset(state) {
@@ -57,6 +73,7 @@ export function resetVoiceOnset(state) {
 export function acceptVoiceUtteranceMessage(state, message, { required = true } = {}) {
   const id = normalizeUtteranceId(message?.utterance_id);
   if (!id) return !required;
+  if (id < (Number(state.minimumUtteranceId) || 1)) return false;
   if (!shouldAcceptUtteranceEvent(id, state.latestUtteranceId, state.activeUtteranceId)) {
     return false;
   }
@@ -132,7 +149,11 @@ export function processVoiceInputFrame(state, {
   }
 
   if (!state.utteranceActive && state.gate.onset) {
-    const utteranceId = Math.max(state.nextUtteranceId, state.latestUtteranceId) + 1;
+    const utteranceId = Math.max(
+      state.nextUtteranceId,
+      state.latestUtteranceId,
+      state.minimumUtteranceId - 1,
+    ) + 1;
     state.nextUtteranceId = utteranceId;
     state.activeUtteranceId = utteranceId;
     actions.push({

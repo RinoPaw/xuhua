@@ -158,7 +158,7 @@ export class BrowserVoiceSession {
 
   syncRecognitionContext(context = this.getRecognitionContext()) {
     if (!this.connection.connected) return false;
-    return this.sendRecognitionContext(context);
+    return this.sendRecognitionContext(context) || this.handleTransportFailure();
   }
 
   clearBargeInCandidate() {
@@ -175,16 +175,18 @@ export class BrowserVoiceSession {
     ]);
     if (bargeIn) this.input.unblock();
     else this.input.blockFor(450);
+    let sent = true;
     if (bargeIn) {
-      if (notifyServer) this.send({ type: "barge_in" });
+      if (notifyServer) sent = this.send({ type: "barge_in" });
       this.getCallbacks()?.onBargeIn?.();
     }
+    if (!sent) return this.handleTransportFailure();
     return true;
   }
 
   confirmBargeInFromAsr() {
     if (!this.input.confirmBargeInCandidate()) return false;
-    this.stopSpeech(true, true);
+    if (!this.stopSpeech(true, true)) return false;
     this.dispatchVoice({ type: "input.speaking" });
     return true;
   }
@@ -311,7 +313,7 @@ export class BrowserVoiceSession {
     const text = String(value || "").trim();
     if (!text || !this.connection.connected) return false;
     const sent = this.send({ type: "text", text });
-    if (!sent) return false;
+    if (!sent) return this.handleTransportFailure();
     this.transcript.clear(true);
     this.input.supersedeUtterance();
     this.stopSpeech(true, false);

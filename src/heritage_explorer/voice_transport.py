@@ -1,10 +1,10 @@
-"""WebSocket transport for typed realtime voice commands."""
+"""WebSocket transport for typed realtime voice commands and server events."""
 
 from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
@@ -13,6 +13,12 @@ from .asr_normalization import NormalizedTranscript
 from .dataset import KnowledgeBase
 from .sessions import SessionStore
 from .voice import XfyunStream
+from .voice_events import (
+    ReadyEvent,
+    VoiceServerEvent,
+    encode_voice_event,
+    voice_event_from_payload,
+)
 from .voice_protocol import VoiceCommand, decode_voice_command
 from .voice_session import VoiceSessionRuntime
 
@@ -26,7 +32,8 @@ class VoiceWebSocketChannel:
         self.sequence = 0
         self.send_lock = asyncio.Lock()
 
-    async def emit(self, payload: dict[str, Any]) -> None:
+    async def emit(self, event: VoiceServerEvent) -> None:
+        payload = encode_voice_event(event)
         try:
             async with self.send_lock:
                 self.sequence += 1
@@ -40,6 +47,11 @@ class VoiceWebSocketChannel:
         except (RuntimeError, WebSocketDisconnect):
             pass
 
+    async def emit_payload(self, payload: Mapping[str, Any]) -> None:
+        """Temporary adapter while runtime call sites migrate to VoiceServerEvent."""
+
+        await self.emit(voice_event_from_payload(payload))
+
 
 async def dispatch_voice_command(runtime: VoiceSessionRuntime, command: VoiceCommand) -> None:
     await runtime.handle_command(command)
@@ -47,12 +59,13 @@ async def dispatch_voice_command(runtime: VoiceSessionRuntime, command: VoiceCom
 
 async def run_voice_transport(
     websocket: WebSocket,
+    channel: VoiceWebSocketChannel,
     runtime: VoiceSessionRuntime,
 ) -> None:
     """Receive frames, decode commands, and delegate all state to the runtime."""
 
     try:
-        await runtime.send({"type": "ready"})
+        await channel.emit(ReadyEvent())
         while True:
             message = await websocket.receive()
             if message.get("type") == "websocket.disconnect":
@@ -100,7 +113,7 @@ def register_voice_route(
         await websocket.accept()
         channel = VoiceWebSocketChannel(websocket)
         runtime = VoiceSessionRuntime(
-            emit=channel.emit,
+            emit=channel.emit_payload,
             connection_id=channel.connection_id,
             assistant=assistant,
             sessions=sessions,
@@ -113,7 +126,7 @@ def register_voice_route(
             normalize_final=normalize_final,
             max_session_id_chars=max_session_id_chars,
         )
-        await run_voice_transport(websocket, runtime)
+        await run_voice_transport(websocket, channel, runtime)
 
 
 __all__ = [

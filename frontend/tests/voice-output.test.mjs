@@ -70,21 +70,27 @@ test("finish uses fallback when no segment was produced", () => {
   assert.equal(enqueue[2].reason, "text_complete");
 });
 
-test("scheduler callbacks update controller lifecycle", () => {
+test("scheduler terminal clears controller turn state", () => {
   const harness = makeSchedulerHarness();
   const playing = [];
   const terminal = [];
   const controller = new VoiceOutputController({
+    getRecognitionContext: () => ({ localeHint: "en-US" }),
     createScheduler: (options) => harness.createScheduler(options),
+    createTraceId: () => "trace-terminal",
     onPlayingChange: (value) => playing.push(value),
     onTerminal: (value) => terminal.push(value),
   });
   controller.begin();
+  controller.append("Pending text");
   harness.options.onPlayingChange(true);
   assert.equal(controller.playing, true);
+  assert.equal(controller.traceId, "trace-terminal");
   harness.options.onTerminal({ failed: false });
   assert.equal(controller.pipelineActive, false);
   assert.equal(controller.playing, false);
+  assert.equal(controller.traceId, "");
+  assert.equal(controller.locale, "zh-CN");
   assert.deepEqual(playing, [true]);
   assert.deepEqual(terminal, [{ failed: false }]);
 });
@@ -93,11 +99,13 @@ test("stop clears pipeline state and resets text plan", () => {
   const harness = makeSchedulerHarness();
   const controller = new VoiceOutputController({
     createScheduler: (options) => harness.createScheduler(options),
+    createTraceId: () => "trace-stop",
   });
   controller.begin();
   controller.append("未完成");
   controller.stop();
   assert.equal(controller.pipelineActive, false);
   assert.equal(controller.playing, false);
+  assert.equal(controller.traceId, "");
   assert.equal(harness.calls.at(-1)[0], "stop");
 });

@@ -73,6 +73,11 @@ class TtsRequest(BaseModel):
 
 
 def create_default_admission_controller() -> AdmissionController:
+    tts_policy = AdmissionPolicy(
+        TTS_MAX_CONCURRENCY,
+        TTS_MAX_PER_MINUTE,
+        TTS_MAX_PER_CLIENT_PER_MINUTE,
+    )
     return AdmissionController(
         {
             "chat": AdmissionPolicy(
@@ -80,11 +85,8 @@ def create_default_admission_controller() -> AdmissionController:
                 CHAT_MAX_PER_MINUTE,
                 CHAT_MAX_PER_CLIENT_PER_MINUTE,
             ),
-            "tts": AdmissionPolicy(
-                TTS_MAX_CONCURRENCY,
-                TTS_MAX_PER_MINUTE,
-                TTS_MAX_PER_CLIENT_PER_MINUTE,
-            ),
+            "tts_ticket": tts_policy,
+            "tts": tts_policy,
             "voice": AdmissionPolicy(
                 VOICE_MAX_CONCURRENCY,
                 VOICE_MAX_PER_MINUTE,

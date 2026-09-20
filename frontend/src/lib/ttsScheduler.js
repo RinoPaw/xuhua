@@ -196,12 +196,7 @@ export class TtsScheduler {
   complete() {
     if (this.terminal) return false;
     this.completed = true;
-    if (!this.entries.size) {
-      this.terminal = true;
-      this.setPlaying(false);
-      callSafely(this.onTerminal, { generation: this.activeGeneration, failed: false });
-      return true;
-    }
+    if (!this.entries.size) return this.finishSuccessfully();
     this.maybeFinish();
     return true;
   }
@@ -319,13 +314,23 @@ export class TtsScheduler {
     this.maybeFinish();
   }
 
+  finishSuccessfully() {
+    if (this.terminal) return false;
+    const generation = this.activeGeneration;
+    this.terminal = true;
+    for (const entry of this.entries.values()) this.release(entry);
+    this.entries.clear();
+    this.current = null;
+    this.setPlaying(false);
+    callSafely(this.onTerminal, { generation, failed: false });
+    return true;
+  }
+
   maybeFinish() {
     if (this.terminal || !this.completed || this.current || !this.entries.size) return;
     const allEnded = [...this.entries.values()].every((entry) => entry.ended);
     if (!allEnded) return;
-    this.terminal = true;
-    this.setPlaying(false);
-    callSafely(this.onTerminal, { generation: this.activeGeneration, failed: false });
+    this.finishSuccessfully();
   }
 
   handleAudioError(entry, reason) {

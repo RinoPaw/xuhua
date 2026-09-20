@@ -332,8 +332,7 @@ class AssistantService:
                         text_chars,
                     )
                 except asyncio.CancelledError:
-                    yield sequence.make("turn.cancelled", reason="transport_closed")
-                    return
+                    raise
                 except _LLMFirstTokenTimeout as exc:
                     LOGGER.error(
                         "[trace=%s turn=%s] llm.failed code=llm_first_token_timeout attempts=%s",

@@ -153,7 +153,8 @@ class AssistantService:
             yield sequence.make("turn.started", question=question, locale=locale)
             if cancel_event.is_set():
                 yield sequence.make(
-                    "turn.cancelled", reason=self._cancel_reason(session.session_id, turn_id)
+                    "turn.cancelled",
+                    reason=self._cancel_reason(session.session_id, turn_id, cancel_event),
                 )
                 return
 
@@ -168,6 +169,7 @@ class AssistantService:
                         source_ids=(),
                         locale=locale,
                     ),
+                    cancel_event,
                 )
                 yield sequence.make("response.text.delta", delta=answer, locale=locale)
                 yield sequence.make("response.sources", sources=[])
@@ -242,7 +244,8 @@ class AssistantService:
             )
             if cancel_event.is_set():
                 yield sequence.make(
-                    "turn.cancelled", reason=self._cancel_reason(session.session_id, turn_id)
+                    "turn.cancelled",
+                    reason=self._cancel_reason(session.session_id, turn_id, cancel_event),
                 )
                 return
 
@@ -312,7 +315,8 @@ class AssistantService:
 
                     if cancel_event.is_set():
                         yield sequence.make(
-                            "turn.cancelled", reason=self._cancel_reason(session.session_id, turn_id)
+                            "turn.cancelled",
+                            reason=self._cancel_reason(session.session_id, turn_id, cancel_event),
                         )
                         return
                     LOGGER.info(
@@ -359,7 +363,8 @@ class AssistantService:
 
             if cancel_event.is_set():
                 yield sequence.make(
-                    "turn.cancelled", reason=self._cancel_reason(session.session_id, turn_id)
+                    "turn.cancelled",
+                    reason=self._cancel_reason(session.session_id, turn_id, cancel_event),
                 )
                 return
 
@@ -381,6 +386,7 @@ class AssistantService:
                     source_ids=source_ids,
                     locale=locale,
                 ),
+                cancel_event,
             )
             source_payload = [item_to_dict(item) for item in source_items]
             yield sequence.make("response.sources", sources=source_payload)
@@ -401,8 +407,15 @@ class AssistantService:
         finally:
             self.sessions.finish_turn(session.session_id, turn_id, cancel_event)
 
-    def _cancel_reason(self, session_id: str, turn_id: str) -> str:
-        return self.sessions.cancel_reason(session_id, turn_id) or "client_cancelled"
+    def _cancel_reason(
+        self,
+        session_id: str,
+        turn_id: str,
+        cancel_event: asyncio.Event,
+    ) -> str:
+        return (
+            self.sessions.cancel_reason(session_id, turn_id, cancel_event) or "client_cancelled"
+        )
 
     def _candidate_limit(self, question: str, category: str = "") -> int:
         return candidate_limit(self.search, question, category, self.max_candidates)

@@ -59,3 +59,38 @@ def test_superseding_turn_closes_blocked_provider_stream() -> None:
         assert [turn.turn_id for turn in store.history("session")] == ["second"]
 
     asyncio.run(scenario())
+
+
+def test_transport_task_cancellation_propagates_and_releases_turn() -> None:
+    async def scenario() -> None:
+        llm = FirstCallBlocks()
+        store = SessionStore()
+        service = AssistantService(search=EmptySearch(), sessions=store, llm=llm)
+
+        async def collect():
+            return [
+                event
+                async for event in service.stream_turn(
+                    "会被断开的请求",
+                    session_id="session",
+                    turn_id="transport-turn",
+                )
+            ]
+
+        task = asyncio.create_task(collect())
+        await asyncio.wait_for(llm.first_started.wait(), timeout=1)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        else:
+            raise AssertionError("transport cancellation must propagate")
+
+        assert llm.first_closed.is_set()
+        session = store.get("session")
+        assert session is not None
+        assert session.active_turns == {}
+        assert store.history("session") == []
+
+    asyncio.run(scenario())

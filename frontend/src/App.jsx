@@ -11,11 +11,7 @@ import {
   VoiceStatusRow,
 } from "./components/VoiceControls.jsx";
 import { REALTIME_VOICE_STATUS, useVoiceConversation } from "./hooks/useVoiceConversation.js";
-import {
-  cancelTurnBestEffort,
-  isTerminalTurnEvent,
-  nextActiveTurnId,
-} from "./lib/chatLifecycle.js";
+import { useTextConversation } from "./hooks/useTextConversation.js";
 import { createConversationSessionId } from "./lib/conversationSession.js";
 import {
   conversationReducer,
@@ -60,9 +56,6 @@ function App() {
   const [detailError, setDetailError] = useState("");
   const [promptSeed] = useState(() => getSessionSeed());
 
-  const abortRef = useRef(null);
-  const turnRef = useRef(null);
-  const requestRef = useRef(0);
   const searchAbort = useRef(null);
   const searchSeq = useRef(0);
   const detailAbort = useRef(null);
@@ -77,134 +70,33 @@ function App() {
     requestId: 0,
   });
   const chatEnd = useRef(null);
-  const sessionRef = useRef(pageSessionId);
   const realtimeRef = useRef(null);
 
-  const cancelActive = useCallback(async () => {
-    abortRef.current?.abort();
-    const sessionId = sessionRef.current;
-    const turnId = turnRef.current;
-    turnRef.current = null;
-    if (sessionId && turnId) {
-      cancelTurnBestEffort({
-        fetchFn: fetch,
-        url: apiUrl(
-          `/api/chat/${encodeURIComponent(sessionId)}/turn/${encodeURIComponent(turnId)}/cancel`,
-        ),
-      });
-    }
-  }, []);
+  const { ask: askText, interrupt: interruptText } = useTextConversation({
+    apiBase: API_BASE,
+    sessionId: pageSessionId,
+    category: filters.category,
+    localeHint: LOCALE_HINT,
+    onSubmit: (text) => dispatch({ type: "ask", text }),
+    onEvent: (event) => dispatch({ type: "event", event }),
+    onSpeechDelta: (text, locale) => {
+      realtimeRef.current?.appendSpeechDelta?.(text, locale);
+    },
+    onSpeechDone: (text, locale) => {
+      realtimeRef.current?.finishSpeechStream?.(text, locale);
+    },
+    onSpeechStop: () => {
+      realtimeRef.current?.stopSpeaking?.();
+    },
+    onError: () => {
+      dispatch({ type: "error", message: "回答服务暂时不可用" });
+    },
+  });
 
-  const prepareSubmission = useCallback(() => {
-    requestRef.current += 1;
-    realtimeRef.current?.stopSpeaking?.();
-    return cancelActive();
-  }, [cancelActive]);
-
-  const cancelQuestion = useCallback(async () => {
-    await prepareSubmission();
+  const cancelQuestion = useCallback(() => {
+    interruptText();
     dispatch({ type: "cancel" });
-  }, [prepareSubmission]);
-
-  const ask = useCallback(async (raw) => {
-    const text = String(raw || "").trim();
-    if (!text) return;
-    const cancelPromise = prepareSubmission();
-    const requestId = requestRef.current;
-    const isCurrent = () => requestRef.current === requestId;
-    await cancelPromise;
-    if (!isCurrent()) return;
-
-    const controller = new AbortController();
-    abortRef.current = controller;
-    dispatch({ type: "ask", text });
-    console.info(`[叙华][trace=${requestId}] llm.request.client.start`);
-    let buffer = "";
-    let eventName = "message";
-    let dataLines = [];
-    let firstTextLogged = false;
-    let terminalReceived = false;
-
-    const consume = (block) => {
-      if (!isCurrent()) return;
-      for (const line of block.split(/\r?\n/)) {
-        if (line.startsWith("event:")) eventName = line.slice(6).trim();
-        if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart());
-      }
-      if (dataLines.length) {
-        try {
-          const event = JSON.parse(dataLines.join("\n"));
-          const type = event.type || eventName;
-          if (isTerminalTurnEvent(type)) terminalReceived = true;
-          dispatch({ type: "event", event: { ...event, type } });
-          if (type === "response.text.delta") {
-            if (!firstTextLogged) {
-              firstTextLogged = true;
-              console.info(`[叙华][trace=${requestId}] llm.first_text_delta`);
-            }
-            realtimeRef.current?.appendSpeechDelta?.(
-              event.payload?.delta || "",
-              event.payload?.locale || LOCALE_HINT,
-            );
-          }
-          if (type === "turn.completed") {
-            console.info(`[叙华][trace=${requestId}] text.complete`);
-            realtimeRef.current?.finishSpeechStream?.(
-              event.payload?.answer || "",
-              event.payload?.locale || LOCALE_HINT,
-            );
-          }
-          if (["turn.failed", "turn.cancelled"].includes(type)) {
-            realtimeRef.current?.stopSpeaking?.();
-          }
-          turnRef.current = nextActiveTurnId(turnRef.current, {
-            type,
-            turn_id: event.turn_id,
-          });
-        } catch {
-          // Ignore malformed heartbeat frames.
-        }
-      }
-      eventName = "message";
-      dataLines = [];
-    };
-
-    try {
-      const response = await fetch(apiUrl("/api/chat"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-        body: JSON.stringify({
-          question: text,
-          session_id: sessionRef.current,
-          category: filters.category,
-          locale_hint: LOCALE_HINT,
-        }),
-        signal: controller.signal,
-      });
-      if (!response.ok || !response.body) throw new Error("request_failed");
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      while (true) {
-        const { value, done } = await reader.read();
-        buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-        const blocks = buffer.split(/\r?\n\r?\n/);
-        buffer = blocks.pop() || "";
-        blocks.forEach(consume);
-        if (done) {
-          if (buffer.trim()) consume(buffer);
-          break;
-        }
-      }
-      if (isCurrent() && !terminalReceived) throw new Error("stream_ended_before_terminal");
-    } catch (error) {
-      if (error?.name !== "AbortError" && isCurrent()) {
-        realtimeRef.current?.stopSpeaking?.();
-        dispatch({ type: "error", message: "回答服务暂时不可用" });
-      }
-    } finally {
-      if (abortRef.current === controller) abortRef.current = null;
-    }
-  }, [filters.category, prepareSubmission]);
+  }, [interruptText]);
 
   const recognitionContext = useMemo(() => ({
     category: filters.category,
@@ -212,10 +104,10 @@ function App() {
       .filter((item) => !filters.category || item.category === filters.category)
       .slice(0, 8),
     selectedItem: selected,
-    sessionId: sessionRef.current,
+    sessionId: pageSessionId,
     localeHint: LOCALE_HINT,
     preferredLocales: PREFERRED_LOCALES,
-  }), [filters.category, items, selected]);
+  }), [filters.category, items, pageSessionId, selected]);
 
   const realtime = useVoiceConversation({
     websocketPath: apiUrl("/api/voice"),
@@ -238,7 +130,7 @@ function App() {
     }),
     onBargeIn: () => {
       dispatch({ type: "realtime.interrupted" });
-      void cancelActive();
+      interruptText();
     },
     onSources: (sources) => dispatch({ type: "realtime.sources", sources }),
     onError: (error) => dispatch({
@@ -371,11 +263,9 @@ function App() {
     chatEnd.current?.scrollIntoView({ behavior: "auto", block: "end" });
   }, [state.messages]);
   useEffect(() => () => {
-    abortRef.current?.abort();
     searchAbort.current?.abort();
     detailAbort.current?.abort();
-    realtime.stop();
-  }, [realtime.stop]);
+  }, []);
 
   const openItem = useCallback(async (item) => {
     if (!item?.id) return;
@@ -432,16 +322,15 @@ function App() {
       return;
     }
     const interruptedTextTurn = ["retrieving", "composing", "streaming"].includes(state.phase);
-    await prepareSubmission();
+    interruptText();
     if (interruptedTextTurn) dispatch({ type: "cancel" });
     dispatch({ type: "clear.error" });
     await realtime.start();
   };
 
   const stopVoice = () => {
-    requestRef.current += 1;
     realtime.stop();
-    void cancelActive();
+    interruptText({ stopSpeech: false });
     dispatch({ type: "clear.error" });
   };
 
@@ -449,12 +338,12 @@ function App() {
     const text = String(raw || "").trim();
     if (!text || voiceStatus === REALTIME_VOICE_STATUS.CONNECTING) return false;
     if (connected) {
-      void prepareSubmission();
+      interruptText();
       if (!realtime.sendText(text)) return false;
       dispatch({ type: "realtime.user", text });
       return true;
     }
-    void ask(text);
+    void askText(text);
     return true;
   };
 
@@ -475,7 +364,7 @@ function App() {
     speechInProgress,
   });
   const stopComposer = () => {
-    if (composerMode === "stop") void cancelQuestion();
+    if (composerMode === "stop") cancelQuestion();
   };
 
   const handleSourceScroll = useCallback((event) => {

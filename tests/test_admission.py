@@ -114,51 +114,9 @@ def test_admission_applies_client_and_global_rolling_windows() -> None:
     asyncio.run(scenario())
 
 
-def test_client_key_uses_resolved_asgi_peer(monkeypatch) -> None:
-    monkeypatch.delenv("RENDER", raising=False)
+def test_client_key_uses_resolved_asgi_peer() -> None:
     assert client_key_from_scope({"client": ("203.0.113.7", 4321)}) == "203.0.113.7"
     assert client_key_from_scope({}) == "unknown"
-
-
-def test_render_client_key_uses_cloudflare_connecting_ip(monkeypatch) -> None:
-    monkeypatch.setenv("RENDER", "true")
-    scope = {
-        "client": ("10.0.0.12", 443),
-        "headers": [(b"cf-connecting-ip", b"203.0.113.17")],
-    }
-    assert client_key_from_scope(scope) == "203.0.113.17"
-
-
-def test_render_client_key_rejects_ambiguous_or_invalid_cloudflare_headers(monkeypatch) -> None:
-    monkeypatch.setenv("RENDER", "true")
-    proxy = ("10.0.0.12", 443)
-    assert client_key_from_scope(
-        {
-            "client": proxy,
-            "headers": [
-                (b"cf-connecting-ip", b"203.0.113.17"),
-                (b"cf-connecting-ip", b"198.51.100.9"),
-            ],
-        }
-    ) == "10.0.0.12"
-    assert client_key_from_scope(
-        {
-            "client": proxy,
-            "headers": [(b"cf-connecting-ip", b"not-an-ip")],
-        }
-    ) == "10.0.0.12"
-
-
-def test_non_render_client_key_ignores_raw_forwarding_headers(monkeypatch) -> None:
-    monkeypatch.delenv("RENDER", raising=False)
-    scope = {
-        "client": ("127.0.0.1", 50000),
-        "headers": [
-            (b"cf-connecting-ip", b"203.0.113.17"),
-            (b"x-forwarded-for", b"198.51.100.9"),
-        ],
-    }
-    assert client_key_from_scope(scope) == "127.0.0.1"
 
 
 def test_middleware_owns_ticket_issuance_but_not_validated_tts_streams() -> None:

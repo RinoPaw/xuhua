@@ -34,7 +34,8 @@ def test_nginx_configs_limit_expensive_public_routes() -> None:
         assert "location = /api/chat" in config
         assert "limit_req zone=xuhua_chat_rate" in config
         assert "location = /api/tts" in config
-        assert "limit_req zone=xuhua_tts_rate" in config
+        assert "location ^~ /api/tts/" in config
+        assert config.count("limit_req zone=xuhua_tts_rate") >= 2
         assert "location = /api/voice" in config
         assert "limit_req zone=xuhua_voice_rate" in config
         assert "limit_conn xuhua_voice_conn 2" in config

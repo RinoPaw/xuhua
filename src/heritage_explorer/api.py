@@ -46,7 +46,7 @@ from .language import detect_locale, get_language_profile, normalize_locale_hint
 from .request_limits import RequestBodyLimitMiddleware
 from .tts_tickets import TtsTicketCapacity, TtsTicketStore
 from .voice import XfyunStream
-from .voice_transport import register_voice_route
+from .voice_transport import MAX_VOICE_FRAME_BYTES, register_voice_route
 
 
 MAX_CHAT_CHARS = 4000
@@ -54,7 +54,6 @@ MAX_SEARCH_CHARS = 512
 MAX_SESSION_ID_CHARS = 128
 MAX_TURN_ID_CHARS = 128
 MAX_TTS_CHARS = 4000
-MAX_WEBSOCKET_MESSAGE_BYTES = 64 * 1024
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
@@ -360,7 +359,7 @@ def main() -> None:
         host=HOST,
         port=PORT,
         reload=DEBUG,
-        ws_max_size=MAX_WEBSOCKET_MESSAGE_BYTES,
+        ws_max_size=MAX_VOICE_FRAME_BYTES,
     )
 
 

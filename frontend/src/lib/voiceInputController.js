@@ -23,7 +23,6 @@ export class VoiceInputController {
     this.state = createVoiceInputState();
     this.bargeIn = createBargeInState();
     this.blockedUntil = 0;
-    this.muted = false;
   }
 
   get bargeInPhase() {
@@ -72,19 +71,6 @@ export class VoiceInputController {
     this.blockedUntil = 0;
   }
 
-  setMuted(muted) {
-    this.muted = Boolean(muted);
-    if (this.muted) {
-      this.state.resampler?.reset();
-      this.resetOnset();
-    }
-    return this.muted;
-  }
-
-  toggleMuted() {
-    return this.setMuted(!this.muted);
-  }
-
   process(samples, inputRate, {
     connection,
     output,
@@ -93,8 +79,6 @@ export class VoiceInputController {
     onSpeaking = () => {},
     onTranscribing = () => {},
   } = {}) {
-    if (this.muted) return null;
-
     const result = this.processFrame(this.state, {
       samples,
       inputRate,

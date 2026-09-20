@@ -1,3 +1,4 @@
+import { apiEndpoint, normalizeApiBase } from "./apiEndpoint.js";
 import {
   cancelTurnBestEffort,
   isTerminalTurnEvent,
@@ -5,10 +6,6 @@ import {
 } from "./chatLifecycle.js";
 
 function noop() {}
-
-function normalizeBase(value) {
-  return String(value || "").replace(/\/$/, "");
-}
 
 export function decodeSseBlock(block) {
   let eventName = "message";
@@ -63,7 +60,7 @@ export class TextConversationSession {
     onError = noop,
     log = console,
   } = {}) {
-    this.apiBase = normalizeBase(apiBase);
+    this.apiBase = normalizeApiBase(apiBase);
     this.fetchFn = fetchFn;
     this.getContext = getContext;
     this.onSubmit = onSubmit;
@@ -78,8 +75,12 @@ export class TextConversationSession {
     this.activeTurnId = null;
   }
 
+  setApiBase(value) {
+    this.apiBase = normalizeApiBase(value);
+  }
+
   url(path) {
-    return `${this.apiBase}${path}`;
+    return apiEndpoint(this.apiBase, path);
   }
 
   isCurrent(generation) {

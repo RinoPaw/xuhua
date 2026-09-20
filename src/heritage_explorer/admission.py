@@ -56,7 +56,10 @@ class AdmissionLease:
         if self._released:
             return
         self._released = True
-        await self._controller._release(self.service)
+        # Streaming HTTP/WebSocket tasks may be cancelled while unwinding. The
+        # caller's cancellation still propagates, but the shared capacity slot
+        # must be returned even when that happens inside a level-cancel scope.
+        await asyncio.shield(self._controller._release(self.service))
 
     async def __aenter__(self) -> "AdmissionLease":
         return self
@@ -226,11 +229,16 @@ class AdmissionMiddleware:
             return
 
         client_id = client_key_from_scope(scope)
-        try:
-            if key in self.RATE_ONLY_ROUTES:
+        if key in self.RATE_ONLY_ROUTES:
+            try:
                 await self.controller.charge(service, client_id)
-                await self.app(scope, receive, send)
+            except AdmissionDenied as exc:
+                await self.reject(scope, send, exc)
                 return
+            await self.app(scope, receive, send)
+            return
+
+        try:
             lease = await self.controller.acquire(service, client_id)
         except AdmissionDenied as exc:
             await self.reject(scope, send, exc)

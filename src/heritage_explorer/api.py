@@ -16,7 +16,6 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field
 
 from . import __version__
-from . import voice_gateway
 from .admission import AdmissionController, AdmissionMiddleware, AdmissionPolicy
 from .assistant import AssistantService, SearchService
 from .asr_normalization import normalize_asr_final, prepare_asr_normalization
@@ -40,6 +39,7 @@ from .dataset import item_to_dict
 from .language import detect_locale, get_language_profile, normalize_locale_hint
 from .sessions import SessionStore
 from .voice import XfyunStream
+from .voice_transport import register_voice_route
 
 
 MAX_CHAT_CHARS = 4000
@@ -48,10 +48,6 @@ MAX_TURN_ID_CHARS = 128
 MAX_TTS_CHARS = 4000
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
-
-# Kept as a compatibility alias for callers/tests that imported the old helper
-# from this transport module before the voice gateway was extracted.
-_contains_spoken_text = voice_gateway.contains_spoken_text
 
 
 class ChatRequest(BaseModel):
@@ -274,7 +270,7 @@ def create_app(
         cancelled = sessions.cancel_turn(session_id, turn_id)
         return {"cancelled": cancelled, "session_id": session_id, "turn_id": turn_id}
 
-    voice_gateway.register_voice_route(
+    register_voice_route(
         app,
         assistant=assistant,
         sessions=sessions,

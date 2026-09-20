@@ -21,6 +21,7 @@ function createHarness() {
       return true;
     },
     stop() {
+      this.starting = false;
       this.connected = false;
       calls.push(["connection.stop"]);
     },
@@ -149,6 +150,16 @@ test("browser voice session owns startup, context sync, and transport state", as
   assert.equal(harness.calls.some((entry) => entry[0] === "connection.start"), true);
 });
 
+test("voice startup fails if the initial context frame cannot be sent", async () => {
+  const harness = createHarness();
+  harness.connection.sendJson = () => false;
+
+  assert.equal(await harness.session.start(), false);
+  assert.equal(harness.connection.connected, false);
+  assert.equal(harness.machine.transport, "idle");
+  assert.equal(harness.errors.at(-1), "voice_socket_send_failed");
+});
+
 test("browser voice session centralizes barge-in output cancellation", () => {
   const harness = createHarness();
   harness.connection.connected = true;
@@ -203,6 +214,17 @@ test("failed typed socket send preserves the active local voice generation", () 
   assert.equal(newCalls.some((entry) => entry[0] === "transcript.clear"), false);
   assert.equal(newCalls.some((entry) => entry[0] === "callback.bargeIn"), false);
   assert.notEqual(harness.machine.turn, "thinking");
+});
+
+test("runtime send failure tears down the voice transport and reports a fault", async () => {
+  const harness = createHarness();
+  await harness.session.start();
+
+  assert.equal(harness.session.handleTransportFailure(), false);
+  assert.equal(harness.connection.connected, false);
+  assert.equal(harness.machine.transport, "idle");
+  assert.equal(harness.errors.at(-1), "voice_socket_send_failed");
+  assert.equal(harness.calls.filter((entry) => entry[0] === "callback.error").length, 1);
 });
 
 test("TTS terminal clears pending output machine state", async () => {

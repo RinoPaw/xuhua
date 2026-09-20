@@ -162,6 +162,7 @@ class AdmissionMiddleware:
 
     ROUTES = {
         ("http", "POST", "/api/chat"): "chat",
+        ("http", "POST", "/api/tts"): "tts",
         ("websocket", "", "/api/voice"): "voice",
     }
 

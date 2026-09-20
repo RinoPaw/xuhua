@@ -28,7 +28,6 @@ export function useVoiceConversation({
     dispatchMany,
   } = useVoiceMachineState();
   const [error, setError] = useState(null);
-  const [isMuted, setMuted] = useState(false);
   const [spectrum, setSpectrum] = useState(() => Array(24).fill(0));
 
   const connected = voiceMachine.transport === VOICE_TRANSPORT_PHASE.CONNECTED;
@@ -61,7 +60,6 @@ export function useVoiceConversation({
     dispatchVoice,
     dispatchMany,
     setError,
-    setMuted,
     setSpectrum,
   };
 
@@ -75,7 +73,6 @@ export function useVoiceConversation({
       getRecognitionContext: () => recognitionContextRef.current,
       getCallbacks: () => callbacksRef.current,
       onErrorState: (value) => bindingsRef.current.setError(value),
-      onMutedChange: (value) => bindingsRef.current.setMuted(value),
       onSpectrum: (value) => bindingsRef.current.setSpectrum(value),
     });
   }
@@ -83,15 +80,8 @@ export function useVoiceConversation({
 
   const start = useCallback(() => sessionRef.current.start(), []);
   const stop = useCallback(() => sessionRef.current.stop(), []);
-  const toggleMute = useCallback(() => sessionRef.current.toggleMute(), []);
   const sendText = useCallback((value) => sessionRef.current.sendText(value), []);
-  const cancelResponse = useCallback(() => sessionRef.current.cancelResponse(), []);
-  const speak = useCallback((text, locale = "") => sessionRef.current.speak(text, locale), []);
   const stopSpeaking = useCallback(() => sessionRef.current.stopSpeech(false), []);
-  const beginSpeechStream = useCallback(
-    (locale = "") => sessionRef.current.beginSpeechStream(locale),
-    [],
-  );
   const appendSpeechDelta = useCallback(
     (text, locale = "") => sessionRef.current.appendSpeechDelta(text, locale),
     [],
@@ -112,23 +102,16 @@ export function useVoiceConversation({
   return {
     status,
     error,
-    isMuted,
     isConnected: connected,
     isPlaying,
     isSpeechPending,
     spectrum,
     start,
     stop,
-    toggleMute,
-    mute: toggleMute,
     sendText,
-    cancelResponse,
-    speakText: speak,
     stopSpeaking,
-    beginSpeechStream,
     appendSpeechDelta,
     finishSpeechStream,
-    sendToolResult: () => false,
   };
 }
 

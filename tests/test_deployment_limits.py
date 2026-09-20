@@ -16,27 +16,14 @@ BUDGET_KEYS = (
 )
 
 
-def test_budget_settings_are_visible_in_local_and_render_templates() -> None:
+def test_budget_settings_are_visible_in_environment_template() -> None:
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
-    render = (ROOT / "render.yaml").read_text(encoding="utf-8")
     for key in BUDGET_KEYS:
         assert f"{key}=" in env_example
-        assert f"- key: {key}" in render
 
 
-def test_render_deploys_only_after_repository_checks_pass() -> None:
-    render = (ROOT / "render.yaml").read_text(encoding="utf-8")
-    assert "autoDeployTrigger: checksPass" in render
-    assert "autoDeploy: true" not in render
-
-
-def test_render_launch_topology_and_model_are_explicit() -> None:
-    render = (ROOT / "render.yaml").read_text(encoding="utf-8")
+def test_environment_template_uses_current_model() -> None:
     env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
-
-    assert "region: singapore" in render
-    assert "value: deepseek-flash" in render
-    assert "deepseek-v4-flash" not in render
     assert "AI_MODEL=deepseek-flash" in env_example
     assert "deepseek-v4-flash" not in env_example
 

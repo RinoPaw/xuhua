@@ -79,6 +79,11 @@ class SessionStore:
         with self._lock:
             self._purge_locked()
             session = self._get_or_create_locked(session_id)
+            active = session.active_turns.get(turn.turn_id)
+            if active is not None and active.is_set():
+                session.touch()
+                self._evict_locked()
+                return
             session.turns.append(turn)
             del session.turns[:-self.max_turns]
             session.touch()

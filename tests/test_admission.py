@@ -36,6 +36,19 @@ def test_admission_capacity_is_held_by_lease_and_released_once() -> None:
     asyncio.run(scenario())
 
 
+def test_rate_only_charge_does_not_reserve_concurrency() -> None:
+    async def scenario() -> None:
+        controller = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})
+        await controller.charge("tts", "client-a")
+        stream = await controller.acquire("tts", "client-a")
+        with pytest.raises(AdmissionDenied) as denied:
+            await controller.acquire("tts", "client-b")
+        assert denied.value.reason == "capacity"
+        await stream.release()
+
+    asyncio.run(scenario())
+
+
 def test_admission_applies_client_and_global_rolling_windows() -> None:
     now = [100.0]
 

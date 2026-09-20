@@ -109,7 +109,7 @@ export class VoiceOutputController {
     if (!delta) return false;
     if (!this.pipelineActive) this.begin(locale);
     const firstSegment = this.textPlan.append(delta);
-    if (firstSegment) this.enqueue(firstSegment, "first_sentence");
+    if (firstSegment) this.enqueue(firstSegment, "first_phrase");
     return true;
   }
 

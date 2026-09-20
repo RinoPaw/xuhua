@@ -301,12 +301,13 @@ export class BrowserVoiceSession {
   sendText(value) {
     const text = String(value || "").trim();
     if (!text || !this.connection.connected) return false;
+    const sent = this.send({ type: "text", text });
+    if (!sent) return false;
     this.transcript.clear(true);
     this.input.supersedeUtterance();
     this.stopSpeech(true, false);
-    const sent = this.send({ type: "text", text });
-    if (sent) this.markThinking();
-    return sent;
+    this.markThinking();
+    return true;
   }
 
   destroy() {

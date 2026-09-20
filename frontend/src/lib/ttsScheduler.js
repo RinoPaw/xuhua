@@ -31,7 +31,18 @@ function guessSpeechLocale(text) {
   return "en-US";
 }
 
-function browserFallbackSpeak(text, { onStart = noop, onEnd = noop, onError = noop } = {}) {
+export function ttsLocaleFromUrl(url, baseUrl = globalThis.location?.href || "http://localhost/") {
+  try {
+    return new URL(String(url || ""), baseUrl).searchParams.get("locale")?.trim() || "";
+  } catch {
+    return "";
+  }
+}
+
+function browserFallbackSpeak(
+  text,
+  { onStart = noop, onEnd = noop, onError = noop, locale = "" } = {},
+) {
   const synthesis = globalThis?.speechSynthesis;
   const Utterance = globalThis?.SpeechSynthesisUtterance;
   if (!synthesis || typeof synthesis.speak !== "function" || typeof Utterance !== "function") return null;
@@ -39,7 +50,7 @@ function browserFallbackSpeak(text, { onStart = noop, onEnd = noop, onError = no
   let utterance;
   try {
     utterance = new Utterance(String(text || ""));
-    utterance.lang = guessSpeechLocale(text);
+    utterance.lang = String(locale || "").trim() || guessSpeechLocale(text);
     utterance.onstart = () => onStart();
     utterance.onend = () => onEnd();
     utterance.onerror = (event) => onError(event || new Error("speech_synthesis_failed"));
@@ -279,7 +290,12 @@ export class TtsScheduler {
       this.end(entry);
     };
 
-    const cancel = callFallback(this.fallbackSpeak, entry.content, { onStart, onEnd, onError });
+    const cancel = callFallback(this.fallbackSpeak, entry.content, {
+      onStart,
+      onEnd,
+      onError,
+      locale: ttsLocaleFromUrl(entry.url),
+    });
     if (!cancel) {
       this.emit({ type: "fallback.unavailable", segment: entry.segment, elapsedMs: now() - entry.startedAt });
       this.end(entry);

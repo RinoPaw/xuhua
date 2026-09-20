@@ -1,0 +1,817 @@
+"""Connection-scoped runtime for realtime browser voice sessions."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import asdict, dataclass, field
+import json
+import logging
+import time
+import uuid
+from typing import Any, Callable
+
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+
+from .assistant import AssistantService
+from .asr_normalization import NormalizedTranscript
+from .dataset import KnowledgeBase
+from .language import (
+    detect_locale,
+    is_chinese_locale,
+    locale_from_provider_language,
+    normalize_locale_hint,
+)
+from .sessions import SessionStore
+from .voice import VoiceProviderError, XfyunStream
+
+
+MAX_VOICE_CONTEXT_TITLES = 8
+MAX_VOICE_RECENT_ITEMS = 8
+LOGGER = logging.getLogger(__name__)
+LOGGER.setLevel(logging.INFO)
+
+
+def contains_spoken_text(value: object) -> bool:
+    """Punctuation-only ASR hypotheses are not evidence of human speech."""
+
+    return any(character.isalnum() for character in str(value or ""))
+
+
+@dataclass(slots=True)
+class VoiceContextState:
+    """Conversation context supplied by the browser for one voice connection."""
+
+    session_id: str | None = None
+    category: str = ""
+    titles: list[str] = field(default_factory=list)
+    locale_hint: str = ""
+
+    def update(self, event: dict[str, Any], *, max_session_id_chars: int) -> None:
+        self.category = str(event.get("category") or "").strip()[:200]
+        incoming_session = str(event.get("session_id") or "").strip()
+        if incoming_session:
+            self.session_id = incoming_session[:max_session_id_chars]
+        incoming_locale = normalize_locale_hint(event.get("locale_hint") or event.get("locale"))
+        if incoming_locale:
+            self.locale_hint = incoming_locale
+
+        values: list[Any] = []
+        for key in ("selected_title", "selected_item", "selected"):
+            value = event.get(key)
+            if value:
+                values.append(value)
+        for key in ("titles", "visible_titles", "visible_items", "items"):
+            value = event.get(key)
+            if isinstance(value, (list, tuple)):
+                values.extend(value)
+
+        titles: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if isinstance(value, dict):
+                value = value.get("title", "")
+            title = str(value or "").strip()
+            if title and title not in seen:
+                seen.add(title)
+                titles.append(title[:200])
+            if len(titles) >= MAX_VOICE_CONTEXT_TITLES:
+                break
+        self.titles = titles
+
+
+@dataclass(slots=True)
+class VoiceBatchState:
+    """Mutable ASR batch state owned by exactly one connection runtime."""
+
+    results: dict[int, str] = field(default_factory=dict)
+    candidates: dict[int, tuple[str, ...]] = field(default_factory=dict)
+    languages: dict[int, str] = field(default_factory=dict)
+    failures: set[int] = field(default_factory=set)
+    partials: dict[int, str] = field(default_factory=dict)
+    pending_user_speaking: set[int] = field(default_factory=set)
+    pending: set[int] = field(default_factory=set)
+    revision: int = 0
+    generation: int = 0
+
+    def clear(self) -> None:
+        self.generation += 1
+        self.results.clear()
+        self.candidates.clear()
+        self.languages.clear()
+        self.failures.clear()
+        self.partials.clear()
+        self.pending_user_speaking.clear()
+        self.pending.clear()
+        self.revision = 0
+
+    def combined_partial_text(self) -> str:
+        return " ".join(
+            self.partials[item_id].strip()
+            for item_id in sorted(self.partials)
+            if self.partials[item_id].strip()
+        ).strip()
+
+
+class VoiceSessionRuntime:
+    """Own all mutable state and child tasks for one realtime voice connection."""
+
+    def __init__(
+        self,
+        websocket: WebSocket,
+        *,
+        assistant: AssistantService,
+        sessions: SessionStore,
+        knowledge_base: KnowledgeBase,
+        app_id: str,
+        api_key: str,
+        api_secret: str,
+        asr_host: str,
+        stream_factory: Callable[..., Any],
+        normalize_final: Callable[..., NormalizedTranscript],
+        max_session_id_chars: int,
+    ) -> None:
+        self.websocket = websocket
+        self.assistant = assistant
+        self.sessions = sessions
+        self.knowledge_base = knowledge_base
+        self.app_id = app_id
+        self.api_key = api_key
+        self.api_secret = api_secret
+        self.asr_host = asr_host
+        self.stream_factory = stream_factory
+        self.normalize_final = normalize_final
+        self.max_session_id_chars = max_session_id_chars
+
+        self.connection_id = uuid.uuid4().hex
+        self.context = VoiceContextState()
+        self.batch = VoiceBatchState()
+        self.asr_stream: Any | None = None
+        self.asr_start_task: asyncio.Task[None] | None = None
+        self.answer_task: asyncio.Task[None] | None = None
+        self.finalize_tasks: set[asyncio.Task[None]] = set()
+        self.active_turn_id: str | None = None
+        self.utterance_sequence = 0
+        self.event_sequence = 0
+        self.batch_lock = asyncio.Lock()
+        self.send_lock = asyncio.Lock()
+
+    def update_context(self, event: dict[str, Any]) -> None:
+        self.context.update(event, max_session_id_chars=self.max_session_id_chars)
+
+    def recent_voice_items(self) -> tuple[Any, ...]:
+        if not self.context.session_id:
+            return ()
+        recent: list[Any] = []
+        seen: set[str] = set()
+        for turn in reversed(self.sessions.history(self.context.session_id)):
+            for source_id in reversed(turn.source_ids):
+                if source_id in seen:
+                    continue
+                item = self.knowledge_base.get(source_id)
+                if item is not None:
+                    seen.add(source_id)
+                    recent.append(item)
+                if len(recent) >= MAX_VOICE_RECENT_ITEMS:
+                    return tuple(recent)
+        return tuple(recent)
+
+    def make_asr_stream(self, on_partial: Any) -> Any:
+        recent = self.recent_voice_items()
+        recent_titles = [str(getattr(item, "title", "") or "") for item in recent]
+        hotwords: list[str] = []
+        seen: set[str] = set()
+        for title in [self.context.category, *self.context.titles, *recent_titles]:
+            title = title.strip()
+            if title and title not in seen:
+                seen.add(title)
+                hotwords.append(title)
+            if len(hotwords) >= MAX_VOICE_CONTEXT_TITLES + MAX_VOICE_RECENT_ITEMS:
+                break
+        return self.stream_factory(
+            app_id=self.app_id,
+            api_key=self.api_key,
+            api_secret=self.api_secret,
+            host=self.asr_host,
+            language="zh_cn",
+            accent="mandarin",
+            domain="slm",
+            dynamic_correction=True,
+            on_partial=on_partial,
+            hotwords=tuple(hotwords),
+        )
+
+    async def send(self, payload: dict[str, Any]) -> None:
+        try:
+            async with self.send_lock:
+                self.event_sequence += 1
+                await self.websocket.send_json(
+                    {
+                        "connection_id": self.connection_id,
+                        "sequence": self.event_sequence,
+                        **payload,
+                    }
+                )
+        except (RuntimeError, WebSocketDisconnect):
+            pass
+
+    @staticmethod
+    async def stop_task(task: asyncio.Task[None] | None) -> None:
+        if task is None or task.done():
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    async def stop_finalize_tasks(self) -> None:
+        tasks = tuple(self.finalize_tasks)
+        self.finalize_tasks.clear()
+        if tasks:
+            await asyncio.gather(
+                *(self.stop_task(task) for task in tasks),
+                return_exceptions=True,
+            )
+
+    async def close_active_asr(self) -> None:
+        stream, self.asr_stream = self.asr_stream, None
+        start_task, self.asr_start_task = self.asr_start_task, None
+        if start_task is not None:
+            if not start_task.done():
+                start_task.cancel()
+            await asyncio.gather(start_task, return_exceptions=True)
+        if stream is not None:
+            await stream.close()
+
+    async def send_batch_partial(self, utterance_id: int, text: str) -> None:
+        if utterance_id not in self.batch.partials:
+            return
+        self.batch.partials[utterance_id] = str(text or "")
+        combined = self.batch.combined_partial_text()
+        if not combined:
+            return
+        self.batch.revision += 1
+        await self.send(
+            {
+                "type": "user.partial",
+                "utterance_id": max(self.batch.partials),
+                "revision": self.batch.revision,
+                "text": combined,
+                "final": False,
+            }
+        )
+
+    async def stop_answer(self, reason: str) -> None:
+        task, turn_id = self.answer_task, self.active_turn_id
+        self.answer_task = None
+        self.active_turn_id = None
+        if task is not None and not task.done():
+            LOGGER.info(
+                "voice.answer.cancel connection=%s turn=%s reason=%s",
+                self.connection_id,
+                turn_id or "-",
+                reason,
+            )
+        await self.stop_task(task)
+
+    async def answer(self, question: str, turn_id: str, locale_hint: str = "") -> None:
+        answer_locale = detect_locale(
+            question,
+            hint=locale_hint or self.context.locale_hint,
+        )
+        LOGGER.info(
+            "voice.agent.thinking connection=%s turn=%s question_chars=%s",
+            self.connection_id,
+            turn_id,
+            len(question),
+        )
+        await self.send(
+            {
+                "type": "status",
+                "status": "thinking",
+                "turn_id": turn_id,
+                "locale": answer_locale,
+            }
+        )
+        try:
+            async for event in self.assistant.stream_turn(
+                question,
+                session_id=self.context.session_id,
+                turn_id=turn_id,
+                category=self.context.category,
+                locale_hint=answer_locale,
+            ):
+                if self.active_turn_id != turn_id:
+                    return
+                self.context.session_id = event.session_id
+                if event.type == "response.text.delta":
+                    event_locale = str(event.payload.get("locale") or answer_locale)
+                    await self.send(
+                        {
+                            "type": "assistant.delta",
+                            "session_id": event.session_id,
+                            "turn_id": event.turn_id,
+                            "text": event.payload.get("delta", ""),
+                            "locale": event_locale,
+                        }
+                    )
+                elif event.type == "response.sources":
+                    await self.send(
+                        {
+                            "type": "sources",
+                            "session_id": event.session_id,
+                            "turn_id": event.turn_id,
+                            "items": event.payload.get("sources", []),
+                        }
+                    )
+                elif event.type == "turn.completed":
+                    event_locale = str(event.payload.get("locale") or answer_locale)
+                    await self.send(
+                        {
+                            "type": "assistant.done",
+                            "session_id": event.session_id,
+                            "turn_id": event.turn_id,
+                            "text": event.payload.get("answer", ""),
+                            "locale": event_locale,
+                        }
+                    )
+                elif event.type == "turn.failed":
+                    code = str(event.payload.get("code") or "llm_unavailable")
+                    message = (
+                        "回答生成等待过久，请再试一次"
+                        if code == "llm_first_token_timeout"
+                        else "回答服务暂时不可用，请再试一次"
+                    )
+                    await self.send(
+                        {
+                            "type": "error",
+                            "turn_id": turn_id,
+                            "code": code,
+                            "message": message,
+                        }
+                    )
+                elif event.type == "turn.cancelled":
+                    await self.send(
+                        {
+                            "type": "assistant.cancelled",
+                            "session_id": event.session_id,
+                            "turn_id": event.turn_id,
+                            "reason": str(event.payload.get("reason") or "cancelled"),
+                        }
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.exception(
+                "voice.answer.failed connection=%s turn=%s",
+                self.connection_id,
+                turn_id,
+            )
+            await self.send(
+                {"type": "error", "turn_id": turn_id, "message": "回答服务暂时不可用"}
+            )
+        finally:
+            current_task = asyncio.current_task()
+            if self.active_turn_id == turn_id:
+                self.active_turn_id = None
+                if self.answer_task is current_task:
+                    self.answer_task = None
+
+    async def start_answer(
+        self,
+        question: str,
+        reason: str,
+        locale_hint: str = "",
+    ) -> None:
+        await self.stop_answer(reason)
+        turn_id = uuid.uuid4().hex
+        self.active_turn_id = turn_id
+        self.answer_task = asyncio.create_task(self.answer(question, turn_id, locale_hint))
+
+    async def commit_voice_batch(self, generation: int) -> None:
+        if generation != self.batch.generation:
+            return
+        async with self.batch_lock:
+            if (
+                generation != self.batch.generation
+                or self.asr_stream is not None
+                or self.batch.pending
+                or not self.batch.results
+            ):
+                return
+            results = dict(self.batch.results)
+            self.batch.results.clear()
+            ordered_ids = sorted(results)
+            failures = {item_id for item_id in ordered_ids if item_id in self.batch.failures}
+            self.batch.failures.difference_update(ordered_ids)
+            asr_candidates = tuple(
+                candidate
+                for item_id in ordered_ids
+                for candidate in self.batch.candidates.pop(item_id, ())
+                if candidate
+            )
+            provider_languages = [
+                self.batch.languages.pop(item_id, "") for item_id in ordered_ids
+            ]
+            raw_text = " ".join(
+                results[item_id].strip()
+                for item_id in ordered_ids
+                if results[item_id].strip()
+            )
+            committed_id = ordered_ids[-1]
+            if not raw_text:
+                self.batch.partials.clear()
+                self.batch.revision = 0
+                if failures:
+                    await self.send(
+                        {
+                            "type": "error",
+                            "utterance_id": committed_id,
+                            "code": "asr_unavailable",
+                            "message": "语音识别暂时不可用",
+                        }
+                    )
+                else:
+                    await self.send(
+                        {"type": "utterance.rejected", "utterance_id": committed_id}
+                    )
+                return
+
+            provider_locale = next(
+                (
+                    locale
+                    for language in reversed(provider_languages)
+                    if (locale := locale_from_provider_language(language))
+                ),
+                None,
+            )
+            resolved_locale = detect_locale(
+                raw_text,
+                hint=provider_locale or self.context.locale_hint,
+            )
+            normalized = (
+                self.normalize_final(
+                    raw_text,
+                    kb=self.knowledge_base,
+                    category=self.context.category,
+                    recent_items=self.recent_voice_items(),
+                    asr_candidates=asr_candidates,
+                )
+                if is_chinese_locale(resolved_locale)
+                else NormalizedTranscript(raw_text, raw_text, ())
+            )
+            canonical_text = normalized.canonical_text
+            normalizations = [asdict(span) for span in normalized.spans]
+            LOGGER.info(
+                "voice.asr.batch_complete connection=%s utterances=%s raw_chars=%s canonical_chars=%s replacements=%s",
+                self.connection_id,
+                ",".join(str(item_id) for item_id in ordered_ids),
+                len(raw_text),
+                len(canonical_text),
+                len(normalizations),
+            )
+            await self.stop_answer("asr_batch")
+            await self.send(
+                {
+                    "type": "user.transcript",
+                    "utterance_id": committed_id,
+                    "revision": self.batch.revision,
+                    "final": True,
+                    "text": canonical_text,
+                    "raw_text": raw_text,
+                    "normalizations": normalizations,
+                    "locale": resolved_locale,
+                    "asr_engine": "chinese",
+                }
+            )
+            self.batch.partials.clear()
+            self.batch.revision = 0
+            await self.start_answer(canonical_text, "new_utterance", resolved_locale)
+
+    async def finish_utterance(
+        self,
+        stream: Any,
+        start_task: asyncio.Task[None],
+        utterance_id: int,
+        generation: int,
+    ) -> None:
+        try:
+            await self.send(
+                {
+                    "type": "status",
+                    "status": "transcribing",
+                    "utterance_id": utterance_id,
+                }
+            )
+            await start_task
+            transcript = await stream.finish()
+            LOGGER.info(
+                "voice.asr.finished connection=%s utterance=%s chars=%s",
+                self.connection_id,
+                utterance_id,
+                len(transcript),
+            )
+            if transcript:
+                LOGGER.info(
+                    "voice.asr.complete connection=%s utterance=%s chars=%s",
+                    self.connection_id,
+                    utterance_id,
+                    len(transcript),
+                )
+            if generation == self.batch.generation:
+                self.batch.results[utterance_id] = transcript
+                self.batch.candidates[utterance_id] = stream.candidates
+                self.batch.languages[utterance_id] = stream.detected_language
+                self.batch.partials[utterance_id] = transcript
+        except asyncio.CancelledError:
+            raise
+        except VoiceProviderError:
+            LOGGER.warning(
+                "voice.asr.failed connection=%s utterance=%s",
+                self.connection_id,
+                utterance_id,
+                exc_info=True,
+            )
+            if generation == self.batch.generation:
+                self.batch.results[utterance_id] = ""
+                self.batch.candidates[utterance_id] = ()
+                self.batch.languages[utterance_id] = ""
+                self.batch.failures.add(utterance_id)
+        finally:
+            await stream.close()
+            self.batch.pending_user_speaking.discard(utterance_id)
+            self.batch.pending.discard(utterance_id)
+            await self.commit_voice_batch(generation)
+
+    async def start_asr(self, stream: Any, utterance_id: int) -> None:
+        started_at = time.perf_counter()
+        LOGGER.info(
+            "voice.asr.connect.start connection=%s utterance=%s",
+            self.connection_id,
+            utterance_id,
+        )
+        await stream.start()
+        LOGGER.info(
+            "voice.asr.connect.ready connection=%s utterance=%s +%.3fs",
+            self.connection_id,
+            utterance_id,
+            time.perf_counter() - started_at,
+        )
+
+    def schedule_finalize(
+        self,
+        stream: Any,
+        start_task: asyncio.Task[None],
+        utterance_id: int,
+    ) -> None:
+        self.batch.pending.add(utterance_id)
+        task = asyncio.create_task(
+            self.finish_utterance(
+                stream,
+                start_task,
+                utterance_id,
+                self.batch.generation,
+            )
+        )
+        self.finalize_tasks.add(task)
+        task.add_done_callback(self.finalize_tasks.discard)
+
+    async def handle_audio(self, data: bytes) -> None:
+        if self.asr_stream is not None:
+            await self.asr_stream.send_audio(data)
+
+    async def handle_utterance_start(self, event: dict[str, Any]) -> None:
+        async with self.batch_lock:
+            self.utterance_sequence += 1
+            utterance_id = self.utterance_sequence
+            self.batch.partials[utterance_id] = ""
+            LOGGER.info(
+                "voice.vad.utterance_start connection=%s utterance=%s interrupt=%s level=%s threshold=%s",
+                self.connection_id,
+                utterance_id,
+                bool(event.get("interrupt")),
+                event.get("level", "-"),
+                event.get("threshold", "-"),
+            )
+            if self.asr_stream is not None:
+                previous_stream, self.asr_stream = self.asr_stream, None
+                previous_start, self.asr_start_task = self.asr_start_task, None
+                previous_id = utterance_id - 1
+                LOGGER.info(
+                    "voice.vad.utterance_implicit_end connection=%s utterance=%s",
+                    self.connection_id,
+                    previous_id,
+                )
+                if previous_start is not None:
+                    self.schedule_finalize(previous_stream, previous_start, previous_id)
+                else:
+                    await previous_stream.close()
+
+            partial_logged = False
+
+            async def send_partial(text: str, current: int = utterance_id) -> None:
+                nonlocal partial_logged
+                if current not in self.batch.partials:
+                    return
+                if (
+                    current in self.batch.pending_user_speaking
+                    and contains_spoken_text(text)
+                ):
+                    await self.send(
+                        {
+                            "type": "status",
+                            "status": "user_speaking",
+                            "utterance_id": current,
+                        }
+                    )
+                    self.batch.pending_user_speaking.discard(current)
+                if not partial_logged:
+                    LOGGER.info(
+                        "voice.asr.first_partial connection=%s utterance=%s chars=%s",
+                        self.connection_id,
+                        current,
+                        len(str(text or "")),
+                    )
+                    partial_logged = True
+                await self.send_batch_partial(current, text)
+
+            if event.get("interrupt"):
+                self.batch.pending_user_speaking.add(utterance_id)
+            else:
+                self.batch.pending_user_speaking.discard(utterance_id)
+            self.asr_stream = self.make_asr_stream(send_partial)
+            self.asr_start_task = asyncio.create_task(
+                self.start_asr(self.asr_stream, utterance_id)
+            )
+            if utterance_id not in self.batch.pending_user_speaking:
+                await self.send(
+                    {
+                        "type": "status",
+                        "status": "user_speaking",
+                        "utterance_id": utterance_id,
+                    }
+                )
+
+    async def handle_utterance_end(self) -> None:
+        if self.asr_stream is None:
+            return
+        async with self.batch_lock:
+            utterance_id = self.utterance_sequence
+            LOGGER.info(
+                "voice.vad.utterance_end connection=%s utterance=%s",
+                self.connection_id,
+                utterance_id,
+            )
+            completed_stream, self.asr_stream = self.asr_stream, None
+            completed_start, self.asr_start_task = self.asr_start_task, None
+            if completed_start is not None:
+                self.schedule_finalize(completed_stream, completed_start, utterance_id)
+            else:
+                await completed_stream.close()
+
+    async def handle_utterance_cancel(self) -> None:
+        async with self.batch_lock:
+            self.batch.clear()
+            await self.stop_finalize_tasks()
+            await self.close_active_asr()
+            await self.send(
+                {
+                    "type": "utterance.rejected",
+                    "utterance_id": self.utterance_sequence,
+                }
+            )
+
+    async def handle_barge_in(self) -> None:
+        async with self.batch_lock:
+            LOGGER.info(
+                "voice.barge_in connection=%s utterance=%s",
+                self.connection_id,
+                self.utterance_sequence,
+            )
+            await self.stop_answer("barge_in")
+        await self.send(
+            {
+                "type": "status",
+                "status": "user_speaking",
+                "utterance_id": self.utterance_sequence,
+            }
+        )
+
+    async def handle_text(self, event: dict[str, Any]) -> None:
+        text = str(event.get("text") or "").strip()
+        if not text:
+            return
+        async with self.batch_lock:
+            self.batch.clear()
+            await self.stop_finalize_tasks()
+            await self.close_active_asr()
+            await self.start_answer(text, "text_input")
+
+    async def handle_interrupt(self) -> None:
+        async with self.batch_lock:
+            await self.stop_answer("client_interrupt")
+            self.batch.clear()
+            await self.stop_finalize_tasks()
+            await self.close_active_asr()
+            await self.send(
+                {
+                    "type": "status",
+                    "status": "listening",
+                    "utterance_id": self.utterance_sequence,
+                }
+            )
+
+    async def handle_event(self, event: dict[str, Any]) -> None:
+        event_type = event.get("type")
+        if event_type == "utterance.start":
+            await self.handle_utterance_start(event)
+        elif event_type == "utterance.end":
+            await self.handle_utterance_end()
+        elif event_type == "utterance.cancel":
+            await self.handle_utterance_cancel()
+        elif event_type == "barge_in":
+            await self.handle_barge_in()
+        elif event_type == "text":
+            await self.handle_text(event)
+        elif event_type == "context":
+            self.update_context(event)
+        elif event_type == "interrupt":
+            await self.handle_interrupt()
+
+    async def close(self) -> None:
+        self.batch.clear()
+        await self.stop_finalize_tasks()
+        await self.stop_answer("connection_closed")
+        await self.close_active_asr()
+
+    async def run(self) -> None:
+        try:
+            await self.send({"type": "ready"})
+            while True:
+                message = await self.websocket.receive()
+                if message.get("type") == "websocket.disconnect":
+                    break
+                data = message.get("bytes")
+                if data is not None:
+                    await self.handle_audio(data)
+                    continue
+                raw = message.get("text")
+                if not raw:
+                    continue
+                try:
+                    event = json.loads(raw)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(event, dict):
+                    await self.handle_event(event)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await self.close()
+
+
+def register_voice_route(
+    app: FastAPI,
+    *,
+    assistant: AssistantService,
+    sessions: SessionStore,
+    knowledge_base: KnowledgeBase,
+    app_id: str,
+    api_key: str,
+    api_secret: str,
+    asr_host: str,
+    stream_factory: Callable[..., Any] = XfyunStream,
+    normalize_final: Callable[..., NormalizedTranscript],
+    max_session_id_chars: int = 128,
+) -> None:
+    """Register the continuous browser VAD + ASR + assistant WebSocket route."""
+
+    @app.websocket("/api/voice")
+    async def browser_voice(websocket: WebSocket) -> None:
+        if not (app_id.strip() and api_key.strip() and api_secret.strip()):
+            await websocket.close(code=1013, reason="voice_unavailable")
+            return
+
+        await websocket.accept()
+        runtime = VoiceSessionRuntime(
+            websocket,
+            assistant=assistant,
+            sessions=sessions,
+            knowledge_base=knowledge_base,
+            app_id=app_id,
+            api_key=api_key,
+            api_secret=api_secret,
+            asr_host=asr_host,
+            stream_factory=stream_factory,
+            normalize_final=normalize_final,
+            max_session_id_chars=max_session_id_chars,
+        )
+        await runtime.run()
+
+
+__all__ = [
+    "MAX_VOICE_CONTEXT_TITLES",
+    "MAX_VOICE_RECENT_ITEMS",
+    "VoiceBatchState",
+    "VoiceContextState",
+    "VoiceSessionRuntime",
+    "contains_spoken_text",
+    "register_voice_route",
+]

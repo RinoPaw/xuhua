@@ -52,15 +52,13 @@ export function VoiceSpectrum({ values }) {
   );
 }
 
-export function VoiceStatusRow({ status, connected, error, hasUserPartial, hasAssistantBubble }) {
+export function VoiceStatusRow({ status, connected, hasUserPartial, hasAssistantBubble }) {
   const copy = VOICE_COPY[status];
   const disconnectedActionableStatus = status === REALTIME_VOICE_STATUS.CONNECTING;
   if ((!connected && !disconnectedActionableStatus)
     || !copy
-    || status === REALTIME_VOICE_STATUS.IDLE) return null;
-  if (status === REALTIME_VOICE_STATUS.ERROR) {
-    return <div className="error-banner voice-error" role="alert">{error || copy.label}</div>;
-  }
+    || status === REALTIME_VOICE_STATUS.IDLE
+    || status === REALTIME_VOICE_STATUS.ERROR) return null;
 
   const hasVisibleBubble = copy.owner === "user" ? hasUserPartial : hasAssistantBubble;
   if (hasVisibleBubble) return null;

@@ -119,6 +119,12 @@ export class BrowserVoiceSession {
     return error;
   }
 
+  handleTransportFailure() {
+    this.cleanup();
+    this.reportError("voice_socket_send_failed");
+    return false;
+  }
+
   settleListening() {
     if (this.input.utteranceActive
       || this.output?.pipelineActive
@@ -244,6 +250,7 @@ export class BrowserVoiceSession {
       onSpectrum: (value) => this.onSpectrum(value),
       onSpeaking: () => this.dispatchVoice({ type: "input.speaking" }),
       onTranscribing: () => this.dispatchVoice({ type: "input.transcribing" }),
+      onTransportFailure: () => this.handleTransportFailure(),
     });
   }
 
@@ -270,7 +277,9 @@ export class BrowserVoiceSession {
 
     try {
       const started = await this.connection.start(this.websocketPath, {
-        onOpen: () => this.sendRecognitionContext(),
+        onOpen: () => {
+          if (!this.sendRecognitionContext()) throw new Error("voice_socket_send_failed");
+        },
         onMessage: (message) => this.routeServerEvent(message),
         onSamples: (samples, inputRate) => this.processAudio(samples, inputRate),
         onClose: (event) => {

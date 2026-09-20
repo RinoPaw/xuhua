@@ -1,7 +1,9 @@
 const HARD_BOUNDARIES = new Set(["。", "！", "!", "？", "?", "；", ";", "\n"]);
+const SOFT_BOUNDARIES = new Set(["，", ",", "：", ":"]);
 const CLOSING_PUNCTUATION = new Set(["\"", "'", "”", "’", ")", "]", "】", "》"]);
 const COMMON_ABBREVIATION = /(?:^|\s)(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc)\.$/iu;
 const INITIALISM = /(?:^|\s)(?:[a-z]\.){2,}$/iu;
+const MIN_EARLY_CJK_CHARS = 12;
 
 function isPeriodBoundary(text, index) {
   const previous = text[index - 1] || "";
@@ -12,6 +14,38 @@ function isPeriodBoundary(text, index) {
   return !COMMON_ABBREVIATION.test(prefix) && !INITIALISM.test(prefix);
 }
 
+function isCjkLocale(locale) {
+  return /^(?:zh|yue|ja|ko)(?:-|$)/iu.test(String(locale || ""));
+}
+
+function spokenLength(text) {
+  return [...String(text || "").replace(/\s/gu, "")].length;
+}
+
+function boundaryEnd(text, index) {
+  let end = index + 1;
+  while (end < text.length && CLOSING_PUNCTUATION.has(text[end])) end += 1;
+  return end;
+}
+
+function firstSpeakableSegment(text, locale) {
+  const allowSoftBoundary = isCjkLocale(locale);
+  for (let index = 0; index < text.length; index += 1) {
+    const character = text[index];
+    const hardBoundary = HARD_BOUNDARIES.has(character)
+      || (character === "." && isPeriodBoundary(text, index));
+    const softBoundary = allowSoftBoundary && SOFT_BOUNDARIES.has(character);
+    if (!hardBoundary && !softBoundary) continue;
+
+    const end = boundaryEnd(text, index);
+    const candidate = text.slice(0, end).trim();
+    if (!candidate) continue;
+    if (softBoundary && spokenLength(candidate) < MIN_EARLY_CJK_CHARS) continue;
+    return { segment: candidate, remainder: text.slice(end) };
+  }
+  return { segment: null, remainder: text };
+}
+
 function splitCompletedSentences(text) {
   const sentences = [];
   let start = 0;
@@ -20,8 +54,7 @@ function splitCompletedSentences(text) {
     const boundary = HARD_BOUNDARIES.has(character)
       || (character === "." && isPeriodBoundary(text, index));
     if (!boundary) continue;
-    let end = index + 1;
-    while (end < text.length && CLOSING_PUNCTUATION.has(text[end])) end += 1;
+    const end = boundaryEnd(text, index);
     const sentence = text.slice(start, end).trim();
     if (sentence) sentences.push(sentence);
     start = end;
@@ -44,17 +77,22 @@ export class TtsTextPlan {
   append(text) {
     if (this.finalized) return null;
     this.buffer += String(text || "");
+
+    let first = null;
+    if (!this.firstCommitted) {
+      const early = firstSpeakableSegment(this.buffer, this.locale);
+      if (early.segment) {
+        first = early.segment;
+        this.firstCommitted = true;
+        this.buffer = early.remainder;
+      }
+    }
+
     const split = splitCompletedSentences(this.buffer);
     this.buffer = split.remainder;
-    const sentences = split.sentences;
-    let first = null;
-    if (!this.firstCommitted && sentences.length) {
-      first = sentences.shift();
-      this.firstCommitted = true;
-    }
-    if (sentences.length) {
-      const separator = /^(?:zh|yue|ja|ko)(?:-|$)/iu.test(this.locale) ? "" : " ";
-      const joined = sentences.join(separator);
+    if (split.sentences.length) {
+      const separator = isCjkLocale(this.locale) ? "" : " ";
+      const joined = split.sentences.join(separator);
       this.remainder += this.remainder && separator ? `${separator}${joined}` : joined;
     }
     return first;
@@ -70,4 +108,4 @@ export class TtsTextPlan {
   }
 }
 
-export { splitCompletedSentences };
+export { MIN_EARLY_CJK_CHARS, splitCompletedSentences };

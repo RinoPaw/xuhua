@@ -176,10 +176,6 @@ def _lexical_score(item: HeritageItem, query: str, tokens: Sequence[str]) -> flo
     return score
 
 
-def _sort_scored(scored: Iterable[tuple[float, HeritageItem]]) -> list[tuple[float, HeritageItem]]:
-    return sorted(scored, key=lambda pair: (-pair[0], pair[1].title.casefold(), pair[1].id))
-
-
 def _diversity_key(item: HeritageItem) -> tuple[str, str]:
     family = normalize_text(item.family or item.title).casefold()
     region = normalize_text(item.province or item.city or item.district or "未知地区").casefold()
@@ -224,7 +220,6 @@ def _diversify_scored(
     return selected + ordered[prefix_length:]
 
 
-@lru_cache(maxsize=16384)
 def _pinyin_forms(text: str) -> tuple[str, ...]:
     if not text:
         return ()
@@ -235,6 +230,11 @@ def _pinyin_forms(text: str) -> tuple[str, ...]:
     return ("".join(lazy_pinyin(text)).lower(),)
 
 
+@lru_cache(maxsize=8192)
+def _stable_pinyin_forms(text: str) -> tuple[str, ...]:
+    return _pinyin_forms(text)
+
+
 def _pinyin_score(item: HeritageItem, query: str) -> float:
     if len(query) < 2:
         return 0.0
@@ -242,8 +242,8 @@ def _pinyin_score(item: HeritageItem, query: str) -> float:
     if not query_forms:
         return 0.0
     query_py = query_forms[0]
-    title = _pinyin_forms(item.title)
-    aliases = [form for alias in _aliases(item) for form in _pinyin_forms(alias)]
+    title = _stable_pinyin_forms(item.title)
+    aliases = [form for alias in _aliases(item) for form in _stable_pinyin_forms(alias)]
     if any(query_py == form for form in title):
         return 42.0
     if any(query_py in form for form in title):

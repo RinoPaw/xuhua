@@ -87,6 +87,27 @@ class MixedBatchStream:
         return
 
 
+class CloseFailBatchStream:
+    instances: list["CloseFailBatchStream"] = []
+
+    def __init__(self, **kwargs: object) -> None:
+        self.candidates: tuple[str, ...] = ()
+        self.detected_language = "zh"
+        self.__class__.instances.append(self)
+
+    async def start(self) -> None:
+        return
+
+    async def send_audio(self, _data: bytes) -> None:
+        return
+
+    async def finish(self) -> str:
+        return "可用句"
+
+    async def close(self) -> None:
+        raise RuntimeError("cleanup failed")
+
+
 def receive_until(websocket, predicate, *, limit: int = 30) -> list[dict[str, object]]:
     messages: list[dict[str, object]] = []
     for _ in range(limit):
@@ -97,12 +118,16 @@ def receive_until(websocket, predicate, *, limit: int = 30) -> list[dict[str, ob
     raise AssertionError(f"did not receive expected websocket message: {messages!r}")
 
 
-def test_partial_asr_failure_does_not_poison_successful_batch(monkeypatch) -> None:
+def configure_voice(monkeypatch, stream_factory) -> None:
     monkeypatch.setattr(api_module, "XF_APP_ID", "test-app")
     monkeypatch.setattr(api_module, "XF_API_KEY", "test-key")
     monkeypatch.setattr(api_module, "XF_API_SECRET", "test-secret")
     monkeypatch.setattr(api_module, "XF_ASR_HOST", "iat.xf-yun.com")
-    monkeypatch.setattr(api_module, "XfyunStream", MixedBatchStream)
+    monkeypatch.setattr(api_module, "XfyunStream", stream_factory)
+
+
+def test_partial_asr_failure_does_not_poison_successful_batch(monkeypatch) -> None:
+    configure_voice(monkeypatch, MixedBatchStream)
     MixedBatchStream.instances.clear()
     MixedBatchStream.first_finish_gate.clear()
 
@@ -136,3 +161,27 @@ def test_partial_asr_failure_does_not_poison_successful_batch(monkeypatch) -> No
     transcript = next(message for message in messages if message.get("type") == "user.transcript")
     assert transcript["text"] == "新句"
     assert assistant.calls == ["新句"]
+
+
+def test_asr_close_failure_does_not_poison_successful_batch(monkeypatch) -> None:
+    configure_voice(monkeypatch, CloseFailBatchStream)
+    CloseFailBatchStream.instances.clear()
+
+    assistant = RecordingAssistant(SearchService(make_kb()))
+    app = create_app(assistant=assistant)  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/voice") as websocket:
+            assert websocket.receive_json()["type"] == "ready"
+            websocket.send_json({"type": "utterance.start"})
+            receive_until(websocket, lambda message: message.get("status") == "user_speaking")
+            websocket.send_json({"type": "utterance.end"})
+            messages = receive_until(
+                websocket,
+                lambda message: message.get("type") == "assistant.done",
+            )
+
+    assert not any(message.get("type") == "error" for message in messages)
+    transcript = next(message for message in messages if message.get("type") == "user.transcript")
+    assert transcript["text"] == "可用句"
+    assert assistant.calls == ["可用句"]

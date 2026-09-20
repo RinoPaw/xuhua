@@ -59,6 +59,7 @@ export class HeritageBrowserSession {
     this.categoriesController = null;
     this.searchController = null;
     this.detailController = null;
+    this.startGeneration = 0;
     this.searchGeneration = 0;
     this.page = initialPageState();
     this.started = false;
@@ -134,6 +135,7 @@ export class HeritageBrowserSession {
     if (this.started) return false;
     this.destroyed = false;
     this.started = true;
+    const generation = ++this.startGeneration;
 
     const metaController = new AbortController();
     const categoriesController = new AbortController();
@@ -142,7 +144,7 @@ export class HeritageBrowserSession {
 
     void this.loadCategories(categoriesController);
     await this.loadMeta(metaController);
-    if (!this.started || this.destroyed) return false;
+    if (!this.started || this.destroyed || generation !== this.startGeneration) return false;
     await this.reload();
     return true;
   }
@@ -354,6 +356,7 @@ export class HeritageBrowserSession {
     if (this.destroyed) return;
     this.destroyed = true;
     this.started = false;
+    this.startGeneration += 1;
     this.searchGeneration += 1;
     this.metaController?.abort();
     this.categoriesController?.abort();

@@ -4,10 +4,14 @@ const TERMINAL_TURN_EVENTS = new Set([
   "turn.cancelled",
 ]);
 
+export function isTerminalTurnEvent(type) {
+  return TERMINAL_TURN_EVENTS.has(String(type || ""));
+}
+
 export function nextActiveTurnId(currentTurnId, event) {
   const turnId = String(event?.turn_id || "").trim();
   if (!turnId) return currentTurnId || null;
-  if (!TERMINAL_TURN_EVENTS.has(event?.type)) return turnId;
+  if (!isTerminalTurnEvent(event?.type)) return turnId;
   if (!currentTurnId || currentTurnId === turnId) return null;
   return currentTurnId;
 }

@@ -77,6 +77,11 @@ def test_cancelled_voice_turn_is_forwarded_to_browser(monkeypatch) -> None:
                 lambda message: message.get("type") == "assistant.cancelled",
             )
 
+    assert any(
+        message.get("type") == "status" and message.get("status") == "thinking"
+        for message in messages
+    )
     cancelled = messages[-1]
+    assert cancelled["session_id"] == "voice-session"
     assert cancelled["reason"] == "superseded"
     assert cancelled["turn_id"]

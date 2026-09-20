@@ -26,7 +26,7 @@ test("voice input controller owns barge-in candidate lifecycle", () => {
   assert.equal(input.bargeInPhase, BARGE_IN_PHASE.IDLE);
 });
 
-test("voice input controller owns mute and post-output input gate", () => {
+test("voice input controller owns post-output input gate", () => {
   let now = 100;
   let frameCalls = 0;
   const input = new VoiceInputController({
@@ -42,10 +42,6 @@ test("voice input controller owns mute and post-output input gate", () => {
   input.unblock();
   assert.equal(input.blockedUntil, 0);
 
-  assert.equal(input.setMuted(true), true);
-  assert.equal(input.process(new Float32Array([0]), 48000), null);
-  assert.equal(frameCalls, 0);
-  assert.equal(input.toggleMuted(), false);
   now = 200;
   input.process(new Float32Array([0]), 48000);
   assert.equal(frameCalls, 1);

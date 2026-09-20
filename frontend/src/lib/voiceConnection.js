@@ -33,8 +33,12 @@ export class VoiceConnectionController {
 
   sendRaw(payload) {
     if (!this.connected) return false;
-    this.socket.send(payload);
-    return true;
+    try {
+      this.socket.send(payload);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   releaseStartResources(stream, socket) {

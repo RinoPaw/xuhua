@@ -37,7 +37,7 @@ test("speech normalization removes markdown without dropping semantic operators"
   );
 });
 
-test("voice output snapshots locale and queues first sentence before completion", () => {
+test("voice output snapshots locale and queues first phrase before completion", () => {
   const harness = makeSchedulerHarness();
   const controller = new VoiceOutputController({
     websocketPath: "/api/voice",
@@ -46,15 +46,15 @@ test("voice output snapshots locale and queues first sentence before completion"
     createTraceId: () => "trace-1",
   });
 
-  assert.equal(controller.begin("en-US"), 7);
+  assert.equal(controller.begin("zh-CN"), 7);
   assert.equal(controller.pipelineActive, true);
-  assert.equal(controller.locale, "en-US");
-  controller.append("First sentence. Second", "zh-CN");
+  assert.equal(controller.locale, "zh-CN");
+  controller.append("如果你第一次认真看一幅传统汴绣作品，可以先留意针脚方向", "zh-CN");
   assert.equal(harness.calls[1][0], "enqueue");
-  assert.equal(harness.calls[1][1], "First sentence.");
+  assert.equal(harness.calls[1][1], "如果你第一次认真看一幅传统汴绣作品，");
   assert.deepEqual(harness.calls[1][2], {
-    reason: "first_sentence",
-    locale: "en-US",
+    reason: "first_phrase",
+    locale: "zh-CN",
   });
   controller.finish("", "zh-CN");
   assert.equal(harness.calls.at(-1)[0], "complete");

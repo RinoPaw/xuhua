@@ -12,7 +12,11 @@ export default defineConfig({
     host: "0.0.0.0",
     allowedHosts: ["terminal.local"],
     proxy: {
-      "/api": { target: "http://127.0.0.1:5050", changeOrigin: true },
+      "/api": {
+        target: "http://127.0.0.1:5050",
+        changeOrigin: true,
+        ws: true,
+      },
       "/healthz": { target: "http://127.0.0.1:5050", changeOrigin: true },
     },
     warmup: {

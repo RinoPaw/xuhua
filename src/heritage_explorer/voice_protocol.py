@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import math
 from typing import Any, TypeAlias
 
 
@@ -17,8 +18,8 @@ MAX_CONTEXT_LOCALE_CHARS = 64
 @dataclass(frozen=True, slots=True)
 class UtteranceStartCommand:
     interrupt: bool = False
-    level: float | int | str | None = None
-    threshold: float | int | str | None = None
+    level: float | None = None
+    threshold: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,13 @@ VoiceCommand: TypeAlias = (
     | TextCommand
     | ContextCommand
 )
+
+
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
 
 
 def _title(value: object) -> str:
@@ -135,8 +143,8 @@ def decode_voice_command(raw: str) -> VoiceCommand | None:
     if event_type == "utterance.start":
         return UtteranceStartCommand(
             interrupt=bool(event.get("interrupt")),
-            level=event.get("level"),
-            threshold=event.get("threshold"),
+            level=_finite_number(event.get("level")),
+            threshold=_finite_number(event.get("threshold")),
         )
     if event_type == "utterance.end":
         return UtteranceEndCommand()

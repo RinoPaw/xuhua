@@ -473,12 +473,14 @@ def test_tts_maps_resolved_locales_to_allowlisted_voices(monkeypatch) -> None:
 
     monkeypatch.setattr(api_module.edge_tts, "Communicate", FakeCommunicate)
     client, _kb, _search, _assistant = build_client()
-    english = client.get(
-        "/api/tts", params={"text": "Kunqu (昆曲) is a living tradition.", "locale": "en-US"}
-    )
-    cantonese = client.get(
-        "/api/tts", params={"text": "昆曲係一项传统艺术。", "locale": "yue-HK"}
-    )
+
+    def synthesize(text: str, locale: str) -> httpx.Response:
+        prepared = client.post("/api/tts", json={"text": text, "locale": locale})
+        assert prepared.status_code == 200
+        return client.get(f"/api/tts/{prepared.json()['token']}")
+
+    english = synthesize("Kunqu (昆曲) is a living tradition.", "en-US")
+    cantonese = synthesize("昆曲係一项传统艺术。", "yue-HK")
     assert english.status_code == 200
     assert cantonese.status_code == 200
     assert [call["voice"] for call in calls] == [

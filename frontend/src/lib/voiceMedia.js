@@ -5,6 +5,10 @@ const DEFAULT_AUDIO_CONSTRAINTS = Object.freeze({
   autoGainControl: true,
 });
 
+function stopStream(stream) {
+  stream?.getTracks?.().forEach((track) => track.stop?.());
+}
+
 export class VoiceMediaController {
   constructor({
     mediaDevices = globalThis.navigator?.mediaDevices,
@@ -23,20 +27,30 @@ export class VoiceMediaController {
     this.source = null;
     this.processor = null;
     this.muted = false;
+    this.generation = 0;
+    this.streamGeneration = 0;
   }
 
   async requestStream() {
     if (!this.mediaDevices?.getUserMedia) throw new Error("voice_media_unavailable");
+    const generation = ++this.generation;
     const stream = await this.mediaDevices.getUserMedia({
       audio: { ...DEFAULT_AUDIO_CONSTRAINTS },
     });
+    if (generation !== this.generation) {
+      stopStream(stream);
+      throw new Error("voice_media_request_stale");
+    }
     this.stream = stream;
+    this.streamGeneration = generation;
     this.applyMuteState();
     return stream;
   }
 
   async attachProcessor(onSamples) {
-    if (!this.stream) throw new Error("voice_media_stream_missing");
+    const stream = this.stream;
+    const generation = this.streamGeneration;
+    if (!stream || !generation) throw new Error("voice_media_stream_missing");
     if (typeof this.AudioContextImpl !== "function" || typeof this.AudioWorkletNodeImpl !== "function") {
       throw new Error("voice_audio_worklet_unavailable");
     }
@@ -44,8 +58,18 @@ export class VoiceMediaController {
     const context = new this.AudioContextImpl({ latencyHint: "interactive" });
     this.context = context;
     await context.audioWorklet.addModule(this.workletUrl);
+    if (
+      generation !== this.generation
+      || this.stream !== stream
+      || this.context !== context
+    ) {
+      if (context.state !== "closed") {
+        try { await context.close(); } catch { /* noop */ }
+      }
+      throw new Error("voice_media_request_stale");
+    }
 
-    const source = context.createMediaStreamSource(this.stream);
+    const source = context.createMediaStreamSource(stream);
     const processor = new this.AudioWorkletNodeImpl(context, this.processorName);
     const silent = context.createGain();
     silent.gain.value = 0;
@@ -69,6 +93,8 @@ export class VoiceMediaController {
   }
 
   stop() {
+    this.generation += 1;
+    this.streamGeneration = 0;
     this.processor?.disconnect?.();
     this.source?.disconnect?.();
     this.processor = null;
@@ -81,7 +107,7 @@ export class VoiceMediaController {
       try { closing = context.close(); } catch { /* noop */ }
     }
 
-    this.stream?.getTracks?.().forEach((track) => track.stop?.());
+    stopStream(this.stream);
     this.stream = null;
     if (closing?.catch) void closing.catch(() => {});
   }

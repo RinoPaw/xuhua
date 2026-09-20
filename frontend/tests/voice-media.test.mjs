@@ -3,12 +3,27 @@ import test from "node:test";
 
 import { VoiceMediaController } from "../src/lib/voiceMedia.js";
 
-function makeHarness() {
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function makeStream() {
   const track = { enabled: true, stopped: false, stop() { this.stopped = true; } };
   const stream = {
     getTracks: () => [track],
     getAudioTracks: () => [track],
   };
+  return { track, stream };
+}
+
+function makeHarness() {
+  const { track, stream } = makeStream();
   const source = {
     disconnected: false,
     connect(next) { this.next = next; return next; },
@@ -102,4 +117,83 @@ test("voice media controller wires worklet samples and releases resources", asyn
   assert.equal(harness.source.disconnected, true);
   assert.equal(harness.track.stopped, true);
   assert.equal(context.state, "closed");
+});
+
+test("late stale microphone requests cannot replace a newer stream", async () => {
+  const requests = [];
+  const mediaDevices = {
+    getUserMedia() {
+      const request = deferred();
+      requests.push(request);
+      return request.promise;
+    },
+  };
+  const media = new VoiceMediaController({ mediaDevices });
+
+  const firstPromise = media.requestStream();
+  media.stop();
+  const secondPromise = media.requestStream();
+
+  const second = makeStream();
+  requests[1].resolve(second.stream);
+  assert.equal(await secondPromise, second.stream);
+  assert.equal(media.stream, second.stream);
+
+  const first = makeStream();
+  requests[0].resolve(first.stream);
+  await assert.rejects(firstPromise, /voice_media_request_stale/);
+  assert.equal(first.track.stopped, true);
+  assert.equal(second.track.stopped, false);
+  assert.equal(media.stream, second.stream);
+});
+
+test("stale worklet attachment cannot bind to a replacement stream", async () => {
+  const first = makeStream();
+  const second = makeStream();
+  const streams = [first.stream, second.stream];
+  const moduleGate = deferred();
+  let sourceCreations = 0;
+
+  class SlowAudioContext {
+    constructor() {
+      this.sampleRate = 48000;
+      this.state = "running";
+      this.destination = {};
+      this.audioWorklet = { addModule: () => moduleGate.promise };
+    }
+    createMediaStreamSource() {
+      sourceCreations += 1;
+      return { connect(next) { return next; }, disconnect() {} };
+    }
+    createGain() {
+      return { gain: { value: 1 }, connect(next) { return next; } };
+    }
+    async close() { this.state = "closed"; }
+  }
+
+  class FakeWorkletNode {
+    constructor() {
+      this.port = { onmessage: null };
+    }
+    connect(next) { return next; }
+    disconnect() {}
+  }
+
+  const media = new VoiceMediaController({
+    mediaDevices: { async getUserMedia() { return streams.shift(); } },
+    AudioContextImpl: SlowAudioContext,
+    AudioWorkletNodeImpl: FakeWorkletNode,
+  });
+
+  await media.requestStream();
+  const attachPromise = media.attachProcessor(() => {});
+  media.stop();
+  await media.requestStream();
+  moduleGate.resolve();
+
+  await assert.rejects(attachPromise, /voice_media_request_stale/);
+  assert.equal(sourceCreations, 0);
+  assert.equal(first.track.stopped, true);
+  assert.equal(second.track.stopped, false);
+  assert.equal(media.stream, second.stream);
 });

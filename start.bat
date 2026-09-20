@@ -85,23 +85,12 @@ if errorlevel 1 (
 )
 popd
 
-echo [CHECK] Checking Xuhua Python dependencies...
-call :check_dependencies
+echo [CHECK] Syncing Xuhua Python dependencies from uv.lock...
+"%UV_EXE%" sync --locked --no-dev --inexact --no-install-project
 if errorlevel 1 (
-    echo [SETUP] Installing Xuhua dependencies into the shared runtime...
-    "%UV_EXE%" pip install --python "%PYTHON%" --requirements "%PROJECT_DIR%pyproject.toml"
-    if errorlevel 1 (
-        echo [ERROR] Dependency installation failed.
-        pause
-        exit /b 1
-    )
-
-    call :check_dependencies
-    if errorlevel 1 (
-        echo [ERROR] Some Xuhua dependencies are still missing.
-        pause
-        exit /b 1
-    )
+    echo [ERROR] Python dependency sync failed or uv.lock is out of date.
+    pause
+    exit /b 1
 )
 
 echo [CHECK] Validating .env...
@@ -132,7 +121,3 @@ if not "%XUHUA_EXIT_CODE%"=="0" (
 )
 
 exit /b 0
-
-:check_dependencies
-"%PYTHON%" -c "import edge_tts, fastapi, httpx, pypinyin, uvicorn, websockets" >nul 2>nul
-exit /b %ERRORLEVEL%

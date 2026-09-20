@@ -23,3 +23,11 @@ def test_installer_does_not_download_unused_local_models() -> None:
     assert "models.manifest.json" not in text
     assert "huggingface_hub" not in text
     assert "SkipModels" not in text
+
+
+def test_start_script_syncs_locked_runtime_dependencies() -> None:
+    text = (ROOT / "start.bat").read_text("utf-8")
+    assert "UV_PROJECT_ENVIRONMENT=%PACKAGE_DIR%\\.venv" in text
+    assert "sync --locked --no-dev --inexact --no-install-project" in text
+    assert "pip install --python" not in text
+    assert ":check_dependencies" not in text

@@ -14,12 +14,6 @@ import {
   createBargeInState,
 } from "./bargeInState.js";
 import {
-  applyFinalReveal,
-  applyPartialReveal,
-  createPartialRevealState,
-  resetPartialReveal,
-} from "../lib/partialReveal.js";
-import {
   compactRecognitionContext,
   VoiceTurnTracker,
 } from "../lib/voiceProtocol.js";
@@ -32,6 +26,7 @@ import {
 import { routeVoiceServerEvent } from "../lib/voiceEventRouter.js";
 import { VoiceMediaController } from "../lib/voiceMedia.js";
 import { VoiceOutputController } from "../lib/voiceOutput.js";
+import { VoiceTranscriptPresenter } from "../lib/voiceTranscriptPresenter.js";
 import {
   openVoiceSocket,
   parseSocketMessage,
@@ -72,10 +67,10 @@ export function useBrowserDuplexVoice({
   const voiceMediaRef = useRef(null);
   const voiceOutputRef = useRef(null);
   const voiceTurnsRef = useRef(null);
+  const voiceTranscriptRef = useRef(null);
   const mutedRef = useRef(false);
   const inputBlockedUntilRef = useRef(0);
   const bargeInRef = useRef(createBargeInState());
-  const partialRevealRef = useRef(createPartialRevealState());
   const callbacks = useRef({
     onUserPartial,
     onUserTranscript,
@@ -95,45 +90,11 @@ export function useBrowserDuplexVoice({
 
   if (!voiceMediaRef.current) voiceMediaRef.current = new VoiceMediaController();
   if (!voiceTurnsRef.current) voiceTurnsRef.current = new VoiceTurnTracker();
-
-  const clearPartialReveal = useCallback((resetText = false) => {
-    const reveal = partialRevealRef.current;
-    if (reveal.timer !== null) {
-      window.clearInterval(reveal.timer);
-      reveal.timer = null;
-    }
-    resetPartialReveal(reveal, { clearText: resetText });
-  }, []);
-
-  const publishUserPartial = useCallback((message) => {
-    const reveal = partialRevealRef.current;
-    const applied = applyPartialReveal(reveal, message);
-    if (!applied.accepted) return false;
-    if (applied.startsNew) clearPartialReveal(false);
-    callbacks.current.onUserPartial?.(reveal.visible, message);
-
-    if (reveal.timer === null && reveal.visible.length < reveal.target.length) {
-      reveal.timer = window.setInterval(() => {
-        const current = partialRevealRef.current;
-        if (current.visible.length >= current.target.length) {
-          window.clearInterval(current.timer);
-          current.timer = null;
-          return;
-        }
-        current.visible += current.target[current.visible.length];
-        callbacks.current.onUserPartial?.(current.visible, current.event);
-      }, 26);
-    }
-    return true;
-  }, [clearPartialReveal]);
-
-  const publishUserTranscript = useCallback((message, transcript) => {
-    const reveal = partialRevealRef.current;
-    if (!applyFinalReveal(reveal, message, transcript)) return false;
-    clearPartialReveal(false);
-    callbacks.current.onUserTranscript?.(reveal.visible, message);
-    return true;
-  }, [clearPartialReveal]);
+  if (!voiceTranscriptRef.current) {
+    voiceTranscriptRef.current = new VoiceTranscriptPresenter({
+      getCallbacks: () => callbacks.current,
+    });
+  }
 
   const settleListening = useCallback(() => {
     if (voiceInputRef.current.utteranceActive
@@ -296,19 +257,17 @@ export function useBrowserDuplexVoice({
         status: deriveVoiceStatus(voiceMachineRef.current),
         turns: voiceTurnsRef.current,
         output: voiceOutputRef.current,
+        presenter: voiceTranscriptRef.current,
         bargeInPhase: bargeInRef.current.phase,
         localeHint: recognition.locale_hint,
       },
       actions: {
         dispatchMany,
-        clearPartialReveal,
         clearBargeInCandidate,
         confirmBargeInFromAsr,
         stopSpeech,
         settleListening,
         markThinking,
-        publishUserPartial,
-        publishUserTranscript,
         appendSpeechDelta,
         finishSpeechStream,
         clearError: () => setError(null),
@@ -319,13 +278,10 @@ export function useBrowserDuplexVoice({
   }, [
     appendSpeechDelta,
     clearBargeInCandidate,
-    clearPartialReveal,
     confirmBargeInFromAsr,
     dispatchMany,
     finishSpeechStream,
     markThinking,
-    publishUserPartial,
-    publishUserTranscript,
     reportError,
     settleListening,
     stopSpeech,
@@ -375,7 +331,7 @@ export function useBrowserDuplexVoice({
 
   const cleanup = useCallback(() => {
     transportGenerationRef.current += 1;
-    clearPartialReveal(true);
+    voiceTranscriptRef.current?.clear(true);
     stopSpeech(false);
     resetVoiceInputPhase(voiceInputRef.current, {
       resetIds: true,
@@ -389,14 +345,14 @@ export function useBrowserDuplexVoice({
       socket.close(1000, "client_stop");
     }
     dispatchVoice({ type: "transport.idle" });
-  }, [clearBargeInCandidate, clearPartialReveal, dispatchVoice, stopSpeech]);
+  }, [clearBargeInCandidate, dispatchVoice, stopSpeech]);
 
   const start = useCallback(async () => {
     if (connected
       || deriveVoiceStatus(voiceMachineRef.current) === REALTIME_VOICE_STATUS.CONNECTING) return;
     const generation = transportGenerationRef.current + 1;
     transportGenerationRef.current = generation;
-    clearPartialReveal(true);
+    voiceTranscriptRef.current?.clear(true);
     resetVoiceInputPhase(voiceInputRef.current, {
       resetIds: true,
       discardResampler: true,
@@ -464,7 +420,6 @@ export function useBrowserDuplexVoice({
     }
   }, [
     cleanup,
-    clearPartialReveal,
     connected,
     dispatchVoice,
     processAudio,
@@ -513,9 +468,8 @@ export function useBrowserDuplexVoice({
   }, [settleListening, stopSpeech]);
 
   useEffect(() => () => {
-    clearPartialReveal(true);
     cleanup();
-  }, [clearPartialReveal, cleanup]);
+  }, [cleanup]);
 
   return {
     status,

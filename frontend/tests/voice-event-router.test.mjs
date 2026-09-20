@@ -29,6 +29,11 @@ function createHarness() {
     },
     turns: new VoiceTurnTracker(),
     output: { pipelineActive: false, playing: false },
+    presenter: {
+      publishPartial(message) { calls.push(["publishUserPartial", message.text]); },
+      publishTranscript(message, text) { calls.push(["publishUserTranscript", text]); },
+      reject() { calls.push(["rejectTranscript"]); },
+    },
     bargeInPhase: BARGE_IN_PHASE.IDLE,
     localeHint: "zh-CN",
   };
@@ -37,7 +42,6 @@ function createHarness() {
       for (const action of items) machine = reduceVoiceMachine(machine, action);
       calls.push(["dispatchMany", items.map((item) => item.type)]);
     },
-    clearPartialReveal(reset) { calls.push(["clearPartialReveal", reset]); },
     clearBargeInCandidate() { calls.push(["clearBargeInCandidate"]); },
     confirmBargeInFromAsr() { calls.push(["confirmBargeInFromAsr"]); },
     stopSpeech(bargeIn, notifyServer) { calls.push(["stopSpeech", bargeIn, notifyServer]); },
@@ -46,8 +50,6 @@ function createHarness() {
       machine = reduceVoiceMachine(machine, { type: "turn.thinking" });
       calls.push(["markThinking"]);
     },
-    publishUserPartial(message) { calls.push(["publishUserPartial", message.text]); },
-    publishUserTranscript(message, text) { calls.push(["publishUserTranscript", text]); },
     appendSpeechDelta(text, locale) { calls.push(["appendSpeechDelta", text, locale]); },
     finishSpeechStream(text, locale) { calls.push(["finishSpeechStream", text, locale]); },
     clearError() { calls.push(["clearError"]); },
@@ -72,15 +74,10 @@ test("router maps accepted server status into semantic machine actions", () => {
 
 test("router commits a user transcript and starts the next assistant turn", () => {
   const harness = createHarness();
-  const seen = [];
 
   const accepted = routeVoiceServerEvent(
     { type: "user.transcript", utterance_id: 1, text: "  汴绣是什么  " },
-    {
-      state: harness.state,
-      actions: harness.actions,
-      callbacks: { onUserTranscript: (text) => seen.push(text) },
-    },
+    { state: harness.state, actions: harness.actions },
   );
 
   assert.equal(accepted, true);
@@ -89,7 +86,6 @@ test("router commits a user transcript and starts the next assistant turn", () =
     ["markThinking"],
     ["publishUserTranscript", "汴绣是什么"],
   ]);
-  assert.deepEqual(seen, []);
 });
 
 test("router owns assistant turn acceptance through delta and done", () => {

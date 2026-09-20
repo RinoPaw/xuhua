@@ -2,7 +2,6 @@ import {
   isVoiceAssistantPending,
   normalizeVoiceId,
   normalizeVoiceText,
-  REALTIME_VOICE_STATUS,
   voiceActionsForServerStatus,
 } from "../hooks/voiceState.js";
 import { BARGE_IN_PHASE, shouldConfirmBargeInText } from "../hooks/bargeInState.js";
@@ -22,6 +21,7 @@ export function routeVoiceServerEvent(message, {
   if (!message?.type || !state?.input || !state?.machine || !state?.turns) return false;
 
   const output = state.output;
+  const presenter = state.presenter;
   const bargeInTentative = state.bargeInPhase === BARGE_IN_PHASE.TENTATIVE;
   const assistantPending = isVoiceAssistantPending(state.machine);
 
@@ -49,8 +49,7 @@ export function routeVoiceServerEvent(message, {
     state.input.activeUtteranceId = 0;
     const transcript = normalizeVoiceText(message.text);
     if (!transcript) {
-      actions.clearPartialReveal(true);
-      callbacks.onUserPartial?.("", message);
+      presenter?.reject(message);
       if (bargeInTentative) actions.clearBargeInCandidate();
       else actions.settleListening();
       return true;
@@ -64,7 +63,7 @@ export function routeVoiceServerEvent(message, {
       state.turns.ignoreActive();
     }
     actions.markThinking();
-    actions.publishUserTranscript(message, transcript);
+    presenter?.publishTranscript(message, transcript);
     return true;
   }
 
@@ -74,7 +73,7 @@ export function routeVoiceServerEvent(message, {
       if (!shouldConfirmBargeInText(message.text)) return false;
       actions.confirmBargeInFromAsr();
     }
-    actions.publishUserPartial(message);
+    presenter?.publishPartial(message);
     return true;
   }
 
@@ -106,8 +105,7 @@ export function routeVoiceServerEvent(message, {
 
   if (message.type === "utterance.rejected") {
     if (!acceptVoiceUtteranceMessage(state.input, message)) return false;
-    actions.clearPartialReveal(true);
-    callbacks.onUserPartial?.("", message);
+    presenter?.reject(message);
     if (bargeInTentative) actions.clearBargeInCandidate();
     else actions.settleListening();
     state.input.activeUtteranceId = 0;

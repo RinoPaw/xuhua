@@ -80,46 +80,27 @@ export function reduceVoiceMachine(state, action) {
   }
 }
 
-export function reduceVoiceDisplayStatus(state, status) {
-  let next = state || createVoiceMachineState();
-  const apply = (type) => {
-    next = reduceVoiceMachine(next, { type });
-  };
-
+export function voiceActionsForServerStatus(status) {
   switch (status) {
-    case REALTIME_VOICE_STATUS.IDLE:
-      apply("transport.idle");
-      break;
-    case REALTIME_VOICE_STATUS.CONNECTING:
-      apply("transport.connecting");
-      break;
     case REALTIME_VOICE_STATUS.LISTENING:
-      apply("fault.clear");
-      apply("input.idle");
-      apply("turn.idle");
-      apply("output.idle");
-      break;
+      return [
+        { type: "fault.clear" },
+        { type: "input.idle" },
+        { type: "turn.idle" },
+        { type: "output.idle" },
+      ];
     case REALTIME_VOICE_STATUS.USER_SPEAKING:
-      apply("input.speaking");
-      break;
+      return [{ type: "input.speaking" }];
     case REALTIME_VOICE_STATUS.TRANSCRIBING:
-      apply("input.transcribing");
-      break;
+      return [{ type: "input.transcribing" }];
     case REALTIME_VOICE_STATUS.THINKING:
-      apply("input.idle");
-      apply("turn.thinking");
-      break;
-    case REALTIME_VOICE_STATUS.RESPONDING:
-      apply("turn.idle");
-      apply("output.speaking");
-      break;
-    case REALTIME_VOICE_STATUS.ERROR:
-      apply("fault.raise");
-      break;
+      return [
+        { type: "input.idle" },
+        { type: "turn.thinking" },
+      ];
     default:
-      break;
+      return [];
   }
-  return next;
 }
 
 export function deriveVoiceStatus(state) {

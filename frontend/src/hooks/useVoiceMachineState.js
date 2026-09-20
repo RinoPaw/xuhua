@@ -3,7 +3,6 @@ import { useCallback, useRef, useState } from "react";
 import {
   createVoiceMachineState,
   deriveVoiceStatus,
-  reduceVoiceDisplayStatus,
   reduceVoiceMachine,
 } from "./voiceState.js";
 
@@ -19,20 +18,22 @@ export function useVoiceMachineState() {
     return next;
   }, []);
 
-  const dispatch = useCallback((action) => {
-    return commit(reduceVoiceMachine(stateRef.current, action));
+  const dispatchMany = useCallback((actions) => {
+    const next = (Array.isArray(actions) ? actions : []).reduce(
+      (current, action) => reduceVoiceMachine(current, action),
+      stateRef.current,
+    );
+    return commit(next);
   }, [commit]);
 
-  const setDisplayStatus = useCallback((status) => {
-    return commit(reduceVoiceDisplayStatus(stateRef.current, status));
-  }, [commit]);
+  const dispatch = useCallback((action) => dispatchMany([action]), [dispatchMany]);
 
   return {
     state,
     stateRef,
     status: deriveVoiceStatus(state),
     dispatch,
-    setDisplayStatus,
+    dispatchMany,
   };
 }
 

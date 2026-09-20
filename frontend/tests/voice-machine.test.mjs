@@ -6,6 +6,7 @@ import {
   deriveVoiceStatus,
   REALTIME_VOICE_STATUS,
   reduceVoiceMachine,
+  voiceActionsForServerStatus,
   VOICE_INPUT_PHASE,
   VOICE_OUTPUT_PHASE,
   VOICE_TRANSPORT_PHASE,
@@ -46,6 +47,34 @@ test("pending output stays responding after first speech starts", () => {
 
   state = reduceVoiceMachine(state, { type: "turn.idle" });
   assert.equal(deriveVoiceStatus(state), REALTIME_VOICE_STATUS.RESPONDING);
+});
+
+
+test("server statuses translate into semantic machine actions", () => {
+  let state = {
+    ...createVoiceMachineState(),
+    transport: VOICE_TRANSPORT_PHASE.CONNECTED,
+    input: VOICE_INPUT_PHASE.TRANSCRIBING,
+    turn: VOICE_TURN_PHASE.THINKING,
+    output: VOICE_OUTPUT_PHASE.SPEAKING,
+    fault: true,
+  };
+
+  for (const action of voiceActionsForServerStatus(REALTIME_VOICE_STATUS.LISTENING)) {
+    state = reduceVoiceMachine(state, action);
+  }
+  assert.equal(state.input, VOICE_INPUT_PHASE.IDLE);
+  assert.equal(state.turn, VOICE_TURN_PHASE.IDLE);
+  assert.equal(state.output, VOICE_OUTPUT_PHASE.IDLE);
+  assert.equal(state.fault, false);
+  assert.equal(deriveVoiceStatus(state), REALTIME_VOICE_STATUS.LISTENING);
+
+  for (const action of voiceActionsForServerStatus(REALTIME_VOICE_STATUS.THINKING)) {
+    state = reduceVoiceMachine(state, action);
+  }
+  assert.equal(state.input, VOICE_INPUT_PHASE.IDLE);
+  assert.equal(state.turn, VOICE_TURN_PHASE.THINKING);
+  assert.equal(deriveVoiceStatus(state), REALTIME_VOICE_STATUS.THINKING);
 });
 
 

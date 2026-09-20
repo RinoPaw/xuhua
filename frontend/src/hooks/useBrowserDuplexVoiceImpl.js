@@ -4,6 +4,7 @@ import {
   normalizeVoiceId,
   normalizeVoiceText,
   REALTIME_VOICE_STATUS,
+  voiceActionsForServerStatus,
   VOICE_OUTPUT_PHASE,
   VOICE_TRANSPORT_PHASE,
 } from "./voiceState.js";
@@ -61,7 +62,7 @@ export function useBrowserDuplexVoice({
     stateRef: voiceMachineRef,
     status,
     dispatch: dispatchVoice,
-    setDisplayStatus,
+    dispatchMany,
   } = useVoiceMachineState();
   const [error, setError] = useState(null);
   const [isMuted, setMuted] = useState(false);
@@ -144,13 +145,20 @@ export function useBrowserDuplexVoice({
     return true;
   }, [clearPartialReveal]);
 
-  const setStatusValue = useCallback((value) => {
-    if (value === REALTIME_VOICE_STATUS.LISTENING
-      && (voiceInputRef.current.utteranceActive
-        || voiceOutputRef.current?.pipelineActive
-        || assistantPendingRef.current)) return;
-    setDisplayStatus(value);
-  }, [setDisplayStatus]);
+  const settleListening = useCallback(() => {
+    if (voiceInputRef.current.utteranceActive
+      || voiceOutputRef.current?.pipelineActive
+      || assistantPendingRef.current) return false;
+    dispatchMany(voiceActionsForServerStatus(REALTIME_VOICE_STATUS.LISTENING));
+    return true;
+  }, [dispatchMany]);
+
+  const markThinking = useCallback(() => {
+    dispatchMany([
+      { type: "input.idle" },
+      { type: "turn.thinking" },
+    ]);
+  }, [dispatchMany]);
 
   const acceptUtteranceMessage = useCallback((message, options) => {
     return acceptVoiceUtteranceMessage(voiceInputRef.current, message, options);
@@ -159,9 +167,9 @@ export function useBrowserDuplexVoice({
   const reportError = useCallback((value) => {
     const next = value instanceof Error ? value : new Error(String(value || "voice_error"));
     setError(next);
-    setStatusValue(REALTIME_VOICE_STATUS.ERROR);
+    dispatchVoice({ type: "fault.raise" });
     callbacks.current.onError?.(next);
-  }, [setStatusValue]);
+  }, [dispatchVoice]);
 
   if (!voiceOutputRef.current) {
     voiceOutputRef.current = new VoiceOutputController({
@@ -176,14 +184,20 @@ export function useBrowserDuplexVoice({
           console.info(`[叙华][trace=${trace}] tts.first_audio_chunk segment=${event.segment} +${elapsed.toFixed(3)}s`);
         } else if (event.type === "playing") {
           console.info(`[叙华][trace=${trace}] tts.playing segment=${event.segment} +${elapsed.toFixed(3)}s`);
-          setStatusValue(REALTIME_VOICE_STATUS.RESPONDING);
+          dispatchMany([
+            { type: "turn.idle" },
+            { type: "output.speaking" },
+          ]);
         } else if (event.type === "segment.complete") {
           console.info(`[叙华][trace=${trace}] tts.sentence.complete segment=${event.segment} +${elapsed.toFixed(3)}s`);
         }
       },
       onPlayingChange: (playing) => {
         if (playing) {
-          dispatchVoice({ type: "output.speaking" });
+          dispatchMany([
+            { type: "turn.idle" },
+            { type: "output.speaking" },
+          ]);
         } else if (voiceOutputRef.current?.pipelineActive) {
           dispatchVoice({ type: "output.pending" });
         } else {
@@ -193,7 +207,7 @@ export function useBrowserDuplexVoice({
       onTerminal: ({ failed }) => {
         assistantPendingRef.current = false;
         inputBlockedUntilRef.current = performance.now() + 450;
-        setStatusValue(REALTIME_VOICE_STATUS.LISTENING);
+        settleListening();
         if (failed) reportError("speech_output_failed");
       },
     });
@@ -221,23 +235,25 @@ export function useBrowserDuplexVoice({
     assistantTurnRef.current = "";
     voiceOutputRef.current?.stop();
     assistantPendingRef.current = false;
-    dispatchVoice({ type: "output.idle" });
-    dispatchVoice({ type: "turn.idle" });
+    dispatchMany([
+      { type: "output.idle" },
+      { type: "turn.idle" },
+    ]);
     inputBlockedUntilRef.current = bargeIn ? 0 : performance.now() + 450;
     if (bargeIn) {
       if (notifyServer) send({ type: "barge_in" });
       callbacks.current.onBargeIn?.();
     }
-  }, [clearBargeInCandidate, dispatchVoice, send]);
+  }, [clearBargeInCandidate, dispatchMany, send]);
 
   const confirmBargeInFromAsr = useCallback(() => {
     const confirmed = confirmBargeIn(bargeInRef.current);
     if (!confirmed.confirmed) return false;
     clearBargeInCandidate();
     stopSpeech(true, true);
-    setStatusValue(REALTIME_VOICE_STATUS.USER_SPEAKING);
+    dispatchVoice({ type: "input.speaking" });
     return true;
-  }, [clearBargeInCandidate, setStatusValue, stopSpeech]);
+  }, [clearBargeInCandidate, dispatchVoice, stopSpeech]);
 
   const beginBargeInCandidate = useCallback((utteranceId, startedAt) => {
     if (bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE) return false;
@@ -254,12 +270,15 @@ export function useBrowserDuplexVoice({
 
   const beginSpeechStream = useCallback((locale = "") => {
     assistantPendingRef.current = true;
-    dispatchVoice({ type: "output.pending" });
+    dispatchMany([
+      { type: "input.idle" },
+      { type: "turn.thinking" },
+      { type: "output.pending" },
+    ]);
     const generation = voiceOutputRef.current?.begin(locale);
     resetVoiceOnset(voiceInputRef.current);
-    setStatusValue(REALTIME_VOICE_STATUS.THINKING);
     return generation;
-  }, [dispatchVoice, setStatusValue]);
+  }, [dispatchMany]);
 
   const appendSpeechDelta = useCallback((text, locale = "") => {
     const delta = String(text || "");
@@ -308,15 +327,15 @@ export function useBrowserDuplexVoice({
         if (result.started.shouldInterrupt) {
           beginBargeInCandidate(result.started.utteranceId, input.utteranceStartedAt);
         } else if (result.nextStatus === "user_speaking") {
-          setStatusValue(REALTIME_VOICE_STATUS.USER_SPEAKING);
+          dispatchVoice({ type: "input.speaking" });
         }
       }
     });
 
     if (!result.started && result.nextStatus === "transcribing") {
-      setStatusValue(REALTIME_VOICE_STATUS.TRANSCRIBING);
+      dispatchVoice({ type: "input.transcribing" });
     }
-  }, [beginBargeInCandidate, setStatusValue]);
+  }, [beginBargeInCandidate, dispatchVoice]);
 
   const cleanup = useCallback(() => {
     transportGenerationRef.current += 1;
@@ -347,7 +366,7 @@ export function useBrowserDuplexVoice({
       discardResampler: true,
     });
     setError(null);
-    setStatusValue(REALTIME_VOICE_STATUS.CONNECTING);
+    dispatchVoice({ type: "transport.connecting" });
 
     let startStream = null;
     let startSocket = null;
@@ -392,7 +411,7 @@ export function useBrowserDuplexVoice({
           });
           if (!decision.accepted) return;
           assistantTurnRef.current = decision.activeTurn;
-          setStatusValue(decision.status);
+          dispatchMany(voiceActionsForServerStatus(decision.status));
           return;
         }
 
@@ -405,7 +424,7 @@ export function useBrowserDuplexVoice({
             callbacks.current.onUserPartial?.("", message);
             const wasCandidate = bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE;
             if (wasCandidate) clearBargeInCandidate();
-            if (!wasCandidate) setStatusValue(REALTIME_VOICE_STATUS.LISTENING);
+            if (!wasCandidate) settleListening();
             return;
           }
 
@@ -418,7 +437,7 @@ export function useBrowserDuplexVoice({
             assistantTurnRef.current = "";
           }
           assistantPendingRef.current = true;
-          setStatusValue(REALTIME_VOICE_STATUS.THINKING);
+          markThinking();
           publishUserTranscript(message, transcript);
           return;
         }
@@ -483,7 +502,7 @@ export function useBrowserDuplexVoice({
           )) return;
           stopSpeech(false, false);
           setError(null);
-          setStatusValue(REALTIME_VOICE_STATUS.LISTENING);
+          settleListening();
           return;
         }
 
@@ -493,7 +512,7 @@ export function useBrowserDuplexVoice({
           callbacks.current.onUserPartial?.("", message);
           const wasCandidate = bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE;
           if (wasCandidate) clearBargeInCandidate();
-          if (!wasCandidate) setStatusValue(REALTIME_VOICE_STATUS.LISTENING);
+          if (!wasCandidate) settleListening();
           voiceInputRef.current.activeUtteranceId = 0;
           return;
         }
@@ -537,7 +556,7 @@ export function useBrowserDuplexVoice({
       }
 
       dispatchVoice({ type: "transport.connected" });
-      setStatusValue(REALTIME_VOICE_STATUS.LISTENING);
+      settleListening();
     } catch (startError) {
       if (transportGenerationRef.current !== generation) {
         releaseStartResources();
@@ -554,14 +573,16 @@ export function useBrowserDuplexVoice({
     clearPartialReveal,
     connected,
     confirmBargeInFromAsr,
+    dispatchMany,
     dispatchVoice,
     finishSpeechStream,
+    markThinking,
     processAudio,
     publishUserPartial,
     publishUserTranscript,
     reportError,
     sendRecognitionContext,
-    setStatusValue,
+    settleListening,
     stopSpeech,
     voiceMachineRef,
     websocketPath,
@@ -570,8 +591,7 @@ export function useBrowserDuplexVoice({
   const stop = useCallback(() => {
     cleanup();
     setError(null);
-    dispatchVoice({ type: "fault.clear" });
-  }, [cleanup, dispatchVoice]);
+  }, [cleanup]);
 
   const toggleMute = useCallback(() => {
     const next = !mutedRef.current;
@@ -596,16 +616,16 @@ export function useBrowserDuplexVoice({
     const sent = send({ type: "text", text });
     if (sent) {
       assistantPendingRef.current = true;
-      setStatusValue(REALTIME_VOICE_STATUS.THINKING);
+      markThinking();
     }
     return sent;
-  }, [send, setStatusValue, stopSpeech]);
+  }, [markThinking, send, stopSpeech]);
 
   const cancelResponse = useCallback(() => {
     stopSpeech(true);
-    setStatusValue(REALTIME_VOICE_STATUS.LISTENING);
+    settleListening();
     return true;
-  }, [setStatusValue, stopSpeech]);
+  }, [settleListening, stopSpeech]);
 
   useEffect(() => () => {
     clearPartialReveal(true);

@@ -299,7 +299,7 @@ export class BrowserVoiceSession {
     if (!text || !this.connection.connected) return false;
     this.transcript.clear(true);
     this.input.supersedeUtterance();
-    this.stopSpeech(true);
+    this.stopSpeech(true, false);
     const sent = this.send({ type: "text", text });
     if (sent) this.markThinking();
     return sent;

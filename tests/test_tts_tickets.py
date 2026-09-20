@@ -34,7 +34,9 @@ def test_tts_tickets_are_bounded_per_client_and_expire() -> None:
     )
     assert first == "token-a"
     assert second == "token-b"
-    assert store.get(first)?.text if False else store.get(first).text == "第一句"
+    first_ticket = store.get(first)
+    assert first_ticket is not None
+    assert first_ticket.text == "第一句"
 
     with pytest.raises(TtsTicketCapacity):
         store.issue(

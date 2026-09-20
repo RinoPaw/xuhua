@@ -103,7 +103,13 @@ class AdmissionController:
             if not bucket:
                 self._client_usage.pop(key, None)
 
-    async def acquire(self, service: str, client_id: object = "unknown") -> AdmissionLease:
+    async def _admit(
+        self,
+        service: str,
+        client_id: object,
+        *,
+        hold_concurrency: bool,
+    ) -> None:
         policy = self._policies.get(service)
         if policy is None:
             raise KeyError(f"unknown admission service: {service}")
@@ -111,7 +117,7 @@ class AdmissionController:
         now = self._clock()
 
         async with self._lock:
-            if self._active[service] >= policy.max_concurrency:
+            if hold_concurrency and self._active[service] >= policy.max_concurrency:
                 raise AdmissionDenied(service, "capacity", 1)
 
             global_bucket = self._global_usage[service]
@@ -134,10 +140,17 @@ class AdmissionController:
 
             global_bucket.append(now)
             client_bucket.append(now)
-            self._active[service] += 1
+            if hold_concurrency:
+                self._active[service] += 1
             self._prune_clients(now)
 
+    async def acquire(self, service: str, client_id: object = "unknown") -> AdmissionLease:
+        await self._admit(service, client_id, hold_concurrency=True)
         return AdmissionLease(self, service)
+
+    async def charge(self, service: str, client_id: object = "unknown") -> None:
+        """Charge rolling-rate budgets without reserving a concurrency slot."""
+        await self._admit(service, client_id, hold_concurrency=False)
 
     async def _release(self, service: str) -> None:
         async with self._lock:
@@ -158,12 +171,14 @@ def client_key_from_scope(scope: Mapping[str, Any]) -> str:
 
 
 class AdmissionMiddleware:
-    """Hold one admission lease for the full ASGI lifetime of expensive routes."""
+    """Hold concurrency only for expensive lifetimes; rate-charge cheap setup requests."""
 
     ROUTES = {
         ("http", "POST", "/api/chat"): "chat",
-        ("http", "POST", "/api/tts"): "tts",
         ("websocket", "", "/api/voice"): "voice",
+    }
+    RATE_ONLY_ROUTES = {
+        ("http", "POST", "/api/tts"): "tts",
     }
 
     def __init__(self, app: Any, *, controller: AdmissionController) -> None:
@@ -171,13 +186,19 @@ class AdmissionMiddleware:
         self.controller = controller
 
     @classmethod
-    def service_for_scope(cls, scope: Mapping[str, Any]) -> str | None:
+    def route_key(cls, scope: Mapping[str, Any]) -> tuple[str, str, str]:
         scope_type = str(scope.get("type") or "")
         method = str(scope.get("method") or "").upper() if scope_type == "http" else ""
         path = str(scope.get("path") or "")
+        return scope_type, method, path
+
+    @classmethod
+    def service_for_scope(cls, scope: Mapping[str, Any]) -> str | None:
+        key = cls.route_key(scope)
+        scope_type, method, path = key
         if scope_type == "http" and method == "GET" and path.startswith("/api/tts/"):
             return "tts"
-        return cls.ROUTES.get((scope_type, method, path))
+        return cls.ROUTES.get(key) or cls.RATE_ONLY_ROUTES.get(key)
 
     @staticmethod
     async def reject(scope: Mapping[str, Any], send: Callable[..., Any], exc: AdmissionDenied) -> None:
@@ -198,13 +219,19 @@ class AdmissionMiddleware:
         await send({"type": "http.response.body", "body": body})
 
     async def __call__(self, scope: dict[str, Any], receive: Callable[..., Any], send: Callable[..., Any]) -> None:
+        key = self.route_key(scope)
         service = self.service_for_scope(scope)
         if service is None:
             await self.app(scope, receive, send)
             return
 
+        client_id = client_key_from_scope(scope)
         try:
-            lease = await self.controller.acquire(service, client_key_from_scope(scope))
+            if key in self.RATE_ONLY_ROUTES:
+                await self.controller.charge(service, client_id)
+                await self.app(scope, receive, send)
+                return
+            lease = await self.controller.acquire(service, client_id)
         except AdmissionDenied as exc:
             await self.reject(scope, send, exc)
             return

@@ -21,7 +21,7 @@ class Session:
     turns: list[ConversationTurn] = field(default_factory=list)
     last_seen: float = field(default_factory=time.monotonic)
     active_turns: dict[str, asyncio.Event] = field(default_factory=dict)
-    cancel_reasons: dict[str, str] = field(default_factory=dict)
+    cancel_reasons: dict[asyncio.Event, str] = field(default_factory=dict)
 
     def touch(self) -> None:
         self.last_seen = time.monotonic()
@@ -75,12 +75,24 @@ class SessionStore:
             # expose the mutable internal list to a caller.
             return list(session.turns)
 
-    def append(self, session_id: str, turn: ConversationTurn) -> None:
+    def append(
+        self,
+        session_id: str,
+        turn: ConversationTurn,
+        cancel_event: asyncio.Event | None = None,
+    ) -> None:
         with self._lock:
             self._purge_locked()
             session = self._get_or_create_locked(session_id)
             active = session.active_turns.get(turn.turn_id)
-            if active is not None and active.is_set():
+            if cancel_event is not None:
+                # A client may reuse a turn id.  The event object identifies
+                # the generation that is allowed to commit its result.
+                if active is not cancel_event or cancel_event.is_set():
+                    session.touch()
+                    self._evict_locked()
+                    return
+            elif active is not None and active.is_set():
                 session.touch()
                 self._evict_locked()
                 return
@@ -89,7 +101,11 @@ class SessionStore:
             session.touch()
             self._evict_locked()
 
-    def begin_turn(self, session_id: str, turn_id: str | None = None) -> tuple[Session, str, asyncio.Event]:
+    def begin_turn(
+        self,
+        session_id: str,
+        turn_id: str | None = None,
+    ) -> tuple[Session, str, asyncio.Event]:
         with self._lock:
             self._purge_locked()
             session = self._get_or_create_locked(session_id)
@@ -97,12 +113,11 @@ class SessionStore:
             # A session has one conversational foreground turn.  Setting all
             # prior events makes barge-in deterministic even when their
             # generators are suspended in retrieval or provider I/O.
-            for old_turn_id, old_event in session.active_turns.items():
+            for old_event in session.active_turns.values():
                 old_event.set()
-                session.cancel_reasons[old_turn_id] = "superseded"
+                session.cancel_reasons[old_event] = "superseded"
             cancel_event = asyncio.Event()
             session.active_turns[turn_id] = cancel_event
-            session.cancel_reasons.pop(turn_id, None)
             session.touch()
             self._evict_locked()
         return session, turn_id, cancel_event
@@ -120,8 +135,13 @@ class SessionStore:
                 # reused the same client-supplied turn_id.
                 current = session.active_turns.get(turn_id)
                 if cancel_event is None or current is cancel_event:
-                    session.active_turns.pop(turn_id, None)
-                    session.cancel_reasons.pop(turn_id, None)
+                    removed = session.active_turns.pop(turn_id, None)
+                    if removed is not None:
+                        session.cancel_reasons.pop(removed, None)
+                elif cancel_event is not None:
+                    # The replacement still owns the id; only discard state
+                    # that belonged to the completed old generation.
+                    session.cancel_reasons.pop(cancel_event, None)
                 session.touch()
                 self._evict_locked()
 
@@ -132,16 +152,24 @@ class SessionStore:
             if event is None:
                 return False
             event.set()
-            session.cancel_reasons[turn_id] = "client_cancelled"
+            session.cancel_reasons[event] = "client_cancelled"
             session.touch()
             return True
 
-    def cancel_reason(self, session_id: str, turn_id: str) -> str | None:
+    def cancel_reason(
+        self,
+        session_id: str,
+        turn_id: str,
+        cancel_event: asyncio.Event | None = None,
+    ) -> str | None:
         with self._lock:
             session = self._sessions.get(session_id)
             if session is None:
                 return None
-            return session.cancel_reasons.get(turn_id)
+            event = cancel_event or session.active_turns.get(turn_id)
+            if event is None:
+                return None
+            return session.cancel_reasons.get(event)
 
     def size(self) -> int:
         with self._lock:

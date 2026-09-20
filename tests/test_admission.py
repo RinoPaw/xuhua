@@ -71,10 +71,10 @@ def test_client_key_uses_resolved_asgi_peer() -> None:
     assert client_key_from_scope({}) == "unknown"
 
 
-def test_tts_admission_wraps_only_the_expensive_stream_request() -> None:
+def test_tts_admission_limits_ticket_issuance_and_streaming() -> None:
     assert AdmissionMiddleware.service_for_scope(
         {"type": "http", "method": "POST", "path": "/api/tts"}
-    ) is None
+    ) == "tts"
     assert AdmissionMiddleware.service_for_scope(
         {"type": "http", "method": "GET", "path": "/api/tts/private-token"}
     ) == "tts"

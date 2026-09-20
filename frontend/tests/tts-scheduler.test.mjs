@@ -26,6 +26,7 @@ function makeScheduler() {
   const terminals = [];
   const playingChanges = [];
   const scheduler = new TtsScheduler({
+    prepareSource: ({ segment }) => `/tts/${segment}`,
     createAudio: (url) => {
       const audio = new FakeAudio(url);
       audios.push(audio);
@@ -42,13 +43,13 @@ test("preloads the second segment before the first segment ends", async () => {
   const { scheduler, audios, events, terminals, playingChanges } = makeScheduler();
   scheduler.begin();
 
-  assert.equal(scheduler.enqueue("第一句。", { url: "/tts/0", reason: "first_sentence" }), true);
+  assert.equal(scheduler.enqueue("第一句。", { reason: "first_sentence" }), true);
   assert.equal(audios.length, 1);
   assert.equal(audios[0].playCalls, 1);
   audios[0].emit("loadeddata");
   audios[0].emit("playing");
 
-  assert.equal(scheduler.enqueue("剩余内容。", { url: "/tts/1", reason: "text_complete" }), true);
+  assert.equal(scheduler.enqueue("剩余内容。", { reason: "text_complete" }), true);
   assert.equal(audios.length, 2);
   assert.equal(audios[1].loadCalls, 1);
   assert.equal(audios[1].playCalls, 0);
@@ -75,7 +76,7 @@ test("preloads the second segment before the first segment ends", async () => {
 test("scheduler has no tentative pause path; candidate energy cannot stop playback", () => {
   const { scheduler, audios, playingChanges } = makeScheduler();
   scheduler.begin();
-  scheduler.enqueue("播报内容。", { url: "/tts/0" });
+  scheduler.enqueue("播报内容。");
   audios[0].emit("playing");
 
   assert.equal("pauseTentative" in scheduler, false);
@@ -88,9 +89,9 @@ test("scheduler has no tentative pause path; candidate energy cannot stop playba
 test("stop releases current and prefetched audio and ignores late callbacks", () => {
   const { scheduler, audios, terminals, playingChanges } = makeScheduler();
   scheduler.begin();
-  scheduler.enqueue("第一句。", { url: "/tts/0" });
+  scheduler.enqueue("第一句。");
   audios[0].emit("playing");
-  scheduler.enqueue("剩余内容。", { url: "/tts/1" });
+  scheduler.enqueue("剩余内容。");
 
   scheduler.stop();
   assert.equal(scheduler.isPlaying, false);
@@ -111,14 +112,14 @@ test("stop releases current and prefetched audio and ignores late callbacks", ()
 test("a new generation isolates stale audio and never creates a third segment", () => {
   const { scheduler, audios, terminals } = makeScheduler();
   scheduler.begin();
-  scheduler.enqueue("旧第一句。", { url: "/tts/old-0" });
+  scheduler.enqueue("旧第一句。");
   const oldAudio = audios[0];
   scheduler.stop();
 
   scheduler.begin();
-  scheduler.enqueue("新第一句。", { url: "/tts/new-0" });
-  scheduler.enqueue("新剩余内容。", { url: "/tts/new-1" });
-  assert.equal(scheduler.enqueue("不应出现。", { url: "/tts/new-2" }), false);
+  scheduler.enqueue("新第一句。");
+  scheduler.enqueue("新剩余内容。");
+  assert.equal(scheduler.enqueue("不应出现。"), false);
 
   oldAudio.emit("playing");
   oldAudio.emit("ended");
@@ -215,6 +216,7 @@ test("retries a failed network TTS segment twice, then falls back without failin
   let fallback = null;
 
   const scheduler = new TtsScheduler({
+    prepareSource: () => "/tts/0",
     createAudio: () => audio,
     onEvent: (event) => events.push(event),
     onTerminal: (event) => terminals.push(event),
@@ -230,7 +232,7 @@ test("retries a failed network TTS segment twice, then falls back without failin
   });
 
   scheduler.begin();
-  scheduler.enqueue("网络不稳也要继续播报。", { url: "/tts/0" });
+  scheduler.enqueue("网络不稳也要继续播报。");
   scheduler.complete();
 
   audio.emit("error");

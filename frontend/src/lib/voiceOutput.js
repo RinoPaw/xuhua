@@ -49,8 +49,7 @@ export class VoiceOutputController {
         this.onPlayingChange(playing);
       },
       onTerminal: ({ failed }) => {
-        this.pipelineActive = false;
-        this.playing = false;
+        this.clearTurnState();
         this.onTerminal({ failed });
       },
     });
@@ -58,6 +57,14 @@ export class VoiceOutputController {
 
   setWebsocketPath(path) {
     this.websocketPath = String(path || "/api/voice");
+  }
+
+  clearTurnState() {
+    this.pipelineActive = false;
+    this.playing = false;
+    this.traceId = "";
+    this.locale = DEFAULT_LOCALE;
+    this.textPlan.reset(DEFAULT_LOCALE);
   }
 
   begin(locale = "") {
@@ -75,9 +82,7 @@ export class VoiceOutputController {
 
   stop() {
     this.scheduler.stop();
-    this.pipelineActive = false;
-    this.playing = false;
-    this.textPlan.reset();
+    this.clearTurnState();
     return true;
   }
 
@@ -113,13 +118,5 @@ export class VoiceOutputController {
     }
     this.scheduler.complete();
     return true;
-  }
-
-  speak(text, locale = "") {
-    const content = String(text || "").trim();
-    if (!content) return false;
-    this.begin(locale);
-    this.append(content, locale);
-    return this.finish("", locale);
   }
 }

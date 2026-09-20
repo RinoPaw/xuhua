@@ -42,7 +42,7 @@ def test_nginx_configs_limit_expensive_public_routes() -> None:
         assert "limit_conn_status 429" in config
 
 
-def test_deploy_script_snapshots_and_restores_environment() -> None:
+def test_deploy_script_snapshots_restores_and_bounds_environment_history() -> None:
     deploy_script = ROOT / "deploy" / "xuhua-deploy.sh"
     subprocess.run(["bash", "-n", str(deploy_script)], check=True)
     script = deploy_script.read_text(encoding="utf-8")
@@ -52,11 +52,15 @@ def test_deploy_script_snapshots_and_restores_environment() -> None:
     assert 'read -r candidate candidate_env_revision <"$pointer"' in script
     assert 'export XUHUA_ENV_FILE="$restore_env"' in script
     assert 'export XUHUA_ENV_REVISION="$restore_env_revision"' in script
+    assert 'for snapshot in "$last_good_compose".*; do' in script
+    assert '"$snapshot" == "$keep_current_env_file"' in script
+    assert '"$snapshot" == "$keep_previous_env_file"' in script
+    assert 'rm -f -- "$snapshot" || true' in script
     assert (
         "if wait_for_healthy; then\n"
         "  remember_success\n"
         "  deployment_succeeded=1\n"
-        "  cleanup_old_images\n"
+        "  cleanup_old_artifacts\n"
         "  exit 0\n"
         "fi"
     ) in script

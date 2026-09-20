@@ -57,7 +57,7 @@ def test_cancelled_release_still_returns_the_capacity_slot() -> None:
     asyncio.run(scenario())
 
 
-def test_tts_ticket_rate_and_synthesis_capacity_have_independent_budgets() -> None:
+def test_tts_ticket_and_synthesis_use_independent_rate_budgets() -> None:
     async def scenario() -> None:
         controller = AdmissionController(
             {
@@ -67,19 +67,16 @@ def test_tts_ticket_rate_and_synthesis_capacity_have_independent_budgets() -> No
         )
         await controller.charge("tts_ticket", "client-a")
 
-        stream = await controller.reserve("tts")
-        with pytest.raises(AdmissionDenied) as denied:
-            await controller.reserve("tts")
-        assert denied.value.reason == "capacity"
+        stream = await controller.acquire("tts", "client-a")
+        with pytest.raises(AdmissionDenied) as capacity_denied:
+            await controller.acquire("tts", "client-b")
+        assert capacity_denied.value.reason == "capacity"
         await stream.release()
 
-        # Reserving stream capacity does not spend the synthesis rate budget.
-        await controller.charge("tts", "client-a")
-        with pytest.raises(AdmissionDenied) as rate_denied:
-            await controller.charge("tts", "client-b")
-        assert rate_denied.value.reason == "global_rate"
+        with pytest.raises(AdmissionDenied) as synthesis_denied:
+            await controller.acquire("tts", "client-b")
+        assert synthesis_denied.value.reason == "global_rate"
 
-        # Ticket issuance has its own independent rate bucket.
         with pytest.raises(AdmissionDenied) as ticket_denied:
             await controller.charge("tts_ticket", "client-a")
         assert ticket_denied.value.reason == "global_rate"
@@ -122,13 +119,13 @@ def test_client_key_uses_resolved_asgi_peer() -> None:
     assert client_key_from_scope({}) == "unknown"
 
 
-def test_tts_admission_limits_ticket_issuance_and_streaming_separately() -> None:
+def test_middleware_owns_ticket_issuance_but_not_validated_tts_streams() -> None:
     assert AdmissionMiddleware.service_for_scope(
         {"type": "http", "method": "POST", "path": "/api/tts"}
     ) == "tts_ticket"
-    stream_scope = {"type": "http", "method": "GET", "path": "/api/tts/private-token"}
-    assert AdmissionMiddleware.service_for_scope(stream_scope) == "tts"
-    assert AdmissionMiddleware.is_tts_stream(stream_scope)
+    assert AdmissionMiddleware.service_for_scope(
+        {"type": "http", "method": "GET", "path": "/api/tts/private-token"}
+    ) is None
     assert AdmissionMiddleware.service_for_scope(
         {"type": "http", "method": "GET", "path": "/api/tts"}
     ) is None

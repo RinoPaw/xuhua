@@ -42,6 +42,7 @@ from .voice_transport import register_voice_route
 
 
 MAX_CHAT_CHARS = 4000
+MAX_SEARCH_CHARS = 512
 MAX_SESSION_ID_CHARS = 128
 MAX_TURN_ID_CHARS = 128
 MAX_TTS_CHARS = 4000
@@ -200,12 +201,12 @@ def create_app(
 
     @app.get("/api/items")
     async def items(
-        q: str = Query(default="", max_length=4000),
+        q: str = Query(default="", max_length=MAX_SEARCH_CHARS),
         category: str = Query(default="", max_length=200),
         province: str = Query(default="", max_length=200),
         level: str = Query(default="", max_length=100),
         district: str = Query(default="", max_length=200),
-        keywords: str = Query(default="", max_length=2000),
+        keywords: str = Query(default="", max_length=MAX_SEARCH_CHARS),
         limit: int = Query(default=30, ge=1, le=100),
         offset: int = Query(default=0, ge=0, le=100000),
     ) -> dict[str, Any]:

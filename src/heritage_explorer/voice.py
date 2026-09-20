@@ -37,7 +37,7 @@ def _consume_cleanup_result(task: asyncio.Task[object]) -> None:
 
 
 class VoiceProviderError(RuntimeError):
-    """Provider failure without secret-bearing diagnostic text."""
+    """Provider failure without secret-bearing diagnostic text or cause chains."""
 
 
 class _FinishRequest:
@@ -135,7 +135,8 @@ class XfyunStream:
                 max_size=2**20,
             )
         except Exception as exc:
-            raise VoiceProviderError("voice_provider_unavailable") from exc
+            LOGGER.warning("asr.socket.connect_failed reason=%s", type(exc).__name__)
+            raise VoiceProviderError("voice_provider_unavailable") from None
         should_close = False
         async with self._send_lock:
             if self._closed:
@@ -180,8 +181,8 @@ class XfyunStream:
                         raise self._send_failure
                     try:
                         await self._socket.send(json.dumps(self._last_packet()))
-                    except Exception as exc:
-                        raise VoiceProviderError("voice_provider_disconnected") from exc
+                    except Exception:
+                        raise VoiceProviderError("voice_provider_disconnected") from None
                     if not current.done.done():
                         current.done.set_result(None)
                     current = None
@@ -242,8 +243,8 @@ class XfyunStream:
                 timeout=self.finish_timeout,
             )
             await asyncio.wait_for(self._done.wait(), timeout=self.finish_timeout)
-        except TimeoutError as exc:
-            raise VoiceProviderError("voice_provider_timeout") from exc
+        except TimeoutError:
+            raise VoiceProviderError("voice_provider_timeout") from None
         finally:
             await self.close()
         if self._error:
@@ -268,8 +269,8 @@ class XfyunStream:
         if socket is not None:
             try:
                 tasks.append(asyncio.ensure_future(socket.close()))
-            except Exception:
-                LOGGER.info("asr.socket.close_failed", exc_info=True)
+            except Exception as exc:
+                LOGGER.info("asr.socket.close_failed reason=%s", type(exc).__name__)
 
         if not tasks:
             return
@@ -315,10 +316,10 @@ class XfyunStream:
         self._first = False
         try:
             await self._socket.send(json.dumps(packet))
-        except Exception as exc:
+        except Exception:
             self._error = True
             self._done.set()
-            raise VoiceProviderError("voice_provider_disconnected") from exc
+            raise VoiceProviderError("voice_provider_disconnected") from None
 
     async def _receive(self) -> None:
         assert self._socket is not None

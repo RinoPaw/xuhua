@@ -35,6 +35,18 @@ test("realtime partials reuse one transcribing user bubble", () => {
   assert.equal(final.messages[0].status, "complete");
 });
 
+test("a recovered realtime partial clears the previous voice error", () => {
+  const first = conversationReducer(state(), { type: "realtime.user.partial", text: "汴" });
+  const failed = conversationReducer(first, { type: "error", message: "语音识别暂时不可用" });
+  const retry = conversationReducer(failed, { type: "realtime.user.partial", text: "汴绣" });
+
+  assert.equal(retry.phase, "realtime");
+  assert.equal(retry.error, "");
+  assert.equal(retry.messages.length, 1);
+  assert.equal(retry.messages[0].content, "汴绣");
+  assert.equal(retry.messages[0].status, "transcribing");
+});
+
 test("completed assistant event reconciles streamed text, sources and suggestions", () => {
   let next = conversationReducer(state(), { type: "ask", text: "介绍汴绣" });
   next = conversationReducer(next, {

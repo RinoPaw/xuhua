@@ -12,6 +12,7 @@ env/
 .env
 .env.*
 !.env.example
+xuhua.env
 logs/
 tmp/
 audit/

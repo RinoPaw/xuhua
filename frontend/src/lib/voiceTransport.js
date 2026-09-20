@@ -4,8 +4,12 @@ import { websocketUrl } from "./voiceProtocol.js";
 
 export function sendSocketJson(socket, payload, openState = globalThis.WebSocket?.OPEN ?? 1) {
   if (!socket || socket.readyState !== openState) return false;
-  socket.send(JSON.stringify(payload));
-  return true;
+  try {
+    socket.send(JSON.stringify(payload));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function parseSocketMessage(event) {

@@ -52,6 +52,7 @@ MAX_SEARCH_CHARS = 512
 MAX_SESSION_ID_CHARS = 128
 MAX_TURN_ID_CHARS = 128
 MAX_TTS_CHARS = 4000
+MAX_WEBSOCKET_MESSAGE_BYTES = 64 * 1024
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
@@ -336,7 +337,13 @@ def main() -> None:
 
     from .config import DEBUG, HOST, PORT
 
-    uvicorn.run("heritage_explorer.api:app", host=HOST, port=PORT, reload=DEBUG)
+    uvicorn.run(
+        "heritage_explorer.api:app",
+        host=HOST,
+        port=PORT,
+        reload=DEBUG,
+        ws_max_size=MAX_WEBSOCKET_MESSAGE_BYTES,
+    )
 
 
 __all__ = ["app", "create_app", "create_default_admission_controller", "main"]

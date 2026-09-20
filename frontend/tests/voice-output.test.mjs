@@ -52,8 +52,10 @@ test("voice output snapshots locale and queues first sentence before completion"
   controller.append("First sentence. Second", "zh-CN");
   assert.equal(harness.calls[1][0], "enqueue");
   assert.equal(harness.calls[1][1], "First sentence.");
-  assert.match(harness.calls[1][2].url, /trace_id=trace-1/u);
-  assert.match(harness.calls[1][2].url, /locale=en-US/u);
+  assert.deepEqual(harness.calls[1][2], {
+    reason: "first_sentence",
+    locale: "en-US",
+  });
   controller.finish("", "zh-CN");
   assert.equal(harness.calls.at(-1)[0], "complete");
 });
@@ -68,6 +70,8 @@ test("finish uses fallback when no segment was produced", () => {
   const enqueue = harness.calls.find((call) => call[0] === "enqueue");
   assert.equal(enqueue[1], "短回答");
   assert.equal(enqueue[2].reason, "text_complete");
+  assert.equal(enqueue[2].locale, "zh-CN");
+  assert.equal("url" in enqueue[2], false);
 });
 
 test("scheduler terminal clears controller turn state", () => {

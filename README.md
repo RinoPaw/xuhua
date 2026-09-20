@@ -179,7 +179,7 @@ npm test
 npm run build
 ```
 
-GitHub `verify` 还会构建生产 Docker 镜像并实际启动容器，对 `/healthz`、`/api/meta` 与首页做冒烟检查。Render 配置为仅在仓库检查通过后自动部署。
+GitHub `verify` 还会构建生产 Docker 镜像并实际启动容器，对 `/healthz`、`/api/meta` 与首页做冒烟检查。
 
 ## Docker / 服务器部署
 
@@ -192,16 +192,7 @@ docker run --rm -p 5050:5050 --env-file .env xuhua
 
 `compose.yaml` 用于生产服务器部署，默认读取仓库外的 `/etc/xuhua/xuhua.env`，并由 Compose 显式设置容器内 `HOST=0.0.0.0`、`PORT=5050`。`deploy/xuhua-deploy.sh` 负责拉取 `main`、构建镜像、健康检查与失败回滚。
 
-应用自身的 `AdmissionMiddleware` 是昂贵服务的主保护层，因此 Render 等不经过 Nginx 的部署同样受预算约束。仓库提供的 Nginx 配置还会针对 `/api/chat`、TTS ticket、TTS synthesis 与 `/api/voice` 分别增加单 IP 请求速率限制，并限制同一 IP 的实时语音连接数，作为第二层防护。
-
-### Render 上线前检查
-
-`render.yaml` 已列出全部非敏感运行配置，LLM 与讯飞凭据使用 `sync: false`。创建或同步服务前确认：
-
-1. 已填写 `AI_API_KEY`；否则文字问答会进入本地降级模式。
-2. 需要实时语音时，`XF_APP_ID`、`XF_API_KEY`、`XF_API_SECRET` 三项都已填写；缺任意一项时页面会主动隐藏实时语音能力。
-3. 计算套餐已经按本次测试目的明确选择。`render.yaml` 当前没有固定 `plan`，避免代码仓库替你改变计费方案。
-4. 部署完成后先访问 `/healthz` 和 `/api/meta`，确认数据规模与 `realtime_voice` capability，再测试文字 SSE、TTS 和 WebSocket 语音。
+应用自身的 `AdmissionMiddleware` 是昂贵服务的主保护层。仓库提供的 Nginx 配置还会针对 `/api/chat`、TTS ticket、TTS synthesis 与 `/api/voice` 分别增加单 IP 请求速率限制，并限制同一 IP 的实时语音连接数，作为第二层防护。
 
 ## 安全
 

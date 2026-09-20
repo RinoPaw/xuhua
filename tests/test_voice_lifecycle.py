@@ -11,6 +11,15 @@ class RecordingStream:
         self.closed = True
 
 
+class FailingStream:
+    def __init__(self) -> None:
+        self.close_attempted = False
+
+    async def close(self) -> None:
+        self.close_attempted = True
+        raise RuntimeError("cleanup failed")
+
+
 def test_connection_scope_owns_answer_identity_and_task() -> None:
     async def scenario() -> tuple[bool, bool, bool]:
         gate = asyncio.Event()
@@ -46,6 +55,23 @@ def test_connection_scope_detaches_asr_as_one_owned_resource() -> None:
         return owned, cleared, stream.closed
 
     assert asyncio.run(scenario()) == (True, True, False)
+
+
+def test_cancel_asr_releases_owner_when_resource_close_fails() -> None:
+    async def scenario() -> tuple[bool, bool, bool]:
+        gate = asyncio.Event()
+
+        async def worker() -> None:
+            await gate.wait()
+
+        scope = VoiceConnectionScope()
+        stream = FailingStream()
+        start_task = scope.start_asr(stream, worker())
+
+        await scope.cancel_asr()
+        return start_task.cancelled(), stream.close_attempted, scope.asr_stream is None
+
+    assert asyncio.run(scenario()) == (True, True, True)
 
 
 def test_connection_scope_close_cancels_entire_resource_tree() -> None:

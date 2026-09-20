@@ -205,7 +205,12 @@ def create_app(
         item = kb.get(item_id)
         if item is None:
             raise HTTPException(status_code=404, detail="item_not_found")
-        return item_to_dict(item, include_content=True, include_enrichment=True)
+        return await asyncio.to_thread(
+            item_to_dict,
+            item,
+            include_content=True,
+            include_enrichment=True,
+        )
 
     @app.post("/api/chat", response_class=EventSourceResponse)
     async def chat(body: ChatRequest) -> AsyncIterator[ServerSentEvent]:

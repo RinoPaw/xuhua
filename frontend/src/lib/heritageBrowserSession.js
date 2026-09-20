@@ -55,10 +55,11 @@ export class HeritageBrowserSession {
     this.promptSeed = Number(promptSeed) || 0;
     this.onChange = onChange;
     this.state = initialHeritageBrowserState();
+    this.metaController = null;
+    this.categoriesController = null;
     this.searchController = null;
-    this.searchGeneration = 0;
     this.detailController = null;
-    this.bootstrapController = null;
+    this.searchGeneration = 0;
     this.page = initialPageState();
     this.started = false;
     this.destroyed = false;
@@ -78,6 +79,7 @@ export class HeritageBrowserSession {
   }
 
   patch(next) {
+    if (this.destroyed) return;
     this.state = { ...this.state, ...next };
     this.emit();
   }
@@ -94,38 +96,53 @@ export class HeritageBrowserSession {
     return apiEndpoint(this.apiBase, path);
   }
 
-  async loadMeta(signal) {
+  async loadMeta(controller) {
     try {
-      const response = await this.fetchFn(this.url("/api/meta"), { signal });
+      const response = await this.fetchFn(this.url("/api/meta"), { signal: controller.signal });
       if (!response?.ok) throw new Error("meta_failed");
-      this.patch({ meta: await response.json() });
+      const meta = await response.json();
+      if (this.metaController === controller) this.patch({ meta });
     } catch (error) {
-      if (error?.name !== "AbortError") this.patch({ meta: fallbackMeta() });
+      if (error?.name !== "AbortError" && this.metaController === controller) {
+        this.patch({ meta: fallbackMeta() });
+      }
+    } finally {
+      if (this.metaController === controller) this.metaController = null;
     }
   }
 
-  async loadCategories(signal) {
+  async loadCategories(controller) {
     try {
-      const response = await this.fetchFn(this.url("/api/categories"), { signal });
+      const response = await this.fetchFn(this.url("/api/categories"), {
+        signal: controller.signal,
+      });
       if (!response?.ok) throw new Error("categories_failed");
       const categories = await response.json();
-      this.patch({ categories: Array.isArray(categories) ? categories : [] });
+      if (this.categoriesController === controller) {
+        this.patch({ categories: Array.isArray(categories) ? categories : [] });
+      }
     } catch (error) {
-      if (error?.name !== "AbortError") this.patch({ categories: [] });
+      if (error?.name !== "AbortError" && this.categoriesController === controller) {
+        this.patch({ categories: [] });
+      }
+    } finally {
+      if (this.categoriesController === controller) this.categoriesController = null;
     }
   }
 
   async start() {
-    if (this.started || this.destroyed) return false;
+    if (this.started) return false;
+    this.destroyed = false;
     this.started = true;
-    const controller = new AbortController();
-    this.bootstrapController = controller;
-    await Promise.allSettled([
-      this.loadMeta(controller.signal),
-      this.loadCategories(controller.signal),
-    ]);
-    if (this.destroyed || this.bootstrapController !== controller) return false;
-    this.bootstrapController = null;
+
+    const metaController = new AbortController();
+    const categoriesController = new AbortController();
+    this.metaController = metaController;
+    this.categoriesController = categoriesController;
+
+    void this.loadCategories(categoriesController);
+    await this.loadMeta(metaController);
+    if (!this.started || this.destroyed) return false;
     await this.reload();
     return true;
   }
@@ -260,7 +277,7 @@ export class HeritageBrowserSession {
 
   setSearchDraft(value) {
     const searchDraft = String(value ?? "");
-    const shouldClear = !searchDraft.trim() && this.state.searchQuery;
+    const shouldClear = !searchDraft.trim() && Boolean(this.state.searchQuery);
     this.patch({ searchDraft });
     if (shouldClear) {
       this.state = { ...this.state, searchQuery: "" };
@@ -269,13 +286,12 @@ export class HeritageBrowserSession {
   }
 
   submitSearch() {
-    const searchQuery = this.state.searchDraft.trim();
-    this.state = { ...this.state, searchQuery };
+    this.state = { ...this.state, searchQuery: this.state.searchDraft.trim() };
     void this.reload();
   }
 
   applyFilters(next) {
-    this.closeItem();
+    this.closeItem({ emit: false });
     this.state = {
       ...this.state,
       searchQuery: this.state.searchDraft.trim(),
@@ -322,21 +338,32 @@ export class HeritageBrowserSession {
     }
   }
 
-  closeItem() {
+  closeItem({ emit = true } = {}) {
     this.detailController?.abort();
     this.detailController = null;
-    this.patch({ selected: null, detailLoading: false, detailError: "" });
+    this.state = {
+      ...this.state,
+      selected: null,
+      detailLoading: false,
+      detailError: "",
+    };
+    if (emit) this.emit();
   }
 
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
-    this.bootstrapController?.abort();
+    this.started = false;
+    this.searchGeneration += 1;
+    this.metaController?.abort();
+    this.categoriesController?.abort();
     this.searchController?.abort();
     this.detailController?.abort();
-    this.bootstrapController = null;
+    this.metaController = null;
+    this.categoriesController = null;
     this.searchController = null;
     this.detailController = null;
+    this.page = { ...this.page, loading: false };
   }
 }
 

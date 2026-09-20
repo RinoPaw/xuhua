@@ -162,7 +162,6 @@ class AdmissionMiddleware:
 
     ROUTES = {
         ("http", "POST", "/api/chat"): "chat",
-        ("http", "GET", "/api/tts"): "tts",
         ("websocket", "", "/api/voice"): "voice",
     }
 
@@ -175,6 +174,8 @@ class AdmissionMiddleware:
         scope_type = str(scope.get("type") or "")
         method = str(scope.get("method") or "").upper() if scope_type == "http" else ""
         path = str(scope.get("path") or "")
+        if scope_type == "http" and method == "GET" and path.startswith("/api/tts/"):
+            return "tts"
         return cls.ROUTES.get((scope_type, method, path))
 
     @staticmethod

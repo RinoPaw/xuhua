@@ -36,6 +36,27 @@ def test_admission_capacity_is_held_by_lease_and_released_once() -> None:
     asyncio.run(scenario())
 
 
+def test_cancelled_release_still_returns_the_capacity_slot() -> None:
+    async def scenario() -> None:
+        controller = AdmissionController({"chat": AdmissionPolicy(1, 10, 10)})
+        lease = await controller.acquire("chat", "client-a")
+
+        await controller._lock.acquire()
+        release_task = asyncio.create_task(lease.release())
+        await asyncio.sleep(0)
+        release_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await release_task
+        controller._lock.release()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        replacement = await controller.acquire("chat", "client-b")
+        await replacement.release()
+
+    asyncio.run(scenario())
+
+
 def test_rate_only_charge_does_not_reserve_concurrency() -> None:
     async def scenario() -> None:
         controller = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})

@@ -2,6 +2,7 @@ services:
   - type: web
     name: xuhua
     runtime: docker
+    region: singapore
     healthCheckPath: /healthz
     autoDeployTrigger: checksPass
     envVars:

@@ -251,14 +251,19 @@ remember_success() {
   rm -f -- "$failed_sha_file"
 }
 
-cleanup_old_images() {
-  local tag keep_current="" keep_current_env="" keep_previous="" keep_previous_env=""
+cleanup_old_artifacts() {
+  local tag snapshot
+  local keep_current="" keep_current_env="" keep_previous="" keep_previous_env=""
+  local keep_current_compose="" keep_current_env_file=""
+  local keep_previous_compose="" keep_previous_env_file=""
+
   if [[ -r "$last_good_sha_file" ]]; then
     read -r keep_current keep_current_env <"$last_good_sha_file" || true
   fi
   if [[ -r "$previous_good_sha_file" ]]; then
     read -r keep_previous keep_previous_env <"$previous_good_sha_file" || true
   fi
+
   while read -r tag; do
     if [[ "$tag" =~ ^xuhua:([0-9a-f]{40})$ \
       && "${BASH_REMATCH[1]}" != "$commit_sha" \
@@ -269,6 +274,32 @@ cleanup_old_images() {
       docker image rm "$tag" >/dev/null 2>&1 || true
     fi
   done < <(docker image ls xuhua --format '{{.Repository}}:{{.Tag}}')
+
+  if [[ "$keep_current" =~ ^[0-9a-f]{40}$ ]]; then
+    keep_current_compose="$(compose_snapshot_for "$keep_current")"
+    if [[ -n "$keep_current_env" ]]; then
+      keep_current_env_file="$(env_snapshot_for "$keep_current" "$keep_current_env")"
+    fi
+  fi
+  if [[ "$keep_previous" =~ ^[0-9a-f]{40}$ ]]; then
+    keep_previous_compose="$(compose_snapshot_for "$keep_previous")"
+    if [[ -n "$keep_previous_env" ]]; then
+      keep_previous_env_file="$(env_snapshot_for "$keep_previous" "$keep_previous_env")"
+    fi
+  fi
+
+  for snapshot in "$last_good_compose".*; do
+    [[ -e "$snapshot" ]] || continue
+    if [[ "$snapshot" == "$keep_current_compose" \
+      || "$snapshot" == "$keep_current_env_file" \
+      || "$snapshot" == "$keep_previous_compose" \
+      || "$snapshot" == "$keep_previous_env_file" \
+      || "$snapshot" == "$restore_compose" \
+      || "$snapshot" == "$restore_env" ]]; then
+      continue
+    fi
+    rm -f -- "$snapshot" || true
+  done
 }
 
 previous_was_healthy=0
@@ -380,6 +411,7 @@ fi
 
 if [[ "$previous_commit" == "$commit_sha" && "$previous_env_revision" == "$env_revision" && "$previous_was_healthy" == "1" ]]; then
   remember_success
+  cleanup_old_artifacts
   exit 0
 fi
 
@@ -463,7 +495,7 @@ fi
 if wait_for_healthy; then
   remember_success
   deployment_succeeded=1
-  cleanup_old_images
+  cleanup_old_artifacts
   exit 0
 fi
 

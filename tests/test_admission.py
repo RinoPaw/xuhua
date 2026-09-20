@@ -57,15 +57,22 @@ def test_cancelled_release_still_returns_the_capacity_slot() -> None:
     asyncio.run(scenario())
 
 
-def test_rate_only_charge_does_not_reserve_concurrency() -> None:
+def test_tts_rate_charge_and_stream_capacity_are_independent() -> None:
     async def scenario() -> None:
-        controller = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})
+        controller = AdmissionController({"tts": AdmissionPolicy(1, 1, 1)})
         await controller.charge("tts", "client-a")
-        stream = await controller.acquire("tts", "client-a")
+
+        stream = await controller.reserve("tts")
         with pytest.raises(AdmissionDenied) as denied:
-            await controller.acquire("tts", "client-b")
+            await controller.reserve("tts")
         assert denied.value.reason == "capacity"
         await stream.release()
+
+        replacement = await controller.reserve("tts")
+        await replacement.release()
+        with pytest.raises(AdmissionDenied) as rate_denied:
+            await controller.charge("tts", "client-a")
+        assert rate_denied.value.reason == "global_rate"
 
     asyncio.run(scenario())
 
@@ -115,6 +122,9 @@ def test_tts_admission_limits_ticket_issuance_and_streaming() -> None:
     assert AdmissionMiddleware.service_for_scope(
         {"type": "http", "method": "GET", "path": "/api/tts"}
     ) is None
+    assert AdmissionMiddleware.is_tts_stream(
+        {"type": "http", "method": "GET", "path": "/api/tts/private-token"}
+    )
 
 
 class _Search:

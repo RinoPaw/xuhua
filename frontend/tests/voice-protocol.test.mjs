@@ -11,9 +11,21 @@ import {
   websocketUrl,
 } from "../src/lib/voiceProtocol.js";
 
-test("websocketUrl preserves path and maps HTTP schemes", () => {
+test("websocketUrl preserves WebSocket schemes and maps HTTP schemes", () => {
   assert.equal(websocketUrl("/api/voice", "https://example.com/app"), "wss://example.com/api/voice");
   assert.equal(websocketUrl("/api/voice", "http://localhost:5050/"), "ws://localhost:5050/api/voice");
+  assert.equal(
+    websocketUrl("wss://voice.example.com/api/voice", "https://example.com/app"),
+    "wss://voice.example.com/api/voice",
+  );
+  assert.equal(
+    websocketUrl("ws://localhost:5050/api/voice", "https://example.com/app"),
+    "ws://localhost:5050/api/voice",
+  );
+  assert.throws(
+    () => websocketUrl("ftp://example.com/api/voice", "https://example.com/app"),
+    /voice_socket_invalid_scheme/u,
+  );
 });
 
 test("compactRecognitionContext bounds and de-duplicates titles", () => {

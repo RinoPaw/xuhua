@@ -53,6 +53,7 @@ def test_tts_text_is_exchanged_for_a_reusable_short_stream_token(monkeypatch) ->
             },
         )
         assert prepared.status_code == 200
+        assert prepared.headers["cache-control"] == "no-store"
         token = prepared.json()["token"]
         assert len(token) >= 16
         assert "汴绣" not in token

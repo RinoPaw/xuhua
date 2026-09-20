@@ -74,7 +74,7 @@ function browserFallbackSpeak(
 export class TtsScheduler {
   constructor({
     createAudio = (url) => new Audio(url),
-    prepareSource = ({ url }) => url,
+    prepareSource = () => "",
     onEvent = noop,
     onPlayingChange = noop,
     onTerminal = noop,
@@ -124,7 +124,7 @@ export class TtsScheduler {
     return this.activeGeneration;
   }
 
-  enqueue(text, { url = "", reason = "text_complete", locale = "" } = {}) {
+  enqueue(text, { reason = "text_complete", locale = "" } = {}) {
     const content = String(text || "").trim();
     if (!content || this.completed || this.terminal || this.entries.size >= MAX_SEGMENTS) {
       return false;
@@ -136,7 +136,7 @@ export class TtsScheduler {
 
     const entry = {
       audio: null,
-      url: String(url || ""),
+      url: "",
       content,
       locale: String(locale || ""),
       generation: this.activeGeneration,
@@ -163,7 +163,6 @@ export class TtsScheduler {
     let source;
     try {
       source = this.prepareSource({
-        url: entry.url,
         text: entry.content,
         segment: entry.segment,
         reason: entry.reason,

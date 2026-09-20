@@ -13,7 +13,7 @@ RUN npm run build
 
 FROM python:3.12-slim
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:0.12.17 /uv /uvx /bin/
 
 ARG UV_DEFAULT_INDEX=https://pypi.org/simple
 ARG UV_FILES_BASE_URL=https://files.pythonhosted.org/packages

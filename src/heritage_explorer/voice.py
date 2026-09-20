@@ -29,6 +29,13 @@ from .xfyun_protocol import (
 LOGGER = logging.getLogger(__name__)
 
 
+def _consume_cleanup_result(task: asyncio.Task[object]) -> None:
+    try:
+        task.result()
+    except (asyncio.CancelledError, Exception):
+        pass
+
+
 class VoiceProviderError(RuntimeError):
     """Provider failure without secret-bearing diagnostic text."""
 
@@ -47,6 +54,7 @@ class XfyunStream:
     chunk_size = 1280
     frame_interval = 0.04
     finish_timeout = 8.0
+    close_timeout = 2.0
 
     def __init__(
         self,
@@ -121,7 +129,10 @@ class XfyunStream:
                 raise VoiceProviderError("voice_stream_closed")
         try:
             socket = await connect(
-                self.signed_url(), open_timeout=10, close_timeout=2, max_size=2**20
+                self.signed_url(),
+                open_timeout=10,
+                close_timeout=self.close_timeout,
+                max_size=2**20,
             )
         except Exception as exc:
             raise VoiceProviderError("voice_provider_unavailable") from exc
@@ -136,7 +147,7 @@ class XfyunStream:
                 self._sender = asyncio.create_task(self._send_loop())
                 self._enqueue_complete_frames()
         if should_close:
-            await socket.close()
+            await self._close_resources(socket=socket)
             raise VoiceProviderError("voice_stream_closed")
         await asyncio.sleep(0)
 
@@ -239,6 +250,45 @@ class XfyunStream:
             raise VoiceProviderError("voice_provider_failed")
         return self.current_text()
 
+    async def _close_resources(
+        self,
+        *,
+        socket: ClientConnection | None,
+        sender: asyncio.Task[None] | None = None,
+        receiver: asyncio.Task[None] | None = None,
+    ) -> None:
+        current = asyncio.current_task()
+        tasks: list[asyncio.Task[object]] = []
+        for task in (sender, receiver):
+            if task is None or task is current or task.done():
+                continue
+            task.cancel()
+            tasks.append(task)  # type: ignore[arg-type]
+
+        if socket is not None:
+            try:
+                tasks.append(asyncio.ensure_future(socket.close()))
+            except Exception:
+                LOGGER.info("asr.socket.close_failed", exc_info=True)
+
+        if not tasks:
+            return
+        done, pending = await asyncio.wait(
+            tasks,
+            timeout=max(float(self.close_timeout), 0.001),
+        )
+        if done:
+            await asyncio.gather(*done, return_exceptions=True)
+        if pending:
+            LOGGER.warning(
+                "asr.cleanup.timeout pending=%s timeout=%.3fs",
+                len(pending),
+                self.close_timeout,
+            )
+            for task in pending:
+                task.cancel()
+                task.add_done_callback(_consume_cleanup_result)
+
     async def close(self) -> None:
         async with self._send_lock:
             self._closed = True
@@ -255,17 +305,7 @@ class XfyunStream:
         for item in pending:
             if isinstance(item, _FinishRequest) and not item.done.done():
                 item.done.cancel()
-        if sender is not None and sender is not asyncio.current_task():
-            sender.cancel()
-            await asyncio.gather(sender, return_exceptions=True)
-        if socket is not None:
-            try:
-                await socket.close()
-            except Exception:
-                LOGGER.info("asr.socket.close_failed", exc_info=True)
-        if receiver is not None and receiver is not asyncio.current_task():
-            receiver.cancel()
-            await asyncio.gather(receiver, return_exceptions=True)
+        await self._close_resources(socket=socket, sender=sender, receiver=receiver)
 
     async def _send_frame(self, frame: bytes) -> None:
         if self._socket is None:

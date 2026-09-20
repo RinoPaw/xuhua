@@ -50,3 +50,31 @@ def test_finish_times_out_when_terminal_packet_send_never_completes(monkeypatch)
         assert stream._receiver is None
 
     asyncio.run(scenario())
+
+
+def test_close_is_bounded_when_sender_resists_first_cancellation() -> None:
+    async def scenario() -> None:
+        stream = XfyunStream(
+            app_id="app",
+            api_key="key",
+            api_secret="secret",
+            host="iat.xf-yun.com",
+        )
+        stream.close_timeout = 0.02
+
+        async def stubborn_sender() -> None:
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                await asyncio.Future()
+
+        sender = asyncio.create_task(stubborn_sender())
+        await asyncio.sleep(0)
+        stream._sender = sender
+
+        await asyncio.wait_for(stream.close(), timeout=0.2)
+        await asyncio.sleep(0)
+        assert stream._sender is None
+        assert sender.done()
+
+    asyncio.run(scenario())

@@ -75,7 +75,7 @@ export function assistantEventLocale(message, fallback = DEFAULT_LOCALE) {
   );
 }
 
-function ttsEndpoint(websocketPath) {
+export function ttsEndpoint(websocketPath) {
   const value = String(websocketPath || "/api/voice");
   if (/^wss?:\/\//iu.test(value)) {
     const url = new URL(value);
@@ -86,22 +86,35 @@ function ttsEndpoint(websocketPath) {
   return value.replace(/\/voice$/, "/tts");
 }
 
-export function buildTtsUrl({
+export async function requestTtsSource({
   websocketPath,
   text,
   traceId,
   segment,
   reason,
   locale,
+  signal,
+  fetchImpl = globalThis.fetch,
 }) {
-  const ttsPath = ttsEndpoint(websocketPath);
-  const speechLocale = resolveSpeechLocale(locale);
-  const separator = ttsPath.includes("?") ? "&" : "?";
-  return `${ttsPath}${separator}text=${encodeURIComponent(String(text || ""))}`
-    + `&trace_id=${encodeURIComponent(String(traceId || ""))}`
-    + `&segment=${encodeURIComponent(String(segment ?? 0))}`
-    + `&reason=${encodeURIComponent(String(reason || ""))}`
-    + `&locale=${encodeURIComponent(speechLocale)}`;
+  if (typeof fetchImpl !== "function") throw new Error("tts_fetch_unavailable");
+  const endpoint = ttsEndpoint(websocketPath);
+  const response = await fetchImpl(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      text: String(text || ""),
+      trace_id: String(traceId || ""),
+      segment: Number(segment) || 0,
+      reason: String(reason || ""),
+      locale: resolveSpeechLocale(locale),
+    }),
+    signal,
+  });
+  if (!response.ok) throw new Error(`tts_ticket_${response.status}`);
+  const payload = await response.json();
+  const token = String(payload?.token || "").trim();
+  if (!token) throw new Error("tts_ticket_invalid");
+  return `${endpoint.replace(/\/+$/u, "")}/${encodeURIComponent(token)}`;
 }
 
 export function compactRecognitionContext(context) {

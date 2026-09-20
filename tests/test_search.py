@@ -137,6 +137,53 @@ def test_province_mentioned_in_query_becomes_a_filter():
     assert items[0].id == "a"
 
 
+def test_multiple_provinces_in_query_form_a_union_scope():
+    kb = KnowledgeBase(
+        {
+            "items": [
+                {
+                    "id": "henan",
+                    "title": "汴绣",
+                    "category": "传统美术",
+                    "province": "河南省",
+                    "level": "国家级",
+                },
+                {
+                    "id": "hebei",
+                    "title": "武强木版年画",
+                    "category": "传统美术",
+                    "province": "河北省",
+                    "level": "国家级",
+                },
+                {
+                    "id": "shandong",
+                    "title": "潍坊风筝",
+                    "category": "传统技艺",
+                    "province": "山东省",
+                    "level": "国家级",
+                },
+            ]
+        }
+    )
+
+    items, total = search.search_items(
+        kb,
+        query="比较河南和河北的非遗项目",
+        use_pinyin=False,
+    )
+
+    assert total == 2
+    assert {item.province for item in items} == {"河南省", "河北省"}
+
+
+def test_region_scope_cleanup_preserves_semantic_words_starting_with_connector():
+    cleaned = search._strip_province_scope_terms(
+        "比较河南和河北和田玉",
+        (("河南省", "河南"), ("河北省", "河北")),
+    )
+    assert cleaned == "和田玉"
+
+
 def test_pinyin_is_optional(monkeypatch):
     kb = make_kb()
     monkeypatch.setattr(search, "_pinyin_forms", lambda text: [])

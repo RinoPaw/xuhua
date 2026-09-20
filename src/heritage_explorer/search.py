@@ -23,6 +23,9 @@ _MIN_LEXICAL_SCORE = 8.0
 _PROVINCE_SUFFIX_RE = re.compile(
     r"(?:壮族自治区|回族自治区|维吾尔自治区|特别行政区|自治区|省|市)$"
 )
+_REGION_SCOPE_CONNECTOR_RE = re.compile(
+    r"(?:^|\s)(?:比较|对比|分别|以及|之间|和|与|跟)(?=\s|$)"
+)
 
 
 def normalize_search_query(query: str) -> str:
@@ -60,14 +63,36 @@ def _province_aliases(kb: KnowledgeBase) -> tuple[tuple[str, str], ...]:
     return tuple(sorted(set(aliases), key=lambda pair: (-len(pair[0]), pair[0])))
 
 
-def _resolve_province(kb: KnowledgeBase, value: str) -> tuple[str, str] | None:
+def _resolve_provinces(kb: KnowledgeBase, value: str) -> tuple[tuple[str, str], ...]:
     text = normalize_text(value)
     if not text:
-        return None
+        return ()
+    matches: list[tuple[str, str]] = []
+    seen: set[str] = set()
     for alias, canonical in _province_aliases(kb):
-        if text == alias or alias in text:
-            return canonical, alias
-    return None
+        if text != alias and alias not in text:
+            continue
+        if canonical in seen:
+            continue
+        seen.add(canonical)
+        matches.append((canonical, alias))
+    return tuple(matches)
+
+
+def _resolve_province(kb: KnowledgeBase, value: str) -> tuple[str, str] | None:
+    matches = _resolve_provinces(kb, value)
+    return matches[0] if matches else None
+
+
+def _strip_province_scope_terms(text: str, matches: Sequence[tuple[str, str]]) -> str:
+    cleaned = text
+    for canonical, alias in matches:
+        for value in (canonical, alias):
+            if value:
+                cleaned = cleaned.replace(value.lower(), " ")
+    if matches:
+        cleaned = _REGION_SCOPE_CONNECTOR_RE.sub(" ", cleaned)
+    return normalize_text(cleaned)
 
 
 @lru_cache(maxsize=8)
@@ -265,12 +290,19 @@ def search_items(
     if implicit_category:
         category = implicit_category
     raw_terms = normalize_text(f"{query} {keywords}")
-    resolved_province = _resolve_province(kb, province) or _resolve_province(kb, raw_terms)
-    province = resolved_province[0] if resolved_province else province
+    explicit_province = _resolve_province(kb, province) if province else None
+    resolved_provinces = (
+        (explicit_province,)
+        if explicit_province is not None
+        else _resolve_provinces(kb, raw_terms) if not province else ()
+    )
+    province_scope = {canonical for canonical, _alias in resolved_provinces}
+    if province and not province_scope:
+        province_scope.add(province)
     candidates = [
         item for item in kb.items
         if (not category or item.category == category)
-        and (not province or item.province == province)
+        and (not province_scope or item.province in province_scope)
         and (not level or item.level == level)
         and (not district or district in item.district)
     ]
@@ -278,18 +310,15 @@ def search_items(
     normalized_query = normalize_search_query(query)
     normalized_keywords = normalize_search_query(keywords)
     combined_query = " ".join(part for part in (normalized_query, normalized_keywords) if part)
-    if resolved_province:
-        canonical, alias = resolved_province
-        combined_query = normalize_text(
-            combined_query.replace(canonical.lower(), " ").replace(alias.lower(), " ")
-        )
+    if resolved_provinces:
+        combined_query = _strip_province_scope_terms(combined_query, resolved_provinces)
     if implicit_category:
         combined_query = normalize_text(
             combined_query.replace(normalize_search_query(implicit_category), " ")
         )
     if combined_query:
         ranked = _rank(candidates, combined_query, use_pinyin)
-    elif raw_terms and not resolved_province and not implicit_category:
+    elif raw_terms and not resolved_provinces and not implicit_category:
         ranked = []
     else:
         ranked = [

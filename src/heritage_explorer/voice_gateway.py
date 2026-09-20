@@ -15,8 +15,8 @@ from .voice_session import (
     MAX_VOICE_CONTEXT_TITLES,
     MAX_VOICE_RECENT_ITEMS,
     contains_spoken_text,
-    register_voice_route as _register_voice_route,
 )
+from .voice_transport import register_voice_route as _register_voice_route
 
 
 # Compatibility surface: api.py and older tests monkeypatch this symbol before

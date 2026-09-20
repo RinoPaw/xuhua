@@ -11,7 +11,7 @@ import {
   assistantEventLocale,
   buildTtsUrl,
   compactRecognitionContext,
-} from "../src/hooks/useBrowserDuplexVoice.js";
+} from "../src/lib/voiceProtocol.js";
 
 test("normalizes browser locales, removes duplicates, and falls back safely", () => {
   assert.equal(normalizeLocaleHint("zh_cn"), "zh-CN");

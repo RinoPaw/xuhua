@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 
 from fastapi.testclient import TestClient
@@ -55,8 +56,6 @@ async def _run_middleware(
 
 
 def test_content_length_over_limit_is_rejected_before_downstream() -> None:
-    import asyncio
-
     called, sent, _body = asyncio.run(
         _run_middleware(
             chunks=[],
@@ -69,8 +68,6 @@ def test_content_length_over_limit_is_rejected_before_downstream() -> None:
 
 
 def test_chunked_body_is_bounded_without_trusting_content_length() -> None:
-    import asyncio
-
     called, sent, _body = asyncio.run(
         _run_middleware(
             chunks=[
@@ -84,9 +81,42 @@ def test_chunked_body_is_bounded_without_trusting_content_length() -> None:
     assert sent[0]["status"] == 413
 
 
-def test_bounded_body_is_replayed_once_to_downstream() -> None:
-    import asyncio
+def test_stalled_body_is_rejected_before_downstream() -> None:
+    async def scenario() -> tuple[bool, list[dict[str, object]]]:
+        called = False
+        sent: list[dict[str, object]] = []
 
+        async def inner(_scope, _receive, _send) -> None:
+            nonlocal called
+            called = True
+
+        async def receive() -> dict[str, object]:
+            await asyncio.sleep(1)
+            return {"type": "http.request", "body": b"{}", "more_body": False}
+
+        async def send(message: dict[str, object]) -> None:
+            sent.append(message)
+
+        middleware = RequestBodyLimitMiddleware(inner, max_bytes=10, read_timeout=0.01)
+        await middleware(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/chat",
+                "headers": [],
+            },
+            receive,
+            send,
+        )
+        return called, sent
+
+    called, sent = asyncio.run(scenario())
+    assert called is False
+    assert sent[0]["status"] == 408
+    assert sent[1]["body"] == b'{"detail":"request_body_timeout"}'
+
+
+def test_bounded_body_is_replayed_once_to_downstream() -> None:
     called, sent, body = asyncio.run(
         _run_middleware(
             chunks=[

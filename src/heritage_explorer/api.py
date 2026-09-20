@@ -239,9 +239,6 @@ def create_app(
         cancelled = sessions.cancel_turn(session_id, turn_id)
         return {"cancelled": cancelled, "session_id": session_id, "turn_id": turn_id}
 
-    # Keep the historical api-module monkeypatch/injection surface intact while
-    # the implementation lives in its own transport module.
-    voice_gateway.normalize_asr_final = normalize_asr_final
     voice_gateway.register_voice_route(
         app,
         assistant=assistant,
@@ -251,6 +248,7 @@ def create_app(
         api_key=XF_API_KEY,
         api_secret=XF_API_SECRET,
         asr_host=XF_ASR_HOST,
+        normalize_final=normalize_asr_final,
         stream_factory=XfyunStream,
         max_session_id_chars=MAX_SESSION_ID_CHARS,
     )

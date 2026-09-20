@@ -29,6 +29,24 @@ services:
         value: 5200
       - key: XF_ASR_HOST
         value: iat.xf-yun.com
+      - key: CHAT_MAX_CONCURRENCY
+        value: 8
+      - key: CHAT_MAX_PER_MINUTE
+        value: 60
+      - key: CHAT_MAX_PER_CLIENT_PER_MINUTE
+        value: 20
+      - key: TTS_MAX_CONCURRENCY
+        value: 12
+      - key: TTS_MAX_PER_MINUTE
+        value: 240
+      - key: TTS_MAX_PER_CLIENT_PER_MINUTE
+        value: 80
+      - key: VOICE_MAX_CONCURRENCY
+        value: 4
+      - key: VOICE_MAX_PER_MINUTE
+        value: 30
+      - key: VOICE_MAX_PER_CLIENT_PER_MINUTE
+        value: 8
       - key: AI_API_KEY
         sync: false
       - key: XF_APP_ID

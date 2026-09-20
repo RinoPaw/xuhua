@@ -22,6 +22,7 @@ React / Vite
   └─ GET /api/tts
 
 FastAPI
+  ├─ AdmissionMiddleware（昂贵服务容量 / 速率预算）
   ├─ AssistantService
   ├─ SearchService（词法 + 拼音检索）
   ├─ SessionStore
@@ -70,7 +71,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install-lab.ps1 -Sk
 
 ## 环境变量
 
-应用运行时不为这些配置提供代码默认值。所有键都必须存在于实际环境中；`.env.example` 里的值只是本项目当前部署模板。
+核心运行配置需要显式提供；`.env.example` 给出了本项目当前模板。公共服务预算另有代码默认值，因此旧部署不会因缺少新变量而无法启动，但生产环境建议显式配置，以便部署状态可审计。
 
 | 变量 | 示例值 | 用途 |
 | --- | --- | --- |
@@ -90,6 +91,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install-lab.ps1 -Sk
 | `XF_API_KEY` | 空 | 讯飞 API Key |
 | `XF_API_SECRET` | 空 | 讯飞 API Secret |
 | `XF_ASR_HOST` | `iat.xf-yun.com` | 当前中英识别大模型 WebSocket 主机 |
+| `CHAT_MAX_CONCURRENCY` | `8` | 单实例同时进行的文字回答上限 |
+| `CHAT_MAX_PER_MINUTE` | `60` | 单实例每分钟允许启动的文字回答上限 |
+| `CHAT_MAX_PER_CLIENT_PER_MINUTE` | `20` | 单客户端每分钟允许启动的文字回答上限 |
+| `TTS_MAX_CONCURRENCY` | `12` | 单实例同时进行的 TTS 流上限 |
+| `TTS_MAX_PER_MINUTE` | `240` | 单实例每分钟允许启动的 TTS 流上限 |
+| `TTS_MAX_PER_CLIENT_PER_MINUTE` | `80` | 单客户端每分钟允许启动的 TTS 流上限 |
+| `VOICE_MAX_CONCURRENCY` | `4` | 单实例同时保持的实时语音连接上限 |
+| `VOICE_MAX_PER_MINUTE` | `30` | 单实例每分钟允许建立的实时语音连接上限 |
+| `VOICE_MAX_PER_CLIENT_PER_MINUTE` | `8` | 单客户端每分钟允许建立的实时语音连接上限 |
+
+文字回答、TTS 与实时语音分别使用独立预算。HTTP 超出速率预算时返回 `429`，并发容量耗尽时返回 `503`；实时语音握手被拒绝时使用 WebSocket `1013`。这些预算按应用进程 / 实例计算；如果未来水平扩容到多个实例，需要把集群级预算迁到共享存储或上游网关。
 
 讯飞三个凭据为空时，文字功能仍可使用，页面会把实时语音能力标记为不可用。
 
@@ -166,7 +178,7 @@ npm run build
 
 ## Docker / 服务器部署
 
-Docker 运行时同样要求显式提供完整环境配置：
+Docker 运行时同样要求显式提供核心环境配置：
 
 ```powershell
 docker build -t xuhua .
@@ -175,8 +187,10 @@ docker run --rm -p 5050:5050 --env-file .env xuhua
 
 `compose.yaml` 用于生产服务器部署，默认读取仓库外的 `/etc/xuhua/xuhua.env`，并由 Compose 显式设置容器内 `HOST=0.0.0.0`、`PORT=5050`。`deploy/xuhua-deploy.sh` 负责拉取 `main`、构建镜像、健康检查与失败回滚。
 
+应用自身的 `AdmissionMiddleware` 是昂贵服务的主保护层，因此 Render 等不经过 Nginx 的部署同样受预算约束。仓库提供的 Nginx 配置还会针对 `/api/chat`、`/api/tts`、`/api/voice` 增加单 IP 请求速率限制，并限制同一 IP 的实时语音连接数，作为第二层防护。
+
 Render 的 `render.yaml` 已列出全部非敏感运行配置，LLM 与讯飞凭据使用 `sync: false`，需要在 Render 中显式提供。
 
 ## 安全
 
-不要提交 `.env`、`xuhua.env`、API Key、日志或其他凭据。公开部署前应在 DeepSeek、讯飞等服务侧设置合理的额度与并发限制。
+不要提交 `.env`、`xuhua.env`、API Key、日志或其他凭据。公开部署前仍应在 DeepSeek、讯飞等服务侧设置额度与并发限制；应用 admission、反向代理限制与供应商额度三层应同时存在。

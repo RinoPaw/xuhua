@@ -61,6 +61,37 @@ def test_superseding_turn_closes_blocked_provider_stream() -> None:
     asyncio.run(scenario())
 
 
+def test_same_turn_id_supersession_preserves_old_generation_reason() -> None:
+    async def scenario() -> None:
+        llm = FirstCallBlocks()
+        store = SessionStore()
+        service = AssistantService(search=EmptySearch(), sessions=store, llm=llm)
+
+        async def collect(question: str):
+            return [
+                event
+                async for event in service.stream_turn(
+                    question,
+                    session_id="session",
+                    turn_id="same",
+                )
+            ]
+
+        first = asyncio.create_task(collect("第一个问题"))
+        await asyncio.wait_for(llm.first_started.wait(), timeout=1)
+        replacement_events = await asyncio.wait_for(collect("第二个问题"), timeout=1)
+        first_events = await asyncio.wait_for(first, timeout=1)
+
+        assert first_events[-1].type == "turn.cancelled"
+        assert first_events[-1].payload["reason"] == "superseded"
+        assert replacement_events[-1].type == "turn.completed"
+        history = store.history("session")
+        assert len(history) == 1
+        assert history[0].question == "第二个问题"
+
+    asyncio.run(scenario())
+
+
 def test_transport_task_cancellation_propagates_and_releases_turn() -> None:
     async def scenario() -> None:
         llm = FirstCallBlocks()

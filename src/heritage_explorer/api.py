@@ -359,6 +359,7 @@ def main() -> None:
         host=HOST,
         port=PORT,
         reload=DEBUG,
+        workers=1,
         ws_max_size=MAX_VOICE_FRAME_BYTES,
     )
 

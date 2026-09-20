@@ -173,10 +173,8 @@ test("browser voice session supersedes microphone input before a typed turn", ()
     harness.calls.some((entry) => entry[0] === "transcript.clear" && entry[1] === true),
     true,
   );
-  assert.deepEqual(harness.sent.slice(-2), [
-    { type: "barge_in" },
-    { type: "text", text: "汴绣是什么" },
-  ]);
+  assert.deepEqual(harness.sent, [{ type: "text", text: "汴绣是什么" }]);
+  assert.equal(harness.calls.some((entry) => entry[0] === "callback.bargeIn"), true);
   assert.equal(harness.machine.turn, "thinking");
 });
 

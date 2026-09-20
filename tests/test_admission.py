@@ -14,6 +14,7 @@ from heritage_explorer.admission import (
 from heritage_explorer.api import create_app
 from heritage_explorer.dataset import KnowledgeBase
 from heritage_explorer.models import AssistantEvent, SearchResponse
+from heritage_explorer.sessions import SessionStore
 
 
 def test_admission_capacity_is_held_by_lease_and_released_once() -> None:
@@ -80,6 +81,7 @@ class _Search:
 class _BlockingAssistant:
     def __init__(self, search: _Search, started: asyncio.Event, release: asyncio.Event) -> None:
         self.search = search
+        self.sessions = SessionStore()
         self.started = started
         self.release = release
 
@@ -105,7 +107,6 @@ async def _chat_capacity_scenario() -> None:
     )
     app = create_app(
         assistant=assistant,  # type: ignore[arg-type]
-        search=search,  # type: ignore[arg-type]
         admission=admission,
     )
     transport = httpx.ASGITransport(app=app)

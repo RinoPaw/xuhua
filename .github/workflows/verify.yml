@@ -15,7 +15,7 @@ jobs:
       FRONTEND_DIR: frontend/dist/client
       AI_API_KEY: ""
       AI_BASE_URL: https://api.deepseek.com
-      AI_MODEL: deepseek-v4-flash
+      AI_MODEL: deepseek-flash
       AI_TIMEOUT: "60"
       AI_FIRST_TOKEN_TIMEOUT: "8"
       AI_FIRST_TOKEN_MAX_ATTEMPTS: "2"
@@ -50,19 +50,40 @@ jobs:
         working-directory: frontend
       - run: npm test
         working-directory: frontend
-      - name: Smoke test application startup
+      - name: Build production Docker image
+        run: docker build -t xuhua:verify .
+      - name: Smoke production Docker image
         run: |
-          uv run python app.py > /tmp/xuhua.log 2>&1 &
-          app_pid=$!
-          trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+          docker run --rm --detach --name xuhua-verify \
+            -p 127.0.0.1:5051:5050 \
+            -e HOST=0.0.0.0 \
+            -e PORT=5050 \
+            -e DEBUG=0 \
+            -e DATASET_PATH=data/processed/heritage_items.json \
+            -e FRONTEND_DIR=frontend/dist/client \
+            -e AI_API_KEY= \
+            -e AI_BASE_URL=https://api.deepseek.com \
+            -e AI_MODEL=deepseek-flash \
+            -e AI_TIMEOUT=60 \
+            -e AI_FIRST_TOKEN_TIMEOUT=8 \
+            -e AI_FIRST_TOKEN_MAX_ATTEMPTS=2 \
+            -e AI_MAX_CONTEXT_CHARS=5200 \
+            -e XF_APP_ID= \
+            -e XF_API_KEY= \
+            -e XF_API_SECRET= \
+            -e XF_ASR_HOST=iat.xf-yun.com \
+            -e RENDER=true \
+            -e WEB_CONCURRENCY=4 \
+            xuhua:verify
+          trap 'docker rm -f xuhua-verify >/dev/null 2>&1 || true' EXIT
           python - <<'PY'
           import json
           import time
           import urllib.request
 
-          base = "http://127.0.0.1:5050"
+          base = "http://127.0.0.1:5051"
           last_error = None
-          for _ in range(40):
+          for _ in range(60):
               try:
                   with urllib.request.urlopen(base + "/healthz", timeout=2) as response:
                       body = json.load(response)
@@ -72,7 +93,7 @@ jobs:
                   last_error = exc
                   time.sleep(0.25)
           else:
-              raise RuntimeError(f"application did not become healthy: {last_error}")
+              raise RuntimeError(f"production container did not become healthy: {last_error}")
 
           with urllib.request.urlopen(base + "/api/meta", timeout=3) as response:
               meta = json.load(response)

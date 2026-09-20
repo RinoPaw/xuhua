@@ -197,3 +197,17 @@ test("stale worklet attachment cannot bind to a replacement stream", async () =>
   assert.equal(second.track.stopped, false);
   assert.equal(media.stream, second.stream);
 });
+
+test("releasing a stale stream cannot stop the current stream", async () => {
+  const current = makeStream();
+  const stale = makeStream();
+  const media = new VoiceMediaController({
+    mediaDevices: { async getUserMedia() { return current.stream; } },
+  });
+
+  await media.requestStream();
+  assert.equal(media.release(stale.stream), false);
+  assert.equal(stale.track.stopped, true);
+  assert.equal(current.track.stopped, false);
+  assert.equal(media.stream, current.stream);
+});

@@ -41,8 +41,10 @@ export class VoiceMediaController {
       stopStream(stream);
       throw new Error("voice_media_request_stale");
     }
+    const previous = this.stream;
     this.stream = stream;
     this.streamGeneration = generation;
+    if (previous && previous !== stream) stopStream(previous);
     this.applyMuteState();
     return stream;
   }
@@ -90,6 +92,16 @@ export class VoiceMediaController {
     this.muted = Boolean(muted);
     this.applyMuteState();
     return this.muted;
+  }
+
+  release(stream) {
+    if (!stream) return false;
+    if (this.stream === stream) {
+      this.stop();
+      return true;
+    }
+    stopStream(stream);
+    return false;
   }
 
   stop() {

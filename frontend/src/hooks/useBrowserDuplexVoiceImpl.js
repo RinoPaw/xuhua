@@ -331,24 +331,33 @@ export function useBrowserDuplexVoice({
     setError(null);
     setStatusValue(REALTIME_VOICE_STATUS.CONNECTING);
 
+    let startStream = null;
+    let startSocket = null;
+    const releaseStartResources = () => {
+      if (startSocket && socketRef.current === startSocket) socketRef.current = null;
+      if (startSocket && startSocket.readyState < WebSocket.CLOSING) {
+        try { startSocket.close(1000, "stale_voice_start"); } catch { /* noop */ }
+      }
+      voiceMediaRef.current?.release(startStream);
+    };
+
     try {
-      const stream = await voiceMediaRef.current.requestStream();
+      startStream = await voiceMediaRef.current.requestStream();
       if (transportGenerationRef.current !== generation) {
-        voiceMediaRef.current.stop();
+        releaseStartResources();
         return;
       }
 
-      const socket = await openVoiceSocket(websocketPath);
-      socketRef.current = socket;
+      startSocket = await openVoiceSocket(websocketPath);
       if (transportGenerationRef.current !== generation) {
-        socket.close(1000, "stale_voice_start");
-        voiceMediaRef.current.stop();
+        releaseStartResources();
         return;
       }
+      socketRef.current = startSocket;
 
       sendRecognitionContext();
-      socket.onmessage = (event) => {
-        if (socketRef.current !== socket) return;
+      startSocket.onmessage = (event) => {
+        if (socketRef.current !== startSocket) return;
         const message = parseSocketMessage(event);
         if (!message) return;
 
@@ -488,8 +497,8 @@ export function useBrowserDuplexVoice({
         }
       };
 
-      socket.onclose = (event) => {
-        const isCurrentSocket = socketRef.current === socket;
+      startSocket.onclose = (event) => {
+        const isCurrentSocket = socketRef.current === startSocket;
         if (isCurrentSocket) cleanup();
         if (isCurrentSocket
           && event.code !== 1000
@@ -500,14 +509,17 @@ export function useBrowserDuplexVoice({
 
       await voiceMediaRef.current.attachProcessor(processAudio);
       if (transportGenerationRef.current !== generation) {
-        voiceMediaRef.current.stop();
+        releaseStartResources();
         return;
       }
 
       setConnected(true);
       setStatusValue(REALTIME_VOICE_STATUS.LISTENING);
     } catch (startError) {
-      if (transportGenerationRef.current !== generation) return;
+      if (transportGenerationRef.current !== generation) {
+        releaseStartResources();
+        return;
+      }
       cleanup();
       reportError(startError);
     }

@@ -85,6 +85,7 @@ export class VoiceInputController {
     onSpectrum = () => {},
     onSpeaking = () => {},
     onTranscribing = () => {},
+    onTransportFailure = () => {},
   } = {}) {
     const result = this.processFrame(this.state, {
       samples,
@@ -99,10 +100,19 @@ export class VoiceInputController {
 
     if (result.spectrum) onSpectrum(result.spectrum);
 
-    result.actions.forEach((action, index) => {
-      if (!connection?.connected) return;
-      if (action.kind === "json") connection.sendJson(action.payload);
-      else connection.sendRaw(action.payload);
+    for (let index = 0; index < result.actions.length; index += 1) {
+      const action = result.actions[index];
+      if (!connection?.connected) {
+        onTransportFailure();
+        break;
+      }
+      const sent = action.kind === "json"
+        ? connection.sendJson(action.payload)
+        : connection.sendRaw(action.payload);
+      if (!sent) {
+        onTransportFailure();
+        break;
+      }
 
       if (index === 0 && result.started) {
         if (result.started.shouldInterrupt) {
@@ -111,7 +121,7 @@ export class VoiceInputController {
           onSpeaking();
         }
       }
-    });
+    }
 
     if (!result.started && result.nextStatus === "transcribing") onTranscribing();
     return result;

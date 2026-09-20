@@ -9,7 +9,7 @@
 - 连续会话：服务端维护 session / turn，并支持取消当前回答。
 - 实时语音：浏览器端 VAD 采集 PCM，经讯飞流式 ASR 转写后进入同一回答链路。
 - 中英与中文方言：当前只使用讯飞“中英识别大模型”一条 ASR 链路，配置为 `zh_cn` / `mandarin` / `slm`；该服务同时覆盖普通话、英语和中文方言。
-- Edge TTS：回答通过 `/api/tts` 合成，前端支持中断、重试与浏览器语音降级。
+- Edge TTS：浏览器先向 `/api/tts` 提交朗读文本换取短期 ticket，再通过 `/api/tts/{token}` 流式播放；前端支持中断、重试与浏览器语音降级。
 - 数字人界面：React / Vite 前端，由 FastAPI 同源提供构建产物。
 
 ## 架构
@@ -19,7 +19,8 @@ React / Vite
   ├─ 项目检索与筛选
   ├─ POST /api/chat
   ├─ WebSocket /api/voice
-  └─ GET /api/tts
+  ├─ POST /api/tts
+  └─ GET /api/tts/{token}
 
 FastAPI
   ├─ AdmissionMiddleware（昂贵服务容量 / 速率预算）
@@ -82,10 +83,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install-lab.ps1 -Sk
 | `FRONTEND_DIR` | `frontend/dist/client` | 前端构建目录 |
 | `AI_API_KEY` | 空 | OpenAI-compatible LLM 密钥；空值时使用本地降级回答 |
 | `AI_BASE_URL` | `https://api.deepseek.com` | LLM API 地址 |
-| `AI_MODEL` | `deepseek-v4-flash` | LLM 模型名 |
+| `AI_MODEL` | `deepseek-flash` | DeepSeek 当前 Flash API 模型名；应用显式使用非思考模式 |
 | `AI_TIMEOUT` | `60` | LLM 请求超时 |
-| `AI_FIRST_TOKEN_TIMEOUT` | `8` | 首 token 等待时间 |
-| `AI_FIRST_TOKEN_MAX_ATTEMPTS` | `2` | 首 token 最大尝试次数 |
+| `AI_FIRST_TOKEN_TIMEOUT` | `8` | 首文本等待时间 |
+| `AI_FIRST_TOKEN_MAX_ATTEMPTS` | `2` | 首文本最大尝试次数 |
 | `AI_MAX_CONTEXT_CHARS` | `5200` | 发送给 LLM 的资料上下文上限 |
 | `XF_APP_ID` | 空 | 讯飞应用 ID |
 | `XF_API_KEY` | 空 | 讯飞 API Key |
@@ -101,9 +102,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install-lab.ps1 -Sk
 | `VOICE_MAX_PER_MINUTE` | `30` | 单实例每分钟允许建立的实时语音连接上限 |
 | `VOICE_MAX_PER_CLIENT_PER_MINUTE` | `8` | 单客户端每分钟允许建立的实时语音连接上限 |
 
-文字回答、TTS 与实时语音分别使用独立预算。HTTP 超出速率预算时返回 `429`，并发容量耗尽时返回 `503`；实时语音握手被拒绝时使用 WebSocket `1013`。这些预算按应用进程 / 实例计算；如果未来水平扩容到多个实例，需要把集群级预算迁到共享存储或上游网关。
+文字回答、TTS 与实时语音分别使用独立预算。HTTP 超出速率预算时返回 `429`，并发容量耗尽时返回 `503`；实时语音握手被拒绝时使用 WebSocket `1013`。这些预算按应用进程 / 实例计算；当前服务显式以单 worker 运行。如果未来水平扩容到多个 worker 或实例，需要先把 ticket、session 与集群级预算迁到共享存储或上游网关。
 
-讯飞三个凭据为空时，文字功能仍可使用，页面会把实时语音能力标记为不可用。
+讯飞三个凭据为空时，文字功能仍可使用，页面会把实时语音能力标记为不可用。`AI_API_KEY` 为空时，文字链路使用本地降级回答。
 
 实际 `.env` 不应提交到 Git。
 
@@ -130,7 +131,7 @@ Vite 会代理 `/api` 与 `/healthz` 到本地 FastAPI。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/healthz` | 健康检查 |
+| GET | `/healthz` | 进程 / 数据加载健康检查 |
 | GET | `/api/meta` | 版本、数据规模与能力开关 |
 | GET | `/api/categories` | 类别列表 |
 | GET | `/api/items` | 项目检索 |
@@ -138,7 +139,8 @@ Vite 会代理 `/api` 与 `/healthz` 到本地 FastAPI。
 | POST | `/api/chat` | SSE 流式问答 |
 | POST | `/api/chat/{session_id}/turn/{turn_id}/cancel` | 中断指定轮次 |
 | WS | `/api/voice` | VAD、讯飞 ASR、连续对话与抢话 |
-| GET | `/api/tts` | Edge TTS 音频流 |
+| POST | `/api/tts` | 提交朗读文本并获取短期 TTS token |
+| GET | `/api/tts/{token}` | 使用 token 流式获取 Edge TTS 音频 |
 
 实时语音路径：
 
@@ -148,8 +150,8 @@ Vite 会代理 `/api` 与 `/healthz` 到本地 FastAPI。
   → /api/voice
   → XfyunStream
   → AssistantService / LLM
-  → /api/tts
-  → 浏览器播放
+  → POST /api/tts 获取 ticket
+  → GET /api/tts/{token} 流式播放
 ```
 
 ## 数据维护
@@ -172,9 +174,12 @@ uv run python -m compileall -q src scripts app.py
 
 cd frontend
 npm ci
-npm run test
+npm run lint
+npm test
 npm run build
 ```
+
+GitHub `verify` 还会构建生产 Docker 镜像并实际启动容器，对 `/healthz`、`/api/meta` 与首页做冒烟检查。Render 配置为仅在仓库检查通过后自动部署。
 
 ## Docker / 服务器部署
 
@@ -187,9 +192,16 @@ docker run --rm -p 5050:5050 --env-file .env xuhua
 
 `compose.yaml` 用于生产服务器部署，默认读取仓库外的 `/etc/xuhua/xuhua.env`，并由 Compose 显式设置容器内 `HOST=0.0.0.0`、`PORT=5050`。`deploy/xuhua-deploy.sh` 负责拉取 `main`、构建镜像、健康检查与失败回滚。
 
-应用自身的 `AdmissionMiddleware` 是昂贵服务的主保护层，因此 Render 等不经过 Nginx 的部署同样受预算约束。仓库提供的 Nginx 配置还会针对 `/api/chat`、`/api/tts`、`/api/voice` 增加单 IP 请求速率限制，并限制同一 IP 的实时语音连接数，作为第二层防护。
+应用自身的 `AdmissionMiddleware` 是昂贵服务的主保护层，因此 Render 等不经过 Nginx 的部署同样受预算约束。仓库提供的 Nginx 配置还会针对 `/api/chat`、TTS ticket、TTS synthesis 与 `/api/voice` 分别增加单 IP 请求速率限制，并限制同一 IP 的实时语音连接数，作为第二层防护。
 
-Render 的 `render.yaml` 已列出全部非敏感运行配置，LLM 与讯飞凭据使用 `sync: false`，需要在 Render 中显式提供。
+### Render 上线前检查
+
+`render.yaml` 已列出全部非敏感运行配置，LLM 与讯飞凭据使用 `sync: false`。创建或同步服务前确认：
+
+1. 已填写 `AI_API_KEY`；否则文字问答会进入本地降级模式。
+2. 需要实时语音时，`XF_APP_ID`、`XF_API_KEY`、`XF_API_SECRET` 三项都已填写；缺任意一项时页面会主动隐藏实时语音能力。
+3. 计算套餐已经按本次测试目的明确选择。`render.yaml` 当前没有固定 `plan`，避免代码仓库替你改变计费方案。
+4. 部署完成后先访问 `/healthz` 和 `/api/meta`，确认数据规模与 `realtime_voice` capability，再测试文字 SSE、TTS 和 WebSocket 语音。
 
 ## 安全
 

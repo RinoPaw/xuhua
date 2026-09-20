@@ -6,10 +6,8 @@ import asyncio
 from collections import deque
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-import ipaddress
 import json
 import math
-import os
 import time
 from typing import Any
 
@@ -164,32 +162,8 @@ class AdmissionController:
                 self._active[service] = max(0, self._active[service] - 1)
 
 
-def _render_client_key(scope: Mapping[str, Any]) -> str | None:
-    if os.environ.get("RENDER", "").strip().casefold() != "true":
-        return None
-
-    values: list[str] = []
-    for name, value in scope.get("headers", ()):
-        if bytes(name).lower() != b"cf-connecting-ip":
-            continue
-        try:
-            values.append(bytes(value).decode("ascii").strip())
-        except (UnicodeDecodeError, TypeError, ValueError):
-            return None
-    if len(values) != 1 or not values[0]:
-        return None
-    try:
-        return str(ipaddress.ip_address(values[0]))
-    except ValueError:
-        return None
-
-
 def client_key_from_scope(scope: Mapping[str, Any]) -> str:
-    """Resolve the trusted client identity for per-client admission budgets."""
-
-    render_client = _render_client_key(scope)
-    if render_client is not None:
-        return render_client
+    """Use the ASGI-resolved peer address for per-client admission budgets."""
 
     client = scope.get("client")
     if isinstance(client, (tuple, list)) and client:

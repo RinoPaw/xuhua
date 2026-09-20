@@ -13,7 +13,7 @@ import {
 
 const TARGET_RATE = 16000;
 const NORMAL_VAD_POLICY = getVADOnsetPolicy(false);
-const SILENCE_MS = 680;
+const SILENCE_MS = 420;
 const MAX_UTTERANCE_MS = 20000;
 const SPECTRUM_INTERVAL_MS = 50;
 

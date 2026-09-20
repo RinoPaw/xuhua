@@ -184,17 +184,28 @@ def test_region_scope_cleanup_preserves_semantic_words_starting_with_connector()
     assert cleaned == "和田玉"
 
 
-def test_pinyin_is_optional(monkeypatch):
+def test_tokenization_has_a_fixed_work_budget():
+    tokens = search.tokenize("甲" * 500)
+    assert len(tokens) <= 64
+
+
+def test_pinyin_is_optional_and_query_is_computed_once(monkeypatch):
     kb = make_kb()
+    search._stable_pinyin_forms.cache_clear()
     monkeypatch.setattr(search, "_pinyin_forms", lambda text: [])
     items, total = search.search_items(kb, query="luowu", use_pinyin=True)
     assert total == 0
     assert items == []
 
+    calls: dict[str, int] = {}
+
     def fake_pinyin(text):
+        calls[text] = calls.get(text, 0) + 1
         return {"luowu": ["luowu"], "龙舞": ["luowu"], "舞蹈": ["wudao"]}.get(text, [text])
 
+    search._stable_pinyin_forms.cache_clear()
     monkeypatch.setattr(search, "_pinyin_forms", fake_pinyin)
     items, total = search.search_items(kb, query="luowu", use_pinyin=True)
     assert total == 1
     assert items[0].id == "a"
+    assert calls["luowu"] == 1

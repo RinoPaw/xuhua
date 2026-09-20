@@ -182,6 +182,7 @@ function App() {
   const stopVoice = () => {
     realtime.stop();
     interruptText({ stopSpeech: false });
+    dispatch({ type: "realtime.interrupted" });
     dispatch({ type: "clear.error" });
   };
 

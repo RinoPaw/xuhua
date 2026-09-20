@@ -10,13 +10,18 @@ import time
 from typing import Any
 
 import edge_tts
-from fastapi import FastAPI, HTTPException, Path as ApiPath, Query
+from fastapi import FastAPI, HTTPException, Path as ApiPath, Query, Request
 from fastapi.responses import StreamingResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field
 
 from . import __version__
-from .admission import AdmissionController, AdmissionMiddleware, AdmissionPolicy
+from .admission import (
+    AdmissionController,
+    AdmissionMiddleware,
+    AdmissionPolicy,
+    client_key_from_scope,
+)
 from .assistant import AssistantService
 from .asr_normalization import normalize_asr_final, prepare_asr_normalization
 from .config import (
@@ -37,6 +42,7 @@ from .config import (
 )
 from .dataset import item_to_dict
 from .language import detect_locale, get_language_profile, normalize_locale_hint
+from .tts_tickets import TtsTicketCapacity, TtsTicketStore
 from .voice import XfyunStream
 from .voice_transport import register_voice_route
 
@@ -55,6 +61,14 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, max_length=MAX_SESSION_ID_CHARS)
     category: str = Field(default="", max_length=200)
     locale_hint: str = Field(default="", max_length=64)
+
+
+class TtsRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_TTS_CHARS)
+    locale: str = Field(default="", max_length=64)
+    trace_id: str = Field(default="", max_length=128)
+    segment: int = Field(default=0, ge=0, le=999)
+    reason: str = Field(default="", max_length=40)
 
 
 def create_default_admission_controller() -> AdmissionController:
@@ -89,6 +103,7 @@ def create_app(
     sessions = assistant.sessions
     admission = admission or create_default_admission_controller()
     kb = search.knowledge_base
+    tts_tickets = TtsTicketStore()
     voice_available = bool(
         XF_APP_ID.strip()
         and XF_API_KEY.strip()
@@ -141,32 +156,48 @@ def create_app(
             for category in kb.categories
         ]
 
-    @app.get("/api/tts")
-    async def synthesize_speech(
-        text: str = Query(min_length=1, max_length=MAX_TTS_CHARS),
-        locale: str = Query(default="", max_length=64),
-        trace_id: str = Query(default="", max_length=128),
-        segment: int = Query(default=0, ge=0, le=999),
-        reason: str = Query(default="", max_length=40),
-    ) -> StreamingResponse:
-        text = text.strip()
+    @app.post("/api/tts")
+    async def prepare_speech(body: TtsRequest, request: Request) -> dict[str, str]:
+        text = body.text.strip()
         if not text:
             raise HTTPException(status_code=422, detail="empty_text")
-        requested_locale = normalize_locale_hint(locale)
-        language_profile = get_language_profile(requested_locale or detect_locale(text))
+        try:
+            token = tts_tickets.issue(
+                text=text,
+                locale=body.locale.strip(),
+                trace_id=body.trace_id.strip(),
+                segment=body.segment,
+                reason=body.reason.strip(),
+                client_id=client_key_from_scope(request.scope),
+            )
+        except TtsTicketCapacity as exc:
+            raise HTTPException(status_code=503, detail="tts_ticket_capacity") from exc
+        return {"token": token}
+
+    @app.get("/api/tts/{token}")
+    async def synthesize_speech(
+        token: str = ApiPath(..., min_length=16, max_length=128),
+    ) -> StreamingResponse:
+        ticket = tts_tickets.get(token)
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="tts_ticket_not_found")
+
+        language_profile = get_language_profile(
+            normalize_locale_hint(ticket.locale) or detect_locale(ticket.text)
+        )
         started = time.perf_counter()
         LOGGER.info(
             "[trace=%s segment=%s] tts.request.start reason=%s chars=%s locale=%s",
-            trace_id or "-",
-            segment,
-            reason or "unspecified",
-            len(text),
+            ticket.trace_id or "-",
+            ticket.segment,
+            ticket.reason or "unspecified",
+            len(ticket.text),
             language_profile.code,
         )
 
         async def audio_stream() -> AsyncIterator[bytes]:
             communicate = edge_tts.Communicate(
-                text,
+                ticket.text,
                 voice=language_profile.tts_voice,
                 rate="-2%",
                 pitch="+0Hz",
@@ -178,15 +209,15 @@ def create_app(
                         first_chunk = False
                         LOGGER.info(
                             "[trace=%s segment=%s] tts.first_audio_chunk +%.3fs",
-                            trace_id or "-",
-                            segment,
+                            ticket.trace_id or "-",
+                            ticket.segment,
                             time.perf_counter() - started,
                         )
                     yield chunk["data"]
             LOGGER.info(
                 "[trace=%s segment=%s] tts.stream.complete +%.3fs",
-                trace_id or "-",
-                segment,
+                ticket.trace_id or "-",
+                ticket.segment,
                 time.perf_counter() - started,
             )
 

@@ -24,6 +24,12 @@ def test_budget_settings_are_visible_in_local_and_render_templates() -> None:
         assert f"- key: {key}" in render
 
 
+def test_render_deploys_only_after_repository_checks_pass() -> None:
+    render = (ROOT / "render.yaml").read_text(encoding="utf-8")
+    assert "autoDeployTrigger: checksPass" in render
+    assert "autoDeploy: true" not in render
+
+
 def test_nginx_configs_limit_expensive_public_routes() -> None:
     for filename in ("nginx-xuhua-http.conf", "nginx-xuhua-https.conf"):
         config = (ROOT / "deploy" / filename).read_text(encoding="utf-8")

@@ -16,26 +16,42 @@ def env_path(name: str) -> Path:
     return path
 
 
-def positive_int(name: str, default: int) -> int:
-    value = int(os.environ.get(name, str(default)))
+def positive_int(name: str, default: int | None = None) -> int:
+    raw = os.environ[name] if default is None else os.environ.get(name, str(default))
+    value = int(raw)
     if value <= 0:
         raise ValueError(f"{name} must be positive")
+    return value
+
+
+def positive_float(name: str, default: float | None = None) -> float:
+    raw = os.environ[name] if default is None else os.environ.get(name, str(default))
+    value = float(raw)
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
+def port_number(name: str) -> int:
+    value = positive_int(name)
+    if value > 65535:
+        raise ValueError(f"{name} must be between 1 and 65535")
     return value
 
 
 DATASET_PATH = env_path("DATASET_PATH")
 FRONTEND_DIR = env_path("FRONTEND_DIR")
 HOST = os.environ["HOST"]
-PORT = int(os.environ["PORT"])
+PORT = port_number("PORT")
 DEBUG = os.environ["DEBUG"] == "1"
 
 AI_API_KEY = os.environ["AI_API_KEY"]
 AI_BASE_URL = os.environ["AI_BASE_URL"]
 AI_MODEL = os.environ["AI_MODEL"]
-AI_TIMEOUT = int(os.environ["AI_TIMEOUT"])
-AI_FIRST_TOKEN_TIMEOUT = float(os.environ["AI_FIRST_TOKEN_TIMEOUT"])
+AI_TIMEOUT = positive_float("AI_TIMEOUT")
+AI_FIRST_TOKEN_TIMEOUT = positive_float("AI_FIRST_TOKEN_TIMEOUT")
 AI_FIRST_TOKEN_MAX_ATTEMPTS = min(max(int(os.environ["AI_FIRST_TOKEN_MAX_ATTEMPTS"]), 1), 2)
-AI_MAX_CONTEXT_CHARS = int(os.environ["AI_MAX_CONTEXT_CHARS"])
+AI_MAX_CONTEXT_CHARS = positive_int("AI_MAX_CONTEXT_CHARS")
 
 XF_APP_ID = os.environ["XF_APP_ID"]
 XF_API_KEY = os.environ["XF_API_KEY"]

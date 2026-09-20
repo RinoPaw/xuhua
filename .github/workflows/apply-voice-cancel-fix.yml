@@ -1,0 +1,60 @@
+name: apply-voice-cancel-fix
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/apply-voice-cancel-fix.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch cancelled voice turn handling
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: Path, old: str, new: str) -> None:
+              text = path.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{path}: expected one match, got {count}: {old[:100]!r}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          gateway = Path("src/heritage_explorer/voice_gateway.py")
+          replace_once(
+              gateway,
+              "        async def answer(question: str, turn_id: str, locale_hint: str = \"\") -> None:\n            nonlocal session_id\n",
+              "        async def answer(question: str, turn_id: str, locale_hint: str = \"\") -> None:\n            nonlocal answer_task, active_turn_id, session_id\n",
+          )
+          replace_once(
+              gateway,
+              '''                                "message": message,\n                            }\n                        )\n            except asyncio.CancelledError:\n''',
+              '''                                "message": message,\n                            }\n                        )\n                    elif event.type == "turn.cancelled":\n                        await send(\n                            {\n                                "type": "assistant.cancelled",\n                                "session_id": event.session_id,\n                                "turn_id": event.turn_id,\n                                "reason": str(event.payload.get("reason") or "cancelled"),\n                            }\n                        )\n            except asyncio.CancelledError:\n''',
+          )
+          replace_once(
+              gateway,
+              '''                await send(\n                    {"type": "error", "turn_id": turn_id, "message": "回答服务暂时不可用"}\n                )\n\n        async def start_answer(\n''',
+              '''                await send(\n                    {"type": "error", "turn_id": turn_id, "message": "回答服务暂时不可用"}\n                )\n            finally:\n                current_task = asyncio.current_task()\n                if active_turn_id == turn_id:\n                    active_turn_id = None\n                    if answer_task is current_task:\n                        answer_task = None\n\n        async def start_answer(\n''',
+          )
+
+          hook = Path("frontend/src/hooks/useBrowserDuplexVoiceImpl.js")
+          replace_once(
+              hook,
+              '''        if (message.type === "utterance.rejected") {\n''',
+              '''        if (message.type === "assistant.cancelled") {\n          if (!acceptAssistantTurn(\n            message,\n            assistantTurnRef,\n            ignoredAssistantTurnsRef.current,\n          )) return;\n          stopSpeech(false, false);\n          setError(null);\n          setStatusValue(REALTIME_VOICE_STATUS.LISTENING);\n          return;\n        }\n\n        if (message.type === "utterance.rejected") {\n''',
+          )
+          PY
+      - name: Commit fix and remove workflow
+        run: |
+          git config user.name "Rino"
+          git config user.email "71957726+RinoPaw@users.noreply.github.com"
+          git add src/heritage_explorer/voice_gateway.py frontend/src/hooks/useBrowserDuplexVoiceImpl.js
+          git rm .github/workflows/apply-voice-cancel-fix.yml
+          git diff --cached --check
+          git commit -m "Handle cancelled realtime voice turns"
+          git push

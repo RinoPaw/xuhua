@@ -52,6 +52,11 @@ def test_deploy_script_snapshots_and_restores_environment() -> None:
     assert 'read -r candidate candidate_env_revision <"$pointer"' in script
     assert 'export XUHUA_ENV_FILE="$restore_env"' in script
     assert 'export XUHUA_ENV_REVISION="$restore_env_revision"' in script
-    assert script.index("remember_success\n  deployment_succeeded=1") < script.index(
-        "cleanup_old_images"
-    )
+    assert (
+        "if wait_for_healthy; then\n"
+        "  remember_success\n"
+        "  deployment_succeeded=1\n"
+        "  cleanup_old_images\n"
+        "  exit 0\n"
+        "fi"
+    ) in script

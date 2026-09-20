@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import uuid
 from typing import Any, Callable
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -15,17 +17,44 @@ from .voice_protocol import VoiceCommand, decode_voice_command
 from .voice_session import VoiceSessionRuntime
 
 
+class VoiceWebSocketChannel:
+    """Own the wire envelope and serialized writes for one WebSocket connection."""
+
+    def __init__(self, websocket: WebSocket, *, connection_id: str | None = None) -> None:
+        self.websocket = websocket
+        self.connection_id = connection_id or uuid.uuid4().hex
+        self.sequence = 0
+        self.send_lock = asyncio.Lock()
+
+    async def emit(self, payload: dict[str, Any]) -> None:
+        try:
+            async with self.send_lock:
+                self.sequence += 1
+                await self.websocket.send_json(
+                    {
+                        "connection_id": self.connection_id,
+                        "sequence": self.sequence,
+                        **payload,
+                    }
+                )
+        except (RuntimeError, WebSocketDisconnect):
+            pass
+
+
 async def dispatch_voice_command(runtime: VoiceSessionRuntime, command: VoiceCommand) -> None:
     await runtime.handle_command(command)
 
 
-async def run_voice_transport(runtime: VoiceSessionRuntime) -> None:
+async def run_voice_transport(
+    websocket: WebSocket,
+    runtime: VoiceSessionRuntime,
+) -> None:
     """Receive frames, decode commands, and delegate all state to the runtime."""
 
     try:
         await runtime.send({"type": "ready"})
         while True:
-            message = await runtime.websocket.receive()
+            message = await websocket.receive()
             if message.get("type") == "websocket.disconnect":
                 break
 
@@ -69,8 +98,10 @@ def register_voice_route(
             return
 
         await websocket.accept()
+        channel = VoiceWebSocketChannel(websocket)
         runtime = VoiceSessionRuntime(
-            websocket,
+            emit=channel.emit,
+            connection_id=channel.connection_id,
             assistant=assistant,
             sessions=sessions,
             knowledge_base=knowledge_base,
@@ -82,10 +113,11 @@ def register_voice_route(
             normalize_final=normalize_final,
             max_session_id_chars=max_session_id_chars,
         )
-        await run_voice_transport(runtime)
+        await run_voice_transport(websocket, runtime)
 
 
 __all__ = [
+    "VoiceWebSocketChannel",
     "dispatch_voice_command",
     "register_voice_route",
     "run_voice_transport",

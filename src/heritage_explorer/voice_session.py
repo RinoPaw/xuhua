@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 import logging
 import time
 import uuid
-from typing import Any, Callable
-
-from fastapi import WebSocketDisconnect
+from typing import Any
 
 from .assistant import AssistantService
 from .asr_normalization import NormalizedTranscript
@@ -111,12 +110,13 @@ class VoiceBatchState:
 
 
 class VoiceSessionRuntime:
-    """Own all mutable state and child tasks for one realtime voice connection."""
+    """Own mutable conversation state and child tasks for one voice connection."""
 
     def __init__(
         self,
-        websocket: Any,
         *,
+        emit: Callable[[dict[str, Any]], Awaitable[None]],
+        connection_id: str,
         assistant: AssistantService,
         sessions: SessionStore,
         knowledge_base: KnowledgeBase,
@@ -128,7 +128,8 @@ class VoiceSessionRuntime:
         normalize_final: Callable[..., NormalizedTranscript],
         max_session_id_chars: int,
     ) -> None:
-        self.websocket = websocket
+        self.emit = emit
+        self.connection_id = connection_id
         self.assistant = assistant
         self.sessions = sessions
         self.knowledge_base = knowledge_base
@@ -140,7 +141,6 @@ class VoiceSessionRuntime:
         self.normalize_final = normalize_final
         self.max_session_id_chars = max_session_id_chars
 
-        self.connection_id = uuid.uuid4().hex
         self.context = VoiceContextState()
         self.batch = VoiceBatchState()
         self.asr_stream: Any | None = None
@@ -149,9 +149,7 @@ class VoiceSessionRuntime:
         self.finalize_tasks: set[asyncio.Task[None]] = set()
         self.active_turn_id: str | None = None
         self.utterance_sequence = 0
-        self.event_sequence = 0
         self.batch_lock = asyncio.Lock()
-        self.send_lock = asyncio.Lock()
 
     def update_context(self, command: ContextCommand) -> None:
         self.context.apply(
@@ -202,18 +200,7 @@ class VoiceSessionRuntime:
         )
 
     async def send(self, payload: dict[str, Any]) -> None:
-        try:
-            async with self.send_lock:
-                self.event_sequence += 1
-                await self.websocket.send_json(
-                    {
-                        "connection_id": self.connection_id,
-                        "sequence": self.event_sequence,
-                        **payload,
-                    }
-                )
-        except (RuntimeError, WebSocketDisconnect):
-            pass
+        await self.emit(payload)
 
     @staticmethod
     async def stop_task(task: asyncio.Task[None] | None) -> None:

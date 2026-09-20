@@ -16,6 +16,13 @@ def env_path(name: str) -> Path:
     return path
 
 
+def positive_int(name: str, default: int) -> int:
+    value = int(os.environ.get(name, str(default)))
+    if value <= 0:
+        raise ValueError(f"{name} must be positive")
+    return value
+
+
 DATASET_PATH = env_path("DATASET_PATH")
 FRONTEND_DIR = env_path("FRONTEND_DIR")
 HOST = os.environ["HOST"]
@@ -34,3 +41,13 @@ XF_APP_ID = os.environ["XF_APP_ID"]
 XF_API_KEY = os.environ["XF_API_KEY"]
 XF_API_SECRET = os.environ["XF_API_SECRET"]
 XF_ASR_HOST = os.environ["XF_ASR_HOST"]
+
+CHAT_MAX_CONCURRENCY = positive_int("CHAT_MAX_CONCURRENCY", 8)
+CHAT_MAX_PER_MINUTE = positive_int("CHAT_MAX_PER_MINUTE", 60)
+CHAT_MAX_PER_CLIENT_PER_MINUTE = positive_int("CHAT_MAX_PER_CLIENT_PER_MINUTE", 20)
+TTS_MAX_CONCURRENCY = positive_int("TTS_MAX_CONCURRENCY", 12)
+TTS_MAX_PER_MINUTE = positive_int("TTS_MAX_PER_MINUTE", 240)
+TTS_MAX_PER_CLIENT_PER_MINUTE = positive_int("TTS_MAX_PER_CLIENT_PER_MINUTE", 80)
+VOICE_MAX_CONCURRENCY = positive_int("VOICE_MAX_CONCURRENCY", 4)
+VOICE_MAX_PER_MINUTE = positive_int("VOICE_MAX_PER_MINUTE", 30)
+VOICE_MAX_PER_CLIENT_PER_MINUTE = positive_int("VOICE_MAX_PER_CLIENT_PER_MINUTE", 8)

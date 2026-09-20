@@ -17,10 +17,20 @@ from pydantic import BaseModel, Field
 
 from . import __version__
 from . import voice_gateway
+from .admission import AdmissionController, AdmissionMiddleware, AdmissionPolicy
 from .assistant import AssistantService, SearchService
 from .asr_normalization import normalize_asr_final, prepare_asr_normalization
 from .config import (
+    CHAT_MAX_CONCURRENCY,
+    CHAT_MAX_PER_CLIENT_PER_MINUTE,
+    CHAT_MAX_PER_MINUTE,
     FRONTEND_DIR,
+    TTS_MAX_CONCURRENCY,
+    TTS_MAX_PER_CLIENT_PER_MINUTE,
+    TTS_MAX_PER_MINUTE,
+    VOICE_MAX_CONCURRENCY,
+    VOICE_MAX_PER_CLIENT_PER_MINUTE,
+    VOICE_MAX_PER_MINUTE,
     XF_API_KEY,
     XF_API_SECRET,
     XF_APP_ID,
@@ -51,11 +61,34 @@ class ChatRequest(BaseModel):
     locale_hint: str = Field(default="", max_length=64)
 
 
+def create_default_admission_controller() -> AdmissionController:
+    return AdmissionController(
+        {
+            "chat": AdmissionPolicy(
+                CHAT_MAX_CONCURRENCY,
+                CHAT_MAX_PER_MINUTE,
+                CHAT_MAX_PER_CLIENT_PER_MINUTE,
+            ),
+            "tts": AdmissionPolicy(
+                TTS_MAX_CONCURRENCY,
+                TTS_MAX_PER_MINUTE,
+                TTS_MAX_PER_CLIENT_PER_MINUTE,
+            ),
+            "voice": AdmissionPolicy(
+                VOICE_MAX_CONCURRENCY,
+                VOICE_MAX_PER_MINUTE,
+                VOICE_MAX_PER_CLIENT_PER_MINUTE,
+            ),
+        }
+    )
+
+
 def create_app(
     *,
     assistant: AssistantService | None = None,
     search: SearchService | None = None,
     sessions: SessionStore | None = None,
+    admission: AdmissionController | None = None,
 ) -> FastAPI:
     search = (
         search or (getattr(assistant, "search", None) if assistant else None) or SearchService()
@@ -64,6 +97,7 @@ def create_app(
         sessions or (getattr(assistant, "sessions", None) if assistant else None) or SessionStore()
     )
     assistant = assistant or AssistantService(search=search, sessions=sessions)
+    admission = admission or create_default_admission_controller()
     kb = search.knowledge_base
     prepare_asr_normalization(kb)
 
@@ -75,6 +109,7 @@ def create_app(
             await close()
 
     app = FastAPI(title="叙华", version=__version__, lifespan=lifespan)
+    app.add_middleware(AdmissionMiddleware, controller=admission)
 
     @app.get("/healthz")
     @app.get("/api/health")
@@ -272,4 +307,4 @@ def main() -> None:
     uvicorn.run("heritage_explorer.api:app", host=HOST, port=PORT, reload=DEBUG)
 
 
-__all__ = ["app", "create_app", "main"]
+__all__ = ["app", "create_app", "create_default_admission_controller", "main"]

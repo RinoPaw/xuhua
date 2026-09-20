@@ -86,7 +86,11 @@ class OpenAICompatibleLLM:
             "max_tokens": max_tokens,
             "stream": True,
         }
-        if self.model.startswith("deepseek-v4"):
+        # DeepSeek's current Chat Completions models enable thinking by default.
+        # This application streams only final content and enforces a short
+        # first-text deadline, so every DeepSeek model is explicitly run in
+        # non-thinking mode rather than relying on model-name-specific defaults.
+        if self.model.casefold().startswith("deepseek-"):
             payload["thinking"] = {"type": "disabled"}
         headers = {
             "Authorization": f"Bearer {self.api_key}",

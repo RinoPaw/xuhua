@@ -240,7 +240,14 @@ export function conversationReducer(state, action) {
   }
 
   if (action.type === "realtime.interrupted") {
-    return { ...state, phase: "realtime", error: "" };
+    return {
+      ...state,
+      phase: "realtime",
+      error: "",
+      messages: updateLastAssistant(state.messages, (message) => (
+        message.status === "realtime" ? { status: "cancelled" } : {}
+      )),
+    };
   }
   if (action.type === "error") {
     return {

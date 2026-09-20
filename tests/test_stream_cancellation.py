@@ -12,6 +12,14 @@ class EmptySearch:
         return SearchResponse((), 0)
 
 
+class DisabledLLM:
+    api_key = ""
+
+    async def stream_chat(self, messages: object, **kwargs: object):
+        raise AssertionError("disabled LLM must not be called")
+        yield "unreachable"
+
+
 class FirstCallBlocks:
     def __init__(self) -> None:
         self.calls = 0
@@ -88,6 +96,48 @@ def test_same_turn_id_supersession_preserves_old_generation_reason() -> None:
         history = store.history("session")
         assert len(history) == 1
         assert history[0].question == "第二个问题"
+
+    asyncio.run(scenario())
+
+
+def test_supersession_after_sources_cancels_before_history_commit() -> None:
+    async def scenario() -> None:
+        store = SessionStore()
+        service = AssistantService(
+            search=EmptySearch(),
+            sessions=store,
+            llm=DisabledLLM(),
+        )
+        first = service.stream_turn(
+            "介绍一下第一项非遗",
+            session_id="session",
+            turn_id="first",
+        )
+
+        first_events = []
+        while True:
+            event = await anext(first)
+            first_events.append(event)
+            if event.type == "response.sources":
+                break
+
+        replacement_events = [
+            event
+            async for event in service.stream_turn(
+                "介绍一下第二项非遗",
+                session_id="session",
+                turn_id="second",
+            )
+        ]
+        first_events.extend([event async for event in first])
+
+        assert replacement_events[-1].type == "turn.completed"
+        assert first_events[-1].type == "turn.cancelled"
+        assert first_events[-1].payload["reason"] == "superseded"
+        assert not any(event.type == "turn.completed" for event in first_events)
+        history = store.history("session")
+        assert len(history) == 1
+        assert history[0].turn_id == "second"
 
     asyncio.run(scenario())
 

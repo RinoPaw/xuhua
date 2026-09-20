@@ -43,6 +43,11 @@ function createHarness() {
     bargeInPhase: "idle",
     get utteranceActive() { return this.state.utteranceActive; },
     reset() { calls.push(["input.reset"]); this.state.utteranceActive = false; },
+    supersedeUtterance() {
+      calls.push(["input.supersede"]);
+      this.state.utteranceActive = false;
+      return this.state;
+    },
     resetOnset() { calls.push(["input.resetOnset"]); },
     clearBargeInCandidate() { this.bargeInPhase = "idle"; calls.push(["input.clearBargeIn"]); return true; },
     confirmBargeInCandidate() {
@@ -156,16 +161,33 @@ test("browser voice session centralizes barge-in output cancellation", () => {
   assert.equal(harness.calls.some((entry) => entry[0] === "callback.bargeIn"), true);
 });
 
-test("browser voice session sends text through one turn transition", () => {
+test("browser voice session supersedes microphone input before a typed turn", () => {
   const harness = createHarness();
   harness.connection.connected = true;
+  harness.input.state.utteranceActive = true;
 
   assert.equal(harness.session.sendText("  汴绣是什么  "), true);
+  assert.equal(harness.input.state.utteranceActive, false);
+  assert.equal(harness.calls.some((entry) => entry[0] === "input.supersede"), true);
+  assert.equal(
+    harness.calls.some((entry) => entry[0] === "transcript.clear" && entry[1] === true),
+    true,
+  );
   assert.deepEqual(harness.sent.slice(-2), [
     { type: "barge_in" },
     { type: "text", text: "汴绣是什么" },
   ]);
   assert.equal(harness.machine.turn, "thinking");
+});
+
+test("disconnected typed input has no voice-session side effects", () => {
+  const harness = createHarness();
+  harness.input.state.utteranceActive = true;
+
+  assert.equal(harness.session.sendText("汴绣"), false);
+  assert.equal(harness.input.state.utteranceActive, true);
+  assert.equal(harness.sent.length, 0);
+  assert.equal(harness.calls.some((entry) => entry[0] === "input.supersede"), false);
 });
 
 test("connection cleanup resets turn identity from the old socket", () => {

@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Callable
 
 LOGGER = logging.getLogger(__name__)
 LLM_ITERATOR_CLOSE_TIMEOUT = 1.0
+LLM_TASK_CANCEL_TIMEOUT = 0.25
 
 
 class LLMFirstTokenTimeout(RuntimeError):
@@ -28,6 +29,25 @@ def _consume_task_result(task: asyncio.Task[object]) -> None:
         task.result()
     except (asyncio.CancelledError, Exception):
         pass
+
+
+async def cancel_task(
+    task: asyncio.Task[object],
+    *,
+    timeout: float = LLM_TASK_CANCEL_TIMEOUT,
+) -> None:
+    """Request task cancellation without letting provider code block the caller forever."""
+
+    if task.done():
+        await asyncio.gather(task, return_exceptions=True)
+        return
+    task.cancel()
+    done, _pending = await asyncio.wait({task}, timeout=max(float(timeout), 0.001))
+    if done:
+        await asyncio.gather(task, return_exceptions=True)
+        return
+    LOGGER.warning("llm.task.cancel_timeout timeout=%.3fs", timeout)
+    task.add_done_callback(_consume_task_result)
 
 
 async def close_iterator(
@@ -100,10 +120,6 @@ async def stream_with_first_token_retry(
                         return_when=asyncio.FIRST_COMPLETED,
                     )
                     if not done:
-                        next_task.cancel()
-                        await asyncio.gather(next_task, return_exceptions=True)
-                        cancelled.cancel()
-                        await asyncio.gather(cancelled, return_exceptions=True)
                         LOGGER.warning(
                             "[%s] llm.first-token-timeout attempt=%s/%s timeout=%.3fs",
                             log_context,
@@ -113,11 +129,7 @@ async def stream_with_first_token_retry(
                         )
                         raise LLMFirstTokenTimeout(attempt)
                     if cancelled in done and cancel_event.is_set():
-                        next_task.cancel()
-                        await asyncio.gather(next_task, return_exceptions=True)
                         return
-                    cancelled.cancel()
-                    await asyncio.gather(cancelled, return_exceptions=True)
                     try:
                         delta = next_task.result()
                     except StopAsyncIteration:
@@ -125,10 +137,8 @@ async def stream_with_first_token_retry(
                             raise LLMEmptyStream(attempt)
                         return
                 finally:
-                    for task in (next_task, cancelled):
-                        if not task.done():
-                            task.cancel()
-                            await asyncio.gather(task, return_exceptions=True)
+                    await cancel_task(next_task)
+                    await cancel_task(cancelled)
 
                 if not delta:
                     continue
@@ -166,6 +176,8 @@ __all__ = [
     "LLMEmptyStream",
     "LLMFirstTokenTimeout",
     "LLM_ITERATOR_CLOSE_TIMEOUT",
+    "LLM_TASK_CANCEL_TIMEOUT",
+    "cancel_task",
     "close_iterator",
     "stream_with_first_token_retry",
 ]

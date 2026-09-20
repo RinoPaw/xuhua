@@ -62,6 +62,9 @@ test("preloads the second segment before the first segment ends", async () => {
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(scheduler.isPlaying, false);
+  assert.equal(scheduler.segmentCount, 0);
+  assert.equal(audios[0].src, "");
+  assert.equal(audios[1].src, "");
   assert.deepEqual(playingChanges, [true, false, true, false]);
   assert.equal(terminals.length, 1);
   assert.equal(terminals[0].failed, false);

@@ -1,10 +1,17 @@
-"""Typed client commands for the realtime voice WebSocket protocol."""
+"""Typed client commands for the realtime browser voice WebSocket protocol."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 import json
 from typing import Any, TypeAlias
+
+
+MAX_VOICE_TEXT_CHARS = 4000
+MAX_CONTEXT_TITLES = 8
+MAX_CONTEXT_VALUE_CHARS = 200
+MAX_CONTEXT_SESSION_CHARS = 128
+MAX_CONTEXT_LOCALE_CHARS = 64
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,38 +79,43 @@ VoiceCommand: TypeAlias = (
 def _title(value: object) -> str:
     if isinstance(value, dict):
         value = value.get("title", "")
-    return str(value or "").strip()
+    return str(value or "").strip()[:MAX_CONTEXT_VALUE_CHARS]
 
 
 def _context_command(event: dict[str, Any]) -> ContextCommand:
     selected_title = ""
-    values: list[object] = []
-    for key in ("selected_title", "selected_item", "selected"):
-        value = event.get(key)
-        title = _title(value)
-        if title:
-            if not selected_title:
-                selected_title = title
-            values.append(title)
-
-    for key in ("titles", "visible_titles", "visible_items", "items"):
-        entries = event.get(key)
-        if isinstance(entries, (list, tuple)):
-            values.extend(entries)
-
     titles: list[str] = []
     seen: set[str] = set()
-    for value in values:
+
+    def add_title(value: object) -> None:
         title = _title(value)
-        if not title or title in seen:
-            continue
+        if not title or title in seen or len(titles) >= MAX_CONTEXT_TITLES:
+            return
         seen.add(title)
         titles.append(title)
 
+    for key in ("selected_title", "selected_item", "selected"):
+        title = _title(event.get(key))
+        if title and not selected_title:
+            selected_title = title
+        add_title(title)
+
+    for key in ("titles", "visible_titles", "visible_items", "items"):
+        entries = event.get(key)
+        if not isinstance(entries, (list, tuple)):
+            continue
+        for entry in entries:
+            add_title(entry)
+            if len(titles) >= MAX_CONTEXT_TITLES:
+                break
+        if len(titles) >= MAX_CONTEXT_TITLES:
+            break
+
+    locale = str(event.get("locale_hint") or event.get("locale") or "").strip()
     return ContextCommand(
-        session_id=str(event.get("session_id") or "").strip(),
-        category=str(event.get("category") or "").strip(),
-        locale_hint=str(event.get("locale_hint") or event.get("locale") or "").strip(),
+        session_id=str(event.get("session_id") or "").strip()[:MAX_CONTEXT_SESSION_CHARS],
+        category=str(event.get("category") or "").strip()[:MAX_CONTEXT_VALUE_CHARS],
+        locale_hint=locale[:MAX_CONTEXT_LOCALE_CHARS],
         selected_title=selected_title,
         titles=tuple(titles),
     )
@@ -135,7 +147,10 @@ def decode_voice_command(raw: str) -> VoiceCommand | None:
     if event_type == "interrupt":
         return InterruptCommand()
     if event_type == "text":
-        return TextCommand(str(event.get("text") or "").strip())
+        text = str(event.get("text") or "").strip()
+        if not text or len(text) > MAX_VOICE_TEXT_CHARS:
+            return None
+        return TextCommand(text)
     if event_type == "context":
         return _context_command(event)
     return None
@@ -145,6 +160,8 @@ __all__ = [
     "BargeInCommand",
     "ContextCommand",
     "InterruptCommand",
+    "MAX_CONTEXT_TITLES",
+    "MAX_VOICE_TEXT_CHARS",
     "TextCommand",
     "UtteranceCancelCommand",
     "UtteranceEndCommand",

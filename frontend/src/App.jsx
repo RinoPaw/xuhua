@@ -392,9 +392,13 @@ function App() {
         { signal: controller.signal },
       );
       if (!response.ok) throw new Error("detail_failed");
-      setSelected(await response.json());
+      const detail = await response.json();
+      if (detailAbort.current !== controller) return;
+      setSelected(detail);
     } catch (error) {
-      if (error?.name !== "AbortError") setDetailError("暂时无法读取项目详情");
+      if (error?.name !== "AbortError" && detailAbort.current === controller) {
+        setDetailError("暂时无法读取项目详情");
+      }
     } finally {
       if (detailAbort.current === controller) setDetailLoading(false);
     }

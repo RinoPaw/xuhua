@@ -13,25 +13,20 @@ import {
   confirmBargeIn,
   createBargeInState,
 } from "./bargeInState.js";
-import {
-  compactRecognitionContext,
-  VoiceTurnTracker,
-} from "../lib/voiceProtocol.js";
+import { VoiceConnectionController } from "../lib/voiceConnection.js";
+import { routeVoiceServerEvent } from "../lib/voiceEventRouter.js";
 import {
   createVoiceInputState,
   processVoiceInputFrame,
   resetVoiceInputPhase,
   resetVoiceOnset,
 } from "../lib/voiceInput.js";
-import { routeVoiceServerEvent } from "../lib/voiceEventRouter.js";
-import { VoiceMediaController } from "../lib/voiceMedia.js";
 import { VoiceOutputController } from "../lib/voiceOutput.js";
-import { VoiceTranscriptPresenter } from "../lib/voiceTranscriptPresenter.js";
 import {
-  openVoiceSocket,
-  parseSocketMessage,
-  sendSocketJson,
-} from "../lib/voiceTransport.js";
+  compactRecognitionContext,
+  VoiceTurnTracker,
+} from "../lib/voiceProtocol.js";
+import { VoiceTranscriptPresenter } from "../lib/voiceTranscriptPresenter.js";
 
 export function useBrowserDuplexVoice({
   websocketPath = "/api/voice",
@@ -58,13 +53,11 @@ export function useBrowserDuplexVoice({
   const isPlaying = voiceMachine.output === VOICE_OUTPUT_PHASE.SPEAKING;
   const isSpeechPending = voiceMachine.output !== VOICE_OUTPUT_PHASE.IDLE;
 
-  const socketRef = useRef(null);
   const recognitionContextRef = useRef(recognitionContext);
   recognitionContextRef.current = recognitionContext;
   const recognitionContextKey = JSON.stringify(compactRecognitionContext(recognitionContext));
-  const transportGenerationRef = useRef(0);
+  const voiceConnectionRef = useRef(null);
   const voiceInputRef = useRef(createVoiceInputState());
-  const voiceMediaRef = useRef(null);
   const voiceOutputRef = useRef(null);
   const voiceTurnsRef = useRef(null);
   const voiceTranscriptRef = useRef(null);
@@ -88,7 +81,7 @@ export function useBrowserDuplexVoice({
     onError,
   };
 
-  if (!voiceMediaRef.current) voiceMediaRef.current = new VoiceMediaController();
+  if (!voiceConnectionRef.current) voiceConnectionRef.current = new VoiceConnectionController();
   if (!voiceTurnsRef.current) voiceTurnsRef.current = new VoiceTurnTracker();
   if (!voiceTranscriptRef.current) {
     voiceTranscriptRef.current = new VoiceTranscriptPresenter({
@@ -166,7 +159,7 @@ export function useBrowserDuplexVoice({
   voiceOutputRef.current.setWebsocketPath(websocketPath);
 
   const send = useCallback((payload) => {
-    return sendSocketJson(socketRef.current, payload);
+    return voiceConnectionRef.current?.sendJson(payload) ?? false;
   }, []);
 
   const sendRecognitionContext = useCallback(() => {
@@ -290,7 +283,7 @@ export function useBrowserDuplexVoice({
 
   const processAudio = useCallback((samples, inputRate) => {
     if (mutedRef.current) return;
-    const socket = socketRef.current;
+    const connection = voiceConnectionRef.current;
     const input = voiceInputRef.current;
     const output = voiceOutputRef.current;
     const result = processVoiceInputFrame(input, {
@@ -298,7 +291,7 @@ export function useBrowserDuplexVoice({
       inputRate,
       now: performance.now(),
       blockedUntil: inputBlockedUntilRef.current,
-      transportReady: Boolean(socket && socket.readyState === WebSocket.OPEN),
+      transportReady: Boolean(connection?.connected),
       playbackActive: Boolean(output?.playing),
       agentBusy: Boolean(
         output?.pipelineActive
@@ -311,9 +304,9 @@ export function useBrowserDuplexVoice({
     if (result.spectrum) setSpectrum(result.spectrum);
 
     result.actions.forEach((action, index) => {
-      if (!socket || socket.readyState !== WebSocket.OPEN) return;
-      if (action.kind === "json") socket.send(JSON.stringify(action.payload));
-      else socket.send(action.payload);
+      if (!connection?.connected) return;
+      if (action.kind === "json") connection.sendJson(action.payload);
+      else connection.sendRaw(action.payload);
 
       if (index === 0 && result.started) {
         if (result.started.shouldInterrupt) {
@@ -330,7 +323,6 @@ export function useBrowserDuplexVoice({
   }, [beginBargeInCandidate, dispatchVoice, voiceMachineRef]);
 
   const cleanup = useCallback(() => {
-    transportGenerationRef.current += 1;
     voiceTranscriptRef.current?.clear(true);
     stopSpeech(false);
     resetVoiceInputPhase(voiceInputRef.current, {
@@ -338,20 +330,17 @@ export function useBrowserDuplexVoice({
       discardResampler: true,
     });
     clearBargeInCandidate();
-    voiceMediaRef.current?.stop();
-    const socket = socketRef.current;
-    socketRef.current = null;
-    if (socket && socket.readyState < WebSocket.CLOSING) {
-      socket.close(1000, "client_stop");
-    }
+    voiceConnectionRef.current?.stop();
     dispatchVoice({ type: "transport.idle" });
   }, [clearBargeInCandidate, dispatchVoice, stopSpeech]);
 
   const start = useCallback(async () => {
+    const connection = voiceConnectionRef.current;
     if (connected
+      || connection?.starting
+      || connection?.connected
       || deriveVoiceStatus(voiceMachineRef.current) === REALTIME_VOICE_STATUS.CONNECTING) return;
-    const generation = transportGenerationRef.current + 1;
-    transportGenerationRef.current = generation;
+
     voiceTranscriptRef.current?.clear(true);
     resetVoiceInputPhase(voiceInputRef.current, {
       resetIds: true,
@@ -360,61 +349,24 @@ export function useBrowserDuplexVoice({
     setError(null);
     dispatchVoice({ type: "transport.connecting" });
 
-    let startStream = null;
-    let startSocket = null;
-    const releaseStartResources = () => {
-      if (startSocket && socketRef.current === startSocket) socketRef.current = null;
-      if (startSocket && startSocket.readyState < WebSocket.CLOSING) {
-        try { startSocket.close(1000, "stale_voice_start"); } catch { /* noop */ }
-      }
-      voiceMediaRef.current?.release(startStream);
-    };
-
     try {
-      startStream = await voiceMediaRef.current.requestStream();
-      if (transportGenerationRef.current !== generation) {
-        releaseStartResources();
-        return;
-      }
-
-      startSocket = await openVoiceSocket(websocketPath);
-      if (transportGenerationRef.current !== generation) {
-        releaseStartResources();
-        return;
-      }
-      socketRef.current = startSocket;
-
-      sendRecognitionContext();
-      startSocket.onmessage = (event) => {
-        if (socketRef.current !== startSocket) return;
-        const message = parseSocketMessage(event);
-        if (message) routeServerEvent(message);
-      };
-
-      startSocket.onclose = (event) => {
-        const isCurrentSocket = socketRef.current === startSocket;
-        const statusBeforeClose = deriveVoiceStatus(voiceMachineRef.current);
-        if (isCurrentSocket) cleanup();
-        if (isCurrentSocket
-          && event.code !== 1000
-          && statusBeforeClose !== REALTIME_VOICE_STATUS.IDLE) {
-          reportError("voice_socket_closed");
-        }
-      };
-
-      await voiceMediaRef.current.attachProcessor(processAudio);
-      if (transportGenerationRef.current !== generation) {
-        releaseStartResources();
-        return;
-      }
+      const started = await connection.start(websocketPath, {
+        onOpen: sendRecognitionContext,
+        onMessage: routeServerEvent,
+        onSamples: processAudio,
+        onClose: (event) => {
+          const statusBeforeClose = deriveVoiceStatus(voiceMachineRef.current);
+          cleanup();
+          if (event.code !== 1000 && statusBeforeClose !== REALTIME_VOICE_STATUS.IDLE) {
+            reportError("voice_socket_closed");
+          }
+        },
+      });
+      if (!started) return;
 
       dispatchVoice({ type: "transport.connected" });
       settleListening();
     } catch (startError) {
-      if (transportGenerationRef.current !== generation) {
-        releaseStartResources();
-        return;
-      }
       cleanup();
       reportError(startError);
     }
@@ -444,7 +396,7 @@ export function useBrowserDuplexVoice({
       voiceInputRef.current.resampler?.reset();
       resetVoiceOnset(voiceInputRef.current);
     }
-    voiceMediaRef.current?.setMuted(next);
+    voiceConnectionRef.current?.media.setMuted(next);
     return next;
   }, []);
 

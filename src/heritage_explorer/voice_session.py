@@ -33,7 +33,7 @@ from .voice_events import (
     VoiceServerEvent,
     VoiceStatusEvent,
 )
-from .voice_lifecycle import VoiceConnectionScope
+from .voice_lifecycle import VoiceConnectionScope, close_resource
 from .voice_protocol import (
     BargeInCommand,
     ContextCommand,
@@ -512,10 +512,12 @@ class VoiceSessionRuntime:
                 self.batch.languages[utterance_id] = ""
                 self.batch.failures.add(utterance_id)
         finally:
-            await stream.close()
-            self.batch.pending_user_speaking.discard(utterance_id)
-            self.batch.pending.discard(utterance_id)
-            await self.commit_voice_batch(generation)
+            try:
+                await close_resource(stream, label="voice.asr.finalizer")
+            finally:
+                self.batch.pending_user_speaking.discard(utterance_id)
+                self.batch.pending.discard(utterance_id)
+                await self.commit_voice_batch(generation)
 
     async def start_asr(self, stream: Any, utterance_id: int) -> None:
         started_at = time.perf_counter()
@@ -586,7 +588,7 @@ class VoiceSessionRuntime:
                         previous_id,
                     )
                 elif previous_stream is not None:
-                    await previous_stream.close()
+                    await close_resource(previous_stream, label="voice.asr.replaced")
 
             partial_logged = False
 
@@ -654,7 +656,7 @@ class VoiceSessionRuntime:
                     utterance_id,
                 )
             else:
-                await completed_stream.close()
+                await close_resource(completed_stream, label="voice.asr.completed")
 
     async def handle_utterance_cancel(self) -> None:
         async with self.batch_lock:

@@ -142,7 +142,7 @@ def decode_voice_command(raw: str) -> VoiceCommand | None:
     event_type = str(event.get("type") or "")
     if event_type == "utterance.start":
         return UtteranceStartCommand(
-            interrupt=bool(event.get("interrupt")),
+            interrupt=event.get("interrupt") is True,
             level=_finite_number(event.get("level")),
             threshold=_finite_number(event.get("threshold")),
         )

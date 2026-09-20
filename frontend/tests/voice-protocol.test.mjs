@@ -2,12 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  acceptAssistantTurn,
   assistantEventLocale,
   buildTtsUrl,
   compactRecognitionContext,
-  rememberIgnoredTurn,
   resolveSpeechLocale,
+  VoiceTurnTracker,
   websocketUrl,
 } from "../src/lib/voiceProtocol.js";
 
@@ -82,13 +81,21 @@ test("speech helpers normalize locale and build TTS URL", () => {
   assert.match(localUrl, /^http:\/\/localhost:5050\/api\/tts\?/u);
 });
 
-test("assistant turn acceptance rejects stale or ignored turns", () => {
-  const active = { current: "" };
-  const ignored = new Set();
-  assert.equal(acceptAssistantTurn({ turn_id: "turn-1" }, active, ignored), true);
-  assert.equal(active.current, "turn-1");
-  assert.equal(acceptAssistantTurn({ turn_id: "turn-2" }, active, ignored), false);
-  rememberIgnoredTurn(ignored, "turn-1");
-  active.current = "";
-  assert.equal(acceptAssistantTurn({ turn_id: "turn-1" }, active, ignored), false);
+test("assistant turn tracker owns active and ignored turn identity", () => {
+  const turns = new VoiceTurnTracker({ ignoredLimit: 2 });
+  assert.equal(turns.accept({ turn_id: "turn-1" }), true);
+  assert.equal(turns.current, "turn-1");
+  assert.equal(turns.accept({ turn_id: "turn-2" }), false);
+
+  assert.equal(turns.ignoreActive(), true);
+  assert.equal(turns.current, "");
+  assert.equal(turns.accept({ turn_id: "turn-1" }), false);
+  assert.equal(turns.accept({ turn_id: "turn-2" }), true);
+  turns.ignoreActive();
+  turns.setActive("turn-3");
+  turns.ignoreActive();
+
+  assert.equal(turns.ignoredTurns.has("turn-1"), false);
+  assert.equal(turns.ignoredTurns.has("turn-2"), true);
+  assert.equal(turns.ignoredTurns.has("turn-3"), true);
 });

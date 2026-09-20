@@ -24,10 +24,9 @@ import {
   resetPartialReveal,
 } from "../lib/partialReveal.js";
 import {
-  acceptAssistantTurn,
   assistantEventLocale,
   compactRecognitionContext,
-  rememberIgnoredTurn,
+  VoiceTurnTracker,
 } from "../lib/voiceProtocol.js";
 import {
   acceptVoiceUtteranceMessage,
@@ -81,11 +80,10 @@ export function useBrowserDuplexVoice({
   const voiceInputRef = useRef(createVoiceInputState());
   const voiceMediaRef = useRef(null);
   const voiceOutputRef = useRef(null);
+  const voiceTurnsRef = useRef(null);
   const mutedRef = useRef(false);
   const inputBlockedUntilRef = useRef(0);
   const bargeInRef = useRef(createBargeInState());
-  const assistantTurnRef = useRef("");
-  const ignoredAssistantTurnsRef = useRef(new Set());
   const partialRevealRef = useRef(createPartialRevealState());
   const callbacks = useRef({
     onUserPartial,
@@ -105,6 +103,7 @@ export function useBrowserDuplexVoice({
   };
 
   if (!voiceMediaRef.current) voiceMediaRef.current = new VoiceMediaController();
+  if (!voiceTurnsRef.current) voiceTurnsRef.current = new VoiceTurnTracker();
 
   const clearPartialReveal = useCallback((resetText = false) => {
     const reveal = partialRevealRef.current;
@@ -230,8 +229,7 @@ export function useBrowserDuplexVoice({
 
   const stopSpeech = useCallback((bargeIn = false, notifyServer = true) => {
     clearBargeInCandidate();
-    rememberIgnoredTurn(ignoredAssistantTurnsRef.current, assistantTurnRef.current);
-    assistantTurnRef.current = "";
+    voiceTurnsRef.current.ignoreActive();
     voiceOutputRef.current?.stop();
     dispatchMany([
       { type: "output.idle" },
@@ -404,14 +402,14 @@ export function useBrowserDuplexVoice({
             inputState: voiceInputRef.current,
             currentStatus: deriveVoiceStatus(voiceMachineRef.current),
             bargeInTentative: bargeInRef.current.phase === BARGE_IN_PHASE.TENTATIVE,
-            activeTurn: assistantTurnRef.current,
+            activeTurn: voiceTurnsRef.current.current,
             assistantPending: isVoiceAssistantPending(voiceMachineRef.current),
-            ignoredTurns: ignoredAssistantTurnsRef.current,
+            ignoredTurns: voiceTurnsRef.current.ignoredTurns,
             speechPipeline: Boolean(voiceOutputRef.current?.pipelineActive),
             speechActive: Boolean(voiceOutputRef.current?.playing),
           });
           if (!decision.accepted) return;
-          assistantTurnRef.current = decision.activeTurn;
+          if (decision.activeTurn) voiceTurnsRef.current.setActive(decision.activeTurn);
           dispatchMany(voiceActionsForServerStatus(decision.status));
           return;
         }
@@ -434,8 +432,7 @@ export function useBrowserDuplexVoice({
           } else if (voiceOutputRef.current?.pipelineActive || voiceOutputRef.current?.playing) {
             stopSpeech(true, false);
           } else {
-            rememberIgnoredTurn(ignoredAssistantTurnsRef.current, assistantTurnRef.current);
-            assistantTurnRef.current = "";
+            voiceTurnsRef.current.ignoreActive();
           }
           markThinking();
           publishUserTranscript(message, transcript);
@@ -453,11 +450,7 @@ export function useBrowserDuplexVoice({
         }
 
         if (message.type === "assistant.delta") {
-          if (!acceptAssistantTurn(
-            message,
-            assistantTurnRef,
-            ignoredAssistantTurnsRef.current,
-          )) return;
+          if (!voiceTurnsRef.current.accept(message)) return;
           const locale = assistantEventLocale(
             message,
             compactRecognitionContext(recognitionContextRef.current).locale_hint,
@@ -471,11 +464,7 @@ export function useBrowserDuplexVoice({
         }
 
         if (message.type === "assistant.done") {
-          if (!acceptAssistantTurn(
-            message,
-            assistantTurnRef,
-            ignoredAssistantTurnsRef.current,
-          )) return;
+          if (!voiceTurnsRef.current.accept(message)) return;
           const locale = assistantEventLocale(
             message,
             compactRecognitionContext(recognitionContextRef.current).locale_hint,
@@ -486,19 +475,12 @@ export function useBrowserDuplexVoice({
           );
           finishSpeechStream(message.text || "", locale);
           const turnId = normalizeVoiceId(message.turn_id);
-          if (turnId) {
-            rememberIgnoredTurn(ignoredAssistantTurnsRef.current, turnId);
-            if (assistantTurnRef.current === turnId) assistantTurnRef.current = "";
-          }
+          if (turnId) voiceTurnsRef.current.ignore(turnId);
           return;
         }
 
         if (message.type === "assistant.cancelled") {
-          if (!acceptAssistantTurn(
-            message,
-            assistantTurnRef,
-            ignoredAssistantTurnsRef.current,
-          )) return;
+          if (!voiceTurnsRef.current.accept(message)) return;
           stopSpeech(false, false);
           setError(null);
           settleListening();
@@ -517,20 +499,16 @@ export function useBrowserDuplexVoice({
         }
 
         if (message.type === "sources") {
-          if (!acceptAssistantTurn(
-            message,
-            assistantTurnRef,
-            ignoredAssistantTurnsRef.current,
-          )) return;
+          if (!voiceTurnsRef.current.accept(message)) return;
           callbacks.current.onSources?.(message.items || []);
           return;
         }
 
         if (message.type === "error") {
           if (!acceptServerVoiceError(message, {
-            activeTurn: assistantTurnRef.current,
+            activeTurn: voiceTurnsRef.current.current,
             assistantPending: isVoiceAssistantPending(voiceMachineRef.current),
-            ignoredTurns: ignoredAssistantTurnsRef.current,
+            ignoredTurns: voiceTurnsRef.current.ignoredTurns,
           })) return;
           stopSpeech(false, false);
           reportError(message.message || "voice_error");

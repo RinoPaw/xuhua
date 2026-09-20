@@ -5,6 +5,54 @@ function normalizeTurnId(value) {
   return id || "";
 }
 
+export class VoiceTurnTracker {
+  constructor({ ignoredLimit = 32 } = {}) {
+    this.activeTurnId = "";
+    this.ignoredTurns = new Set();
+    this.ignoredLimit = Math.max(1, Number(ignoredLimit) || 32);
+  }
+
+  get current() {
+    return this.activeTurnId;
+  }
+
+  setActive(turnId) {
+    const id = normalizeTurnId(turnId);
+    if (!id || this.ignoredTurns.has(id)) return false;
+    if (this.activeTurnId && this.activeTurnId !== id) return false;
+    this.activeTurnId = id;
+    return true;
+  }
+
+  accept(message) {
+    return this.setActive(message?.turn_id);
+  }
+
+  ignore(turnId = this.activeTurnId) {
+    const id = normalizeTurnId(turnId);
+    if (!id) return false;
+    this.ignoredTurns.add(id);
+    while (this.ignoredTurns.size > this.ignoredLimit) {
+      this.ignoredTurns.delete(this.ignoredTurns.values().next().value);
+    }
+    if (this.activeTurnId === id) this.activeTurnId = "";
+    return true;
+  }
+
+  ignoreActive() {
+    return this.ignore(this.activeTurnId);
+  }
+
+  clearActive() {
+    this.activeTurnId = "";
+  }
+
+  reset() {
+    this.activeTurnId = "";
+    this.ignoredTurns.clear();
+  }
+}
+
 export function websocketUrl(path, baseUrl = globalThis.location?.href || "http://localhost/") {
   const url = new URL(path, baseUrl);
   if (url.protocol === "https:") url.protocol = "wss:";
@@ -98,19 +146,4 @@ export function compactRecognitionContext(context) {
     locale_hint: localeHint,
     preferred_locales: preferredLocales,
   };
-}
-
-export function rememberIgnoredTurn(ignoredTurns, turnId, limit = 32) {
-  if (!turnId) return ignoredTurns;
-  ignoredTurns.add(turnId);
-  if (ignoredTurns.size > limit) ignoredTurns.delete(ignoredTurns.values().next().value);
-  return ignoredTurns;
-}
-
-export function acceptAssistantTurn(message, activeTurn, ignoredTurns) {
-  const turnId = normalizeTurnId(message?.turn_id);
-  if (!turnId || ignoredTurns.has(turnId)) return false;
-  if (activeTurn.current && activeTurn.current !== turnId) return false;
-  activeTurn.current = turnId;
-  return true;
 }

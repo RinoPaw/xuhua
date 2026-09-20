@@ -12,7 +12,7 @@ from .assistant import AssistantService
 from .asr_normalization import NormalizedTranscript
 from .dataset import KnowledgeBase
 from .sessions import SessionStore
-from .voice import XfyunStream
+from .voice import VoiceProviderError, XfyunStream
 from .voice_events import ReadyEvent, VoiceServerEvent, encode_voice_event
 from .voice_protocol import VoiceCommand, decode_voice_command
 from .voice_session import VoiceSessionRuntime
@@ -82,7 +82,11 @@ async def run_voice_transport(
 
             data = message.get("bytes")
             if data is not None:
-                await runtime.handle_audio(data)
+                try:
+                    await runtime.handle_audio(data)
+                except VoiceProviderError as exc:
+                    await websocket.close(code=1013, reason=str(exc)[:123])
+                    break
                 continue
 
             raw = message.get("text")

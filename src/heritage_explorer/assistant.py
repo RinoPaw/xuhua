@@ -50,6 +50,12 @@ LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
 
+class _TurnCancelled(RuntimeError):
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
 class SearchService:
     """One stable search entry point for APIs, chat and voice."""
 
@@ -151,16 +157,15 @@ class AssistantService:
 
         try:
             yield sequence.make("turn.started", question=question, locale=locale)
-            if cancel_event.is_set():
-                yield sequence.make(
-                    "turn.cancelled",
-                    reason=self._cancel_reason(session.session_id, turn_id, cancel_event),
-                )
-                return
+            self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
 
             if is_greeting(question, locale):
                 answer = localized_copy(locale, "greeting")
-                self.sessions.append(
+                yield sequence.make("response.text.delta", delta=answer, locale=locale)
+                self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
+                yield sequence.make("response.sources", sources=[])
+                self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
+                committed = self.sessions.append(
                     session.session_id,
                     ConversationTurn(
                         turn_id=turn_id,
@@ -171,8 +176,10 @@ class AssistantService:
                     ),
                     cancel_event,
                 )
-                yield sequence.make("response.text.delta", delta=answer, locale=locale)
-                yield sequence.make("response.sources", sources=[])
+                if not committed:
+                    raise _TurnCancelled(
+                        self._cancel_reason(session.session_id, turn_id, cancel_event)
+                    )
                 yield sequence.make(
                     "turn.completed",
                     answer=answer,
@@ -183,6 +190,7 @@ class AssistantService:
                 return
 
             yield sequence.make("retrieval.started")
+            self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
             candidate_limit_value = (
                 self.max_candidates
                 if basis == "multilingual_catalogue"
@@ -242,12 +250,7 @@ class AssistantService:
             yield sequence.make(
                 "retrieval.completed", total=result.total, source_count=len(candidates)
             )
-            if cancel_event.is_set():
-                yield sequence.make(
-                    "turn.cancelled",
-                    reason=self._cancel_reason(session.session_id, turn_id, cancel_event),
-                )
-                return
+            self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
 
             configured = getattr(self.llm, "api_key", object())
             api_key_configured = not (
@@ -312,13 +315,9 @@ class AssistantService:
                             )
                             next_progress_chars += 100
                         yield sequence.make("response.text.delta", delta=delta, locale=locale)
+                        self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
 
-                    if cancel_event.is_set():
-                        yield sequence.make(
-                            "turn.cancelled",
-                            reason=self._cancel_reason(session.session_id, turn_id, cancel_event),
-                        )
-                        return
+                    self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
                     LOGGER.info(
                         "[trace=%s turn=%s] llm.stream.complete +%.3fs chunks=%s chars=%s",
                         session.session_id,
@@ -327,6 +326,8 @@ class AssistantService:
                         delta_index,
                         text_chars,
                     )
+                except _TurnCancelled:
+                    raise
                 except asyncio.CancelledError:
                     raise
                 except LLMFirstTokenTimeout as exc:
@@ -361,23 +362,21 @@ class AssistantService:
                     yield sequence.make("turn.failed", code="llm_unavailable")
                     return
 
-            if cancel_event.is_set():
-                yield sequence.make(
-                    "turn.cancelled",
-                    reason=self._cancel_reason(session.session_id, turn_id, cancel_event),
-                )
-                return
-
+            self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
             answer = "".join(answer_parts).strip() or fallback_answer(
                 question, candidates, history=history, locale=locale
             )
             if not answer_parts:
                 yield sequence.make("response.text.delta", delta=answer, locale=locale)
+                self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
 
             source_items = used_sources(answer, candidates)
             answer_confidence = confidence(source_items, answer)
             source_ids = tuple(item.id for item in source_items)
-            self.sessions.append(
+            source_payload = [item_to_dict(item) for item in source_items]
+            yield sequence.make("response.sources", sources=source_payload)
+            self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
+            committed = self.sessions.append(
                 session.session_id,
                 ConversationTurn(
                     turn_id=turn_id,
@@ -388,8 +387,10 @@ class AssistantService:
                 ),
                 cancel_event,
             )
-            source_payload = [item_to_dict(item) for item in source_items]
-            yield sequence.make("response.sources", sources=source_payload)
+            if not committed:
+                raise _TurnCancelled(
+                    self._cancel_reason(session.session_id, turn_id, cancel_event)
+                )
             LOGGER.info(
                 "[trace=%s turn=%s] text.complete chars=%s sources=%s",
                 session.session_id,
@@ -404,8 +405,19 @@ class AssistantService:
                 suggested_questions=suggestions(source_items, locale=locale),
                 locale=locale,
             )
+        except _TurnCancelled as exc:
+            yield sequence.make("turn.cancelled", reason=exc.reason)
         finally:
             self.sessions.finish_turn(session.session_id, turn_id, cancel_event)
+
+    def _raise_if_cancelled(
+        self,
+        session_id: str,
+        turn_id: str,
+        cancel_event: asyncio.Event,
+    ) -> None:
+        if cancel_event.is_set():
+            raise _TurnCancelled(self._cancel_reason(session_id, turn_id, cancel_event))
 
     def _cancel_reason(
         self,

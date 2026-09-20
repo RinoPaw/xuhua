@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any, Callable, Mapping
+from typing import Any, Callable
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
@@ -13,12 +13,7 @@ from .asr_normalization import NormalizedTranscript
 from .dataset import KnowledgeBase
 from .sessions import SessionStore
 from .voice import XfyunStream
-from .voice_events import (
-    ReadyEvent,
-    VoiceServerEvent,
-    encode_voice_event,
-    voice_event_from_payload,
-)
+from .voice_events import ReadyEvent, VoiceServerEvent, encode_voice_event
 from .voice_protocol import VoiceCommand, decode_voice_command
 from .voice_session import VoiceSessionRuntime
 
@@ -46,11 +41,6 @@ class VoiceWebSocketChannel:
                 )
         except (RuntimeError, WebSocketDisconnect):
             pass
-
-    async def emit_payload(self, payload: Mapping[str, Any]) -> None:
-        """Temporary adapter while runtime call sites migrate to VoiceServerEvent."""
-
-        await self.emit(voice_event_from_payload(payload))
 
 
 async def dispatch_voice_command(runtime: VoiceSessionRuntime, command: VoiceCommand) -> None:
@@ -113,7 +103,7 @@ def register_voice_route(
         await websocket.accept()
         channel = VoiceWebSocketChannel(websocket)
         runtime = VoiceSessionRuntime(
-            emit=channel.emit_payload,
+            emit=channel.emit,
             connection_id=channel.connection_id,
             assistant=assistant,
             sessions=sessions,

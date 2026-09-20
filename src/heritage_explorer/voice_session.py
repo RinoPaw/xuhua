@@ -21,6 +21,18 @@ from .language import (
 )
 from .sessions import SessionStore
 from .voice import VoiceProviderError
+from .voice_events import (
+    AssistantCancelledEvent,
+    AssistantDeltaEvent,
+    AssistantDoneEvent,
+    SourcesEvent,
+    UserPartialEvent,
+    UserTranscriptEvent,
+    UtteranceRejectedEvent,
+    VoiceErrorEvent,
+    VoiceServerEvent,
+    VoiceStatusEvent,
+)
 from .voice_protocol import (
     BargeInCommand,
     ContextCommand,
@@ -115,7 +127,7 @@ class VoiceSessionRuntime:
     def __init__(
         self,
         *,
-        emit: Callable[[dict[str, Any]], Awaitable[None]],
+        emit: Callable[[VoiceServerEvent], Awaitable[None]],
         connection_id: str,
         assistant: AssistantService,
         sessions: SessionStore,
@@ -199,8 +211,8 @@ class VoiceSessionRuntime:
             hotwords=tuple(hotwords),
         )
 
-    async def send(self, payload: dict[str, Any]) -> None:
-        await self.emit(payload)
+    async def send(self, event: VoiceServerEvent) -> None:
+        await self.emit(event)
 
     @staticmethod
     async def stop_task(task: asyncio.Task[None] | None) -> None:
@@ -237,13 +249,11 @@ class VoiceSessionRuntime:
             return
         self.batch.revision += 1
         await self.send(
-            {
-                "type": "user.partial",
-                "utterance_id": max(self.batch.partials),
-                "revision": self.batch.revision,
-                "text": combined,
-                "final": False,
-            }
+            UserPartialEvent(
+                utterance_id=max(self.batch.partials),
+                revision=self.batch.revision,
+                text=combined,
+            )
         )
 
     async def stop_answer(self, reason: str) -> None:
@@ -271,12 +281,11 @@ class VoiceSessionRuntime:
             len(question),
         )
         await self.send(
-            {
-                "type": "status",
-                "status": "thinking",
-                "turn_id": turn_id,
-                "locale": answer_locale,
-            }
+            VoiceStatusEvent(
+                "thinking",
+                turn_id=turn_id,
+                locale=answer_locale,
+            )
         )
         try:
             async for event in self.assistant.stream_turn(
@@ -292,33 +301,35 @@ class VoiceSessionRuntime:
                 if event.type == "response.text.delta":
                     event_locale = str(event.payload.get("locale") or answer_locale)
                     await self.send(
-                        {
-                            "type": "assistant.delta",
-                            "session_id": event.session_id,
-                            "turn_id": event.turn_id,
-                            "text": event.payload.get("delta", ""),
-                            "locale": event_locale,
-                        }
+                        AssistantDeltaEvent(
+                            session_id=event.session_id,
+                            turn_id=event.turn_id,
+                            text=str(event.payload.get("delta") or ""),
+                            locale=event_locale,
+                        )
                     )
                 elif event.type == "response.sources":
+                    sources = tuple(
+                        dict(item)
+                        for item in event.payload.get("sources", [])
+                        if isinstance(item, dict)
+                    )
                     await self.send(
-                        {
-                            "type": "sources",
-                            "session_id": event.session_id,
-                            "turn_id": event.turn_id,
-                            "items": event.payload.get("sources", []),
-                        }
+                        SourcesEvent(
+                            session_id=event.session_id,
+                            turn_id=event.turn_id,
+                            items=sources,
+                        )
                     )
                 elif event.type == "turn.completed":
                     event_locale = str(event.payload.get("locale") or answer_locale)
                     await self.send(
-                        {
-                            "type": "assistant.done",
-                            "session_id": event.session_id,
-                            "turn_id": event.turn_id,
-                            "text": event.payload.get("answer", ""),
-                            "locale": event_locale,
-                        }
+                        AssistantDoneEvent(
+                            session_id=event.session_id,
+                            turn_id=event.turn_id,
+                            text=str(event.payload.get("answer") or ""),
+                            locale=event_locale,
+                        )
                     )
                 elif event.type == "turn.failed":
                     code = str(event.payload.get("code") or "llm_unavailable")
@@ -328,21 +339,19 @@ class VoiceSessionRuntime:
                         else "回答服务暂时不可用，请再试一次"
                     )
                     await self.send(
-                        {
-                            "type": "error",
-                            "turn_id": turn_id,
-                            "code": code,
-                            "message": message,
-                        }
+                        VoiceErrorEvent(
+                            message,
+                            code=code,
+                            turn_id=turn_id,
+                        )
                     )
                 elif event.type == "turn.cancelled":
                     await self.send(
-                        {
-                            "type": "assistant.cancelled",
-                            "session_id": event.session_id,
-                            "turn_id": event.turn_id,
-                            "reason": str(event.payload.get("reason") or "cancelled"),
-                        }
+                        AssistantCancelledEvent(
+                            session_id=event.session_id,
+                            turn_id=event.turn_id,
+                            reason=str(event.payload.get("reason") or "cancelled"),
+                        )
                     )
         except asyncio.CancelledError:
             raise
@@ -353,7 +362,10 @@ class VoiceSessionRuntime:
                 turn_id,
             )
             await self.send(
-                {"type": "error", "turn_id": turn_id, "message": "回答服务暂时不可用"}
+                VoiceErrorEvent(
+                    "回答服务暂时不可用",
+                    turn_id=turn_id,
+                )
             )
         finally:
             current_task = asyncio.current_task()
@@ -416,20 +428,14 @@ class VoiceSessionRuntime:
                 self.batch.revision = 0
                 if failures:
                     await self.send(
-                        {
-                            "type": "error",
-                            "utterance_id": committed_id,
-                            "code": "asr_unavailable",
-                            "message": "语音识别暂时不可用",
-                        }
+                        VoiceErrorEvent(
+                            "语音识别暂时不可用",
+                            code="asr_unavailable",
+                            utterance_id=committed_id,
+                        )
                     )
                 else:
-                    await self.send(
-                        {
-                            "type": "utterance.rejected",
-                            "utterance_id": committed_id,
-                        }
-                    )
+                    await self.send(UtteranceRejectedEvent(committed_id))
                 return
 
             provider_locale = next(
@@ -456,7 +462,7 @@ class VoiceSessionRuntime:
                 else NormalizedTranscript(raw_text, raw_text, ())
             )
             canonical_text = normalized.canonical_text
-            normalizations = [asdict(span) for span in normalized.spans]
+            normalizations = tuple(asdict(span) for span in normalized.spans)
             LOGGER.info(
                 "voice.asr.batch_complete connection=%s utterances=%s raw_chars=%s canonical_chars=%s replacements=%s",
                 self.connection_id,
@@ -467,17 +473,15 @@ class VoiceSessionRuntime:
             )
             await self.stop_answer("asr_batch")
             await self.send(
-                {
-                    "type": "user.transcript",
-                    "utterance_id": committed_id,
-                    "revision": self.batch.revision,
-                    "final": True,
-                    "text": canonical_text,
-                    "raw_text": raw_text,
-                    "normalizations": normalizations,
-                    "locale": resolved_locale,
-                    "asr_engine": "chinese",
-                }
+                UserTranscriptEvent(
+                    utterance_id=committed_id,
+                    revision=self.batch.revision,
+                    text=canonical_text,
+                    raw_text=raw_text,
+                    normalizations=normalizations,
+                    locale=resolved_locale,
+                    asr_engine="chinese",
+                )
             )
             self.batch.partials.clear()
             self.batch.revision = 0
@@ -496,11 +500,10 @@ class VoiceSessionRuntime:
     ) -> None:
         try:
             await self.send(
-                {
-                    "type": "status",
-                    "status": "transcribing",
-                    "utterance_id": utterance_id,
-                }
+                VoiceStatusEvent(
+                    "transcribing",
+                    utterance_id=utterance_id,
+                )
             )
             await start_task
             transcript = await stream.finish()
@@ -625,11 +628,10 @@ class VoiceSessionRuntime:
                     and contains_spoken_text(text)
                 ):
                     await self.send(
-                        {
-                            "type": "status",
-                            "status": "user_speaking",
-                            "utterance_id": current,
-                        }
+                        VoiceStatusEvent(
+                            "user_speaking",
+                            utterance_id=current,
+                        )
                     )
                     self.batch.pending_user_speaking.discard(current)
                 if not partial_logged:
@@ -653,11 +655,10 @@ class VoiceSessionRuntime:
             )
             if utterance_id not in self.batch.pending_user_speaking:
                 await self.send(
-                    {
-                        "type": "status",
-                        "status": "user_speaking",
-                        "utterance_id": utterance_id,
-                    }
+                    VoiceStatusEvent(
+                        "user_speaking",
+                        utterance_id=utterance_id,
+                    )
                 )
 
     async def handle_utterance_end(self) -> None:
@@ -686,12 +687,7 @@ class VoiceSessionRuntime:
             self.batch.clear()
             await self.stop_finalize_tasks()
             await self.close_active_asr()
-            await self.send(
-                {
-                    "type": "utterance.rejected",
-                    "utterance_id": self.utterance_sequence,
-                }
-            )
+            await self.send(UtteranceRejectedEvent(self.utterance_sequence))
 
     async def handle_barge_in(self) -> None:
         async with self.batch_lock:
@@ -702,11 +698,10 @@ class VoiceSessionRuntime:
             )
             await self.stop_answer("barge_in")
         await self.send(
-            {
-                "type": "status",
-                "status": "user_speaking",
-                "utterance_id": self.utterance_sequence,
-            }
+            VoiceStatusEvent(
+                "user_speaking",
+                utterance_id=self.utterance_sequence,
+            )
         )
 
     async def handle_text(self, command: TextCommand) -> None:
@@ -728,11 +723,10 @@ class VoiceSessionRuntime:
             await self.stop_finalize_tasks()
             await self.close_active_asr()
             await self.send(
-                {
-                    "type": "status",
-                    "status": "listening",
-                    "utterance_id": self.utterance_sequence,
-                }
+                VoiceStatusEvent(
+                    "listening",
+                    utterance_id=self.utterance_sequence,
+                )
             )
 
     async def handle_command(self, command: VoiceCommand) -> None:

@@ -10,7 +10,6 @@ from heritage_explorer.voice_events import (
     VoiceErrorEvent,
     VoiceStatusEvent,
     encode_voice_event,
-    voice_event_from_payload,
 )
 
 
@@ -120,30 +119,3 @@ def test_server_events_encode_to_stable_wire_shapes() -> None:
 
     for event, expected in cases:
         assert encode_voice_event(event) == expected
-
-
-def test_legacy_payload_adapter_round_trips_current_wire_protocol() -> None:
-    payloads = [
-        {"type": "ready"},
-        {
-            "type": "status",
-            "status": "listening",
-            "utterance_id": 7,
-        },
-        {
-            "type": "assistant.done",
-            "session_id": "session",
-            "turn_id": "turn",
-            "text": "完成",
-            "locale": "zh-CN",
-        },
-        {
-            "type": "error",
-            "turn_id": "turn",
-            "code": "llm_unavailable",
-            "message": "回答服务暂时不可用",
-        },
-    ]
-
-    for payload in payloads:
-        assert encode_voice_event(voice_event_from_payload(payload)) == payload

@@ -19,6 +19,7 @@ _FILLERS = (
 )
 _PUNCTUATION = "？?！!。.，,、；;：:（）()[]【】{} \t\r\n"
 _TOKEN_RE = re.compile(r"[\w\u4e00-\u9fff]+", re.UNICODE)
+_MAX_SEARCH_TOKENS = 64
 _MIN_LEXICAL_SCORE = 8.0
 _PROVINCE_SUFFIX_RE = re.compile(
     r"(?:壮族自治区|回族自治区|维吾尔自治区|特别行政区|自治区|省|市)$"
@@ -40,7 +41,7 @@ def normalize_search_query(query: str) -> str:
 
 
 def tokenize(query: str) -> list[str]:
-    """Return stable word/phrase tokens, including Chinese character bigrams."""
+    """Return a bounded stable token set, including Chinese character bigrams."""
     text = normalize_search_query(query)
     tokens: list[str] = []
     for match in _TOKEN_RE.findall(text):
@@ -48,7 +49,9 @@ def tokenize(query: str) -> list[str]:
             tokens.append(match)
         if re.fullmatch(r"[\u4e00-\u9fff]+", match) and len(match) > 2:
             tokens.extend(match[i : i + 2] for i in range(len(match) - 1))
-    return list(dict.fromkeys(tokens))
+        if len(tokens) >= _MAX_SEARCH_TOKENS:
+            break
+    return list(dict.fromkeys(tokens))[:_MAX_SEARCH_TOKENS]
 
 
 @lru_cache(maxsize=8)
@@ -235,22 +238,18 @@ def _stable_pinyin_forms(text: str) -> tuple[str, ...]:
     return _pinyin_forms(text)
 
 
-def _pinyin_score(item: HeritageItem, query: str) -> float:
-    if len(query) < 2:
+def _pinyin_score(item: HeritageItem, query_pinyin: str) -> float:
+    if not query_pinyin:
         return 0.0
-    query_forms = _pinyin_forms(query)
-    if not query_forms:
-        return 0.0
-    query_py = query_forms[0]
     title = _stable_pinyin_forms(item.title)
     aliases = [form for alias in _aliases(item) for form in _stable_pinyin_forms(alias)]
-    if any(query_py == form for form in title):
+    if any(query_pinyin == form for form in title):
         return 42.0
-    if any(query_py in form for form in title):
+    if any(query_pinyin in form for form in title):
         return 28.0
-    if any(query_py == form for form in aliases):
+    if any(query_pinyin == form for form in aliases):
         return 24.0
-    if any(query_py in form for form in aliases):
+    if any(query_pinyin in form for form in aliases):
         return 16.0
     return 0.0
 
@@ -262,7 +261,15 @@ def _rank(
 ) -> list[HeritageItem]:
     tokens = tokenize(query)
     lexical = {item.id: _lexical_score(item, query, tokens) for item in candidates}
-    pinyin = {item.id: _pinyin_score(item, query) for item in candidates} if use_pinyin else {}
+    query_pinyin = ""
+    if use_pinyin and len(query) >= 2:
+        query_forms = _pinyin_forms(query)
+        query_pinyin = query_forms[0] if query_forms else ""
+    pinyin = (
+        {item.id: _pinyin_score(item, query_pinyin) for item in candidates}
+        if query_pinyin
+        else {}
+    )
     scores = {item.id: max(lexical[item.id], pinyin.get(item.id, 0.0)) for item in candidates}
     return [
         item

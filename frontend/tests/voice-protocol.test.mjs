@@ -3,9 +3,10 @@ import test from "node:test";
 
 import {
   assistantEventLocale,
-  buildTtsUrl,
   compactRecognitionContext,
+  requestTtsSource,
   resolveSpeechLocale,
+  ttsEndpoint,
   VoiceTurnTracker,
   websocketUrl,
 } from "../src/lib/voiceProtocol.js";
@@ -43,42 +44,51 @@ test("compactRecognitionContext bounds and de-duplicates titles", () => {
   assert.equal(context.locale_hint, "zh-CN");
 });
 
-test("speech helpers normalize locale and build TTS URL", () => {
+test("speech helpers normalize locale and derive TTS endpoints", () => {
   assert.equal(resolveSpeechLocale("yue-HK"), "yue-HK");
   assert.equal(assistantEventLocale({ payload: { locale: "ja-JP" } }), "ja-JP");
-  const url = buildTtsUrl({
-    websocketPath: "/api/voice",
-    text: "汴绣",
-    traceId: "trace 1",
-    segment: 2,
-    reason: "text_complete",
-    locale: "zh-CN",
-  });
-  assert.match(url, /^\/api\/tts\?/u);
-  assert.match(url, /text=%E6%B1%B4%E7%BB%A3/u);
-  assert.match(url, /trace_id=trace%201/u);
-  assert.match(url, /segment=2/u);
+  assert.equal(ttsEndpoint("/api/voice"), "/api/tts");
+  assert.equal(
+    ttsEndpoint("wss://voice.example.com/api/voice"),
+    "https://voice.example.com/api/tts",
+  );
+  assert.equal(
+    ttsEndpoint("ws://localhost:5050/api/voice"),
+    "http://localhost:5050/api/tts",
+  );
+});
 
-  const secureUrl = buildTtsUrl({
+test("TTS text is posted in the request body and never copied into the stream URL", async () => {
+  const calls = [];
+  const source = await requestTtsSource({
     websocketPath: "wss://voice.example.com/api/voice",
-    text: "汴绣",
-    traceId: "trace-2",
-    segment: 0,
-    reason: "first_sentence",
+    text: "汴绣是什么？",
+    traceId: "trace 1",
+    segment: 1,
+    reason: "text_complete",
+    locale: "zh-CN",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return {
+        ok: true,
+        async json() { return { token: "private-token" }; },
+      };
+    },
+  });
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://voice.example.com/api/tts");
+  assert.equal(calls[0].options.method, "POST");
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    text: "汴绣是什么？",
+    trace_id: "trace 1",
+    segment: 1,
+    reason: "text_complete",
     locale: "zh-CN",
   });
-  assert.match(secureUrl, /^https:\/\/voice\.example\.com\/api\/tts\?/u);
-  assert.doesNotMatch(secureUrl, /^wss:/u);
-
-  const localUrl = buildTtsUrl({
-    websocketPath: "ws://localhost:5050/api/voice",
-    text: "test",
-    traceId: "trace-3",
-    segment: 0,
-    reason: "text_complete",
-    locale: "en-US",
-  });
-  assert.match(localUrl, /^http:\/\/localhost:5050\/api\/tts\?/u);
+  assert.equal(source, "https://voice.example.com/api/tts/private-token");
+  assert.equal(source.includes("汴绣"), false);
+  assert.equal(source.includes("text="), false);
 });
 
 test("assistant turn tracker owns active and ignored turn identity", () => {

@@ -55,6 +55,9 @@ class XfyunStream:
     frame_interval = 0.04
     finish_timeout = 8.0
     close_timeout = 2.0
+    max_audio_backlog_seconds = 10.0
+    max_audio_backlog_frames = int(max_audio_backlog_seconds / frame_interval)
+    max_audio_backlog_bytes = max_audio_backlog_frames * chunk_size
 
     def __init__(
         self,
@@ -88,7 +91,10 @@ class XfyunStream:
         self._sender: asyncio.Task[None] | None = None
         self._done = asyncio.Event()
         self._buffer = bytearray()
-        self._send_queue: asyncio.Queue[bytes | _FinishRequest] = asyncio.Queue()
+        # One extra slot is reserved for the terminal status=2 barrier.
+        self._send_queue: asyncio.Queue[bytes | _FinishRequest] = asyncio.Queue(
+            maxsize=self.max_audio_backlog_frames + 1
+        )
         self._send_lock = asyncio.Lock()
         self._transcript = TranscriptAccumulator()
         # Keep the old internal dictionaries as aliases for debugging and any
@@ -158,6 +164,9 @@ class XfyunStream:
         async with self._send_lock:
             if self._closed:
                 return
+            backlog_bytes = self._send_queue.qsize() * self.chunk_size + len(self._buffer)
+            if backlog_bytes + len(data) > self.max_audio_backlog_bytes:
+                raise VoiceProviderError("voice_audio_backlog")
             self._has_audio = True
             self._buffer.extend(data)
             if self._socket is not None:
@@ -166,8 +175,11 @@ class XfyunStream:
     def _enqueue_complete_frames(self) -> None:
         while len(self._buffer) >= self.chunk_size:
             frame = bytes(self._buffer[: self.chunk_size])
+            try:
+                self._send_queue.put_nowait(frame)
+            except asyncio.QueueFull:
+                raise VoiceProviderError("voice_audio_backlog") from None
             del self._buffer[: self.chunk_size]
-            self._send_queue.put_nowait(frame)
 
     async def _send_loop(self) -> None:
         current: bytes | _FinishRequest | None = None
@@ -227,7 +239,10 @@ class XfyunStream:
                     raise self._send_failure
                 self._enqueue_complete_frames()
                 if self._buffer:
-                    self._send_queue.put_nowait(bytes(self._buffer))
+                    try:
+                        self._send_queue.put_nowait(bytes(self._buffer))
+                    except asyncio.QueueFull:
+                        raise VoiceProviderError("voice_audio_backlog") from None
                     self._buffer.clear()
                 empty = not self._has_audio
                 sender = self._sender
@@ -235,7 +250,10 @@ class XfyunStream:
                     if sender is None or sender.done():
                         raise VoiceProviderError("voice_provider_disconnected")
                     request = _FinishRequest()
-                    self._send_queue.put_nowait(request)
+                    try:
+                        self._send_queue.put_nowait(request)
+                    except asyncio.QueueFull:
+                        raise VoiceProviderError("voice_audio_backlog") from None
             if empty:
                 return ""
             await asyncio.wait_for(

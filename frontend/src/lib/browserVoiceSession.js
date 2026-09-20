@@ -246,6 +246,7 @@ export class BrowserVoiceSession {
   cleanup() {
     this.transcript.clear(true);
     this.stopSpeech(false);
+    this.turns.reset();
     this.input.reset({ resetIds: true, discardResampler: true });
     this.connection.stop();
     this.dispatchVoice({ type: "transport.idle" });

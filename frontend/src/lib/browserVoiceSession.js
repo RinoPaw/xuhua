@@ -31,7 +31,6 @@ export class BrowserVoiceSession {
     getRecognitionContext = () => null,
     getCallbacks = () => ({}),
     onErrorState = noop,
-    onMutedChange = noop,
     onSpectrum = noop,
     connection = new VoiceConnectionController(),
     input = new VoiceInputController(),
@@ -47,7 +46,6 @@ export class BrowserVoiceSession {
     this.getRecognitionContext = getRecognitionContext;
     this.getCallbacks = getCallbacks;
     this.onErrorState = onErrorState;
-    this.onMutedChange = onMutedChange;
     this.onSpectrum = onSpectrum;
     this.connection = connection;
     this.input = input;
@@ -301,13 +299,6 @@ export class BrowserVoiceSession {
     this.cleanup();
     this.clearError();
     return true;
-  }
-
-  toggleMute() {
-    const muted = this.input.toggleMuted();
-    this.onMutedChange(muted);
-    this.connection.media.setMuted(muted);
-    return muted;
   }
 
   sendText(value) {

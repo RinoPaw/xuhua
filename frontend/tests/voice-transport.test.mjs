@@ -35,12 +35,18 @@ class FakeSocket {
   }
 }
 
-test("sendSocketJson only sends on an open transport", () => {
+test("sendSocketJson only commits on a successful open transport send", () => {
   const socket = { readyState: 1, sent: [], send(value) { this.sent.push(value); } };
   assert.equal(sendSocketJson(socket, { type: "context" }, 1), true);
   assert.deepEqual(socket.sent, ['{"type":"context"}']);
   socket.readyState = 0;
   assert.equal(sendSocketJson(socket, { type: "ignored" }, 1), false);
+
+  const closingRace = {
+    readyState: 1,
+    send() { throw new Error("socket_closed_during_send"); },
+  };
+  assert.equal(sendSocketJson(closingRace, { type: "text", text: "汴绣" }, 1), false);
 });
 
 test("parseSocketMessage returns only canonical server events", () => {

@@ -2,8 +2,8 @@ import { DEFAULT_LOCALE } from "./locale.js";
 import { TtsScheduler } from "./ttsScheduler.js";
 import { TtsTextPlan } from "./ttsTextPlan.js";
 import {
-  buildTtsUrl,
   compactRecognitionContext,
+  requestTtsSource,
   resolveSpeechLocale,
 } from "./voiceProtocol.js";
 
@@ -43,6 +43,15 @@ export class VoiceOutputController {
     this.locale = DEFAULT_LOCALE;
     this.textPlan = new TtsTextPlan(DEFAULT_LOCALE);
     this.scheduler = createScheduler({
+      prepareSource: ({ text, segment, reason, locale, signal }) => requestTtsSource({
+        websocketPath: this.websocketPath,
+        text,
+        traceId: this.traceId,
+        segment,
+        reason,
+        locale,
+        signal,
+      }),
       onEvent: (event) => this.onEvent(event),
       onPlayingChange: (playing) => {
         this.playing = playing;
@@ -89,15 +98,10 @@ export class VoiceOutputController {
   enqueue(segment, reason) {
     const content = normalizeSpeechText(segment);
     if (!content) return false;
-    const url = buildTtsUrl({
-      websocketPath: this.websocketPath,
-      text: content,
-      traceId: this.traceId,
-      segment: this.scheduler.segmentCount,
+    return this.scheduler.enqueue(content, {
       reason,
       locale: this.locale,
     });
-    return this.scheduler.enqueue(content, { url, reason });
   }
 
   append(text, locale = "") {

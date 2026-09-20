@@ -74,6 +74,7 @@ class RecordingSearch:
 class RecordingAssistant:
     def __init__(self, search: RecordingSearch, events: tuple[AssistantEvent, ...] = ()) -> None:
         self.search = search
+        self.sessions = SessionStore()
         self.events = events
         self.calls: list[dict[str, str | None]] = []
 
@@ -163,6 +164,8 @@ class FakeXfyunStream:
 
 class VoiceRecordingAssistant:
     def __init__(self, *, block: bool = False) -> None:
+        self.search = RecordingSearch(make_kb())
+        self.sessions = SessionStore()
         self.block = block
         self.calls: list[dict[str, str | None]] = []
         self.started = threading.Event()
@@ -224,14 +227,7 @@ def voice_test_client(monkeypatch, assistant: VoiceRecordingAssistant) -> TestCl
     FakeXfyunStream.provider_language = "zh"
     FakeXfyunStream.finish_gate.set()
     monkeypatch.setattr(api_module, "XfyunStream", FakeXfyunStream)
-    search = RecordingSearch(make_kb())
-    return TestClient(
-        create_app(
-            assistant=assistant,  # type: ignore[arg-type]
-            search=search,  # type: ignore[arg-type]
-            sessions=SessionStore(),
-        )
-    )
+    return TestClient(create_app(assistant=assistant))  # type: ignore[arg-type]
 
 
 def receive_until(websocket, predicate, *, limit: int = 20) -> list[dict[str, object]]:
@@ -251,13 +247,7 @@ def build_client(
     kb = make_kb()
     search = RecordingSearch(kb)
     assistant = RecordingAssistant(search, events)
-    client = ASGIClient(
-        create_app(
-            assistant=assistant,  # type: ignore[arg-type]
-            search=search,  # type: ignore[arg-type]
-            sessions=SessionStore(),
-        )
-    )
+    client = ASGIClient(create_app(assistant=assistant))  # type: ignore[arg-type]
     return client, kb, search, assistant
 
 

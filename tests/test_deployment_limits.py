@@ -38,10 +38,16 @@ def test_nginx_configs_limit_expensive_public_routes() -> None:
         assert "zone=xuhua_tts_rate:10m rate=80r/m" in config
         assert "zone=xuhua_voice_rate:10m rate=8r/m" in config
         assert "zone=xuhua_voice_conn:10m" in config
-        assert "location = /api/chat" in config
-        assert "limit_req zone=xuhua_chat_rate" in config
+        assert (
+            "location = /api/chat {\n"
+            "        client_max_body_size 64k;\n"
+            "        client_body_timeout 10s;\n"
+            "        limit_req zone=xuhua_chat_rate burst=4 nodelay;"
+        ) in config
         assert (
             "location = /api/tts {\n"
+            "        client_max_body_size 64k;\n"
+            "        client_body_timeout 10s;\n"
             "        limit_req zone=xuhua_tts_ticket_rate burst=16 nodelay;"
         ) in config
         assert (

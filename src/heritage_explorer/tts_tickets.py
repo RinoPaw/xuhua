@@ -1,6 +1,6 @@
 """Short-lived references for browser TTS requests.
 
-The browser cannot attach a POST body to an ``<audio>`` source.  A ticket keeps
+The browser cannot attach a POST body to an ``<audio>`` source. A ticket keeps
 spoken text out of URLs and reverse-proxy access logs while preserving native
 streaming playback from a normal GET request.
 """
@@ -35,8 +35,8 @@ class TtsTicketStore:
         self,
         *,
         ttl_seconds: float = 90.0,
-        max_entries: int = 256,
-        max_per_client: int = 12,
+        max_entries: int = 512,
+        max_per_client: int = 128,
         clock: Callable[[], float] = time.monotonic,
         token_factory: Callable[[], str] = lambda: secrets.token_urlsafe(24),
     ) -> None:

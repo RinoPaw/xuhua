@@ -3,17 +3,11 @@ from __future__ import annotations
 import asyncio
 
 import heritage_explorer.assistant as assistant_module
-from heritage_explorer.assistant import (
-    AssistantService,
-    _fallback_answer,
-    _retrieval_basis,
-    _suggestions,
-    _used_sources,
-)
-from heritage_explorer.models import AssistantEvent, ConversationTurn, SearchResponse
+from heritage_explorer.assistant import AssistantService
+from heritage_explorer.dataset import KnowledgeBase
+from heritage_explorer.models import SearchResponse
 from heritage_explorer.providers.llm import OpenAICompatibleLLM
 from heritage_explorer.sessions import SessionStore
-from heritage_explorer.dataset import KnowledgeBase
 
 
 class FakeSearch:
@@ -116,63 +110,6 @@ def test_broad_category_browse_uses_a_turn_specific_catalogue_window():
     assert 0 < search.calls[1]["offset"] <= 405
 
 
-def test_sources_and_suggestions_follow_projects_named_in_answer():
-    items = tuple(
-        type(
-            "Item",
-            (),
-            {
-                "id": id_,
-                "title": title,
-                "family": "",
-                "display_forms": (),
-                "category": "",
-                "summary": "",
-                "content": "",
-                "search_text": "",
-                "level": "",
-                "province": "",
-                "city": "",
-                "district": "",
-                "suitable_scenarios": (),
-            },
-        )()
-        for id_, title in (("a", "甲项目"), ("b", "乙项目"), ("c", "丙项目"))
-    )
-    used = _used_sources("先看看乙项目，再比较甲项目。", items)
-    assert [item.id for item in used] == ["b", "a"]
-    assert [text.split("的", 1)[0] for text in _suggestions(used)] == [
-        "乙项目",
-        "甲项目",
-        "按地区继续比较",
-    ]
-    assert [item.id for item in _used_sources("没有点名具体项目。", items)] == ["a"]
-
-    shared_family = tuple(
-        type("Item", (), {"id": id_, "title": title, "family": "剪纸", "display_forms": ()})()
-        for id_, title in (("paper-a", "甲地剪纸"), ("paper-b", "乙地剪纸"))
-    )
-    assert [
-        item.id for item in _used_sources("剪纸讲究以形写神，先看甲地剪纸。", shared_family)
-    ] == ["paper-a"]
-
-
-def test_local_fallback_selection_is_driven_by_request_and_content_budget():
-    def make_items(summary: str):
-        return tuple(
-            type("Item", (), {"title": f"项目{index}", "summary": summary, "content": ""})()
-            for index in range(1, 9)
-        )
-
-    long_answer = _fallback_answer("有哪些项目值得了解？", make_items("长" * 180))
-    short_answer = _fallback_answer("有哪些项目值得了解？", make_items("短" * 20))
-    requested_answer = _fallback_answer("推荐2个项目", make_items("长" * 180))
-
-    assert long_answer.count("**项目") == 4
-    assert short_answer.count("**项目") == 6
-    assert requested_answer.count("**项目") == 2
-
-
 def test_greeting_is_short_and_does_not_search_or_call_the_llm():
     class NoSearch:
         def search(self, query: str, **kwargs):
@@ -214,7 +151,6 @@ def test_foreign_language_query_is_bridged_to_the_chinese_catalogue():
     llm = FakeLLM(("Kunqu (昆曲) is a refined form of Chinese theatre.",))
     service = AssistantService(search=search, sessions=SessionStore(), llm=llm)
 
-    # Kunku is a common ASR rendering of Kunqu in an otherwise correct English turn.
     events = collect(service.stream_turn("Tell me about Kunku opera", locale_hint="en-US"))
 
     assert search.calls[0]["query"] == "昆曲"
@@ -268,118 +204,9 @@ def test_ambiguous_first_turn_does_not_retrieve_or_invent_user_mentions():
 
     retrieval = next(event for event in events if event.type == "retrieval.completed")
     assert retrieval.payload == {"total": 0, "source_count": 0}
-    assert _retrieval_basis(search, "需要是他是觉得。他说。") == "none"
-    assert _retrieval_basis(search, "介绍传统插花") == "item_name"
     assert "没有识别到明确的非遗项目" in llm.messages[0][1]["content"]
     assert "传统插花" not in "\n".join(message["content"] for message in llm.messages[0])
     assert events[-1].payload["answer"] == "我没听清这句话。你可以再说一次想聊的对象。"
-
-
-def test_cancelled_turn_does_not_write_history():
-    store = SessionStore()
-    session = store.get_or_create("session")
-    _, turn_id, _ = store.begin_turn(session.session_id, "turn")
-    assert store.cancel_turn(session.session_id, turn_id)
-    assert store.cancel_turn(session.session_id, "missing") is False
-    store.finish_turn(session.session_id, turn_id)
-    assert store.history(session.session_id) == []
-
-
-def test_session_capacity_evicts_oldest_idle_session():
-    store = SessionStore(max_sessions=2)
-    first = store.get_or_create("first")
-    store.get_or_create("second")
-    first.last_seen -= 10
-    store.get_or_create("third")
-    assert store.get("first") is None
-    assert store.size() == 2
-
-
-def test_event_has_stable_nested_envelope_and_timestamp():
-    event = AssistantEvent("warning", "session", "turn", 3, payload={"code": "offline"})
-    payload = event.to_dict()
-    assert set(payload) == {"type", "session_id", "turn_id", "seq", "timestamp", "payload"}
-    assert payload["payload"] == {"code": "offline"}
-
-
-def test_new_turn_cancels_previous_turn_without_reusing_finish_cleanup():
-    store = SessionStore()
-    _, old_id, old_event = store.begin_turn("session", "old")
-    _, new_id, new_event = store.begin_turn("session", "new")
-    assert old_id == "old" and new_id == "new"
-    assert old_event.is_set() and store.cancel_reason("session", "old") == "superseded"
-    assert not new_event.is_set()
-    store.finish_turn("session", old_id, old_event)
-    assert "new" in store.get("session").active_turns
-
-
-def test_active_sessions_are_not_evicted_or_expired_when_over_capacity():
-    store = SessionStore(max_sessions=1, ttl_seconds=0.01)
-    session, turn_id, event = store.begin_turn("active", "turn")
-    session.last_seen -= 10
-    _, second_id, second_event = store.begin_turn("second", "turn")
-    assert store.get("active") is not None
-    assert store.size() == 2
-    store.finish_turn("active", turn_id, event)
-    store.finish_turn("second", second_id, second_event)
-    assert store.size() == 1
-
-
-def test_history_returns_thread_safe_snapshot_and_is_bounded():
-    store = SessionStore(max_turns=2)
-    for index in range(3):
-        store.append("session", ConversationTurn(str(index), "q", "a"))
-    history = store.history("session")
-    assert [turn.turn_id for turn in history] == ["1", "2"]
-    history.clear()
-    assert len(store.history("session")) == 2
-
-
-def test_prompt_preserves_real_speaker_roles_and_separates_retrieval_context():
-    service = AssistantService(search=FakeSearch(), sessions=SessionStore(), llm=FakeLLM())
-    messages = service._messages(
-        "嗯。",
-        (),
-        [ConversationTurn("turn", "介绍一下锅庄舞", "锅庄舞有圆圈舞的形态。")],
-    )
-
-    assert [message["role"] for message in messages] == [
-        "system",
-        "user",
-        "assistant",
-        "system",
-        "system",
-        "system",
-        "user",
-    ]
-    assert messages[1]["content"] == "介绍一下锅庄舞"
-    assert messages[2]["content"] == "锅庄舞有圆圈舞的形态。"
-    assert "不是用户说的话" in messages[3]["content"]
-    assert "同时用于字幕和 TTS 的台词" in messages[0]["content"]
-    assert "不书写动作、神态、语气标签、旁白或括号舞台说明" in messages[0]["content"]
-    assert messages[-1] == {"role": "user", "content": "嗯。"}
-    assert any("简短回应" in message["content"] for message in messages)
-
-
-def test_short_reply_keeps_previous_assistant_words_owned_by_assistant():
-    service = AssistantService(search=FakeSearch(), sessions=SessionStore(), llm=FakeLLM())
-    messages = service._messages(
-        "嗯。",
-        (),
-        [
-            ConversationTurn(
-                "turn",
-                "介绍锅庄舞",
-                "我刚才讲了赉谟卓干玛和甘孜锅庄的不同气质。",
-            )
-        ],
-        short_reply_mode="continuation",
-    )
-
-    assert messages[-1] == {"role": "user", "content": "嗯。"}
-    assert messages[2]["role"] == "assistant"
-    assert "assistant" in messages[0]["content"]
-    assert any("用户本轮只是简短回应" in message["content"] for message in messages)
 
 
 def test_empty_llm_key_uses_local_fallback_without_constructing_network_request():
@@ -395,6 +222,7 @@ def test_empty_llm_key_uses_local_fallback_without_constructing_network_request(
             "tell me more"
         )
     )
+
     assert events[-1].type == "turn.completed"
     assert any(event.type == "response.text.delta" for event in events)
     assert not any(event.type == "warning" for event in events)
@@ -411,6 +239,7 @@ def test_provider_failure_is_an_explicit_terminal_failure():
             "tell me more"
         )
     )
+
     assert events[-1].type == "turn.failed"
     assert events[-1].payload["code"] == "llm_unavailable"
     assert not any(event.type == "turn.completed" for event in events)

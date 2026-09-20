@@ -20,6 +20,8 @@ test("terminal stream detection covers every turn terminator", () => {
   assert.equal(isTerminalTurnEvent("turn.completed"), true);
   assert.equal(isTerminalTurnEvent("turn.failed"), true);
   assert.equal(isTerminalTurnEvent("turn.cancelled"), true);
+  assert.equal(isTerminalTurnEvent("turn.started"), false);
+  assert.equal(isTerminalTurnEvent("response.sources"), false);
   assert.equal(isTerminalTurnEvent("response.text.delta"), false);
   assert.equal(isTerminalTurnEvent(""), false);
 });

@@ -3,7 +3,7 @@ services:
     name: xuhua
     runtime: docker
     healthCheckPath: /healthz
-    autoDeploy: true
+    autoDeployTrigger: checksPass
     envVars:
       - key: HOST
         value: 0.0.0.0

@@ -30,6 +30,17 @@ def test_render_deploys_only_after_repository_checks_pass() -> None:
     assert "autoDeploy: true" not in render
 
 
+def test_render_launch_topology_and_model_are_explicit() -> None:
+    render = (ROOT / "render.yaml").read_text(encoding="utf-8")
+    env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
+
+    assert "region: singapore" in render
+    assert "value: deepseek-flash" in render
+    assert "deepseek-v4-flash" not in render
+    assert "AI_MODEL=deepseek-flash" in env_example
+    assert "deepseek-v4-flash" not in env_example
+
+
 def test_nginx_configs_limit_expensive_public_routes() -> None:
     for filename in ("nginx-xuhua-http.conf", "nginx-xuhua-https.conf"):
         config = (ROOT / "deploy" / filename).read_text(encoding="utf-8")

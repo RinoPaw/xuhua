@@ -1,17 +1,18 @@
+from heritage_explorer.voice_protocol import ContextCommand
 from heritage_explorer.voice_session import VoiceBatchState, VoiceContextState
 
 
 def test_voice_context_state_owns_normalized_browser_context() -> None:
     state = VoiceContextState()
 
-    state.update(
-        {
-            "session_id": "session-123",
-            "category": "传统美术",
-            "locale_hint": "yue-HK",
-            "selected_title": "汴绣",
-            "titles": ["汴绣", {"title": "武强木版年画"}, "汴绣"],
-        },
+    state.apply(
+        ContextCommand(
+            session_id="session-123",
+            category="传统美术",
+            locale_hint="yue-HK",
+            selected_title="汴绣",
+            titles=("汴绣", "武强木版年画", "汴绣"),
+        ),
         max_session_id_chars=7,
     )
 

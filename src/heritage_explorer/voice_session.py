@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict, dataclass, field
-import json
 import logging
 import time
 import uuid
 from typing import Any, Callable
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import WebSocketDisconnect
 
 from .assistant import AssistantService
 from .asr_normalization import NormalizedTranscript
@@ -22,7 +21,17 @@ from .language import (
     normalize_locale_hint,
 )
 from .sessions import SessionStore
-from .voice import VoiceProviderError, XfyunStream
+from .voice import VoiceProviderError
+from .voice_protocol import (
+    BargeInCommand,
+    ContextCommand,
+    InterruptCommand,
+    TextCommand,
+    UtteranceCancelCommand,
+    UtteranceEndCommand,
+    UtteranceStartCommand,
+    VoiceCommand,
+)
 
 
 MAX_VOICE_CONTEXT_TITLES = 8
@@ -39,41 +48,30 @@ def contains_spoken_text(value: object) -> bool:
 
 @dataclass(slots=True)
 class VoiceContextState:
-    """Conversation context supplied by the browser for one voice connection."""
+    """Canonical conversation context for one realtime voice connection."""
 
     session_id: str | None = None
     category: str = ""
     titles: list[str] = field(default_factory=list)
     locale_hint: str = ""
 
-    def update(self, event: dict[str, Any], *, max_session_id_chars: int) -> None:
-        self.category = str(event.get("category") or "").strip()[:200]
-        incoming_session = str(event.get("session_id") or "").strip()
-        if incoming_session:
-            self.session_id = incoming_session[:max_session_id_chars]
-        incoming_locale = normalize_locale_hint(event.get("locale_hint") or event.get("locale"))
+    def apply(self, command: ContextCommand, *, max_session_id_chars: int) -> None:
+        self.category = command.category[:200]
+        if command.session_id:
+            self.session_id = command.session_id[:max_session_id_chars]
+
+        incoming_locale = normalize_locale_hint(command.locale_hint)
         if incoming_locale:
             self.locale_hint = incoming_locale
 
-        values: list[Any] = []
-        for key in ("selected_title", "selected_item", "selected"):
-            value = event.get(key)
-            if value:
-                values.append(value)
-        for key in ("titles", "visible_titles", "visible_items", "items"):
-            value = event.get(key)
-            if isinstance(value, (list, tuple)):
-                values.extend(value)
-
         titles: list[str] = []
         seen: set[str] = set()
-        for value in values:
-            if isinstance(value, dict):
-                value = value.get("title", "")
+        for value in (command.selected_title, *command.titles):
             title = str(value or "").strip()
-            if title and title not in seen:
-                seen.add(title)
-                titles.append(title[:200])
+            if not title or title in seen:
+                continue
+            seen.add(title)
+            titles.append(title[:200])
             if len(titles) >= MAX_VOICE_CONTEXT_TITLES:
                 break
         self.titles = titles
@@ -117,7 +115,7 @@ class VoiceSessionRuntime:
 
     def __init__(
         self,
-        websocket: WebSocket,
+        websocket: Any,
         *,
         assistant: AssistantService,
         sessions: SessionStore,
@@ -155,8 +153,11 @@ class VoiceSessionRuntime:
         self.batch_lock = asyncio.Lock()
         self.send_lock = asyncio.Lock()
 
-    def update_context(self, event: dict[str, Any]) -> None:
-        self.context.update(event, max_session_id_chars=self.max_session_id_chars)
+    def update_context(self, command: ContextCommand) -> None:
+        self.context.apply(
+            command,
+            max_session_id_chars=self.max_session_id_chars,
+        )
 
     def recent_voice_items(self) -> tuple[Any, ...]:
         if not self.context.session_id:
@@ -396,10 +397,15 @@ class VoiceSessionRuntime:
                 or not self.batch.results
             ):
                 return
+
             results = dict(self.batch.results)
             self.batch.results.clear()
             ordered_ids = sorted(results)
-            failures = {item_id for item_id in ordered_ids if item_id in self.batch.failures}
+            failures = {
+                item_id
+                for item_id in ordered_ids
+                if item_id in self.batch.failures
+            }
             self.batch.failures.difference_update(ordered_ids)
             asr_candidates = tuple(
                 candidate
@@ -408,7 +414,8 @@ class VoiceSessionRuntime:
                 if candidate
             )
             provider_languages = [
-                self.batch.languages.pop(item_id, "") for item_id in ordered_ids
+                self.batch.languages.pop(item_id, "")
+                for item_id in ordered_ids
             ]
             raw_text = " ".join(
                 results[item_id].strip()
@@ -416,6 +423,7 @@ class VoiceSessionRuntime:
                 if results[item_id].strip()
             )
             committed_id = ordered_ids[-1]
+
             if not raw_text:
                 self.batch.partials.clear()
                 self.batch.revision = 0
@@ -430,7 +438,10 @@ class VoiceSessionRuntime:
                     )
                 else:
                     await self.send(
-                        {"type": "utterance.rejected", "utterance_id": committed_id}
+                        {
+                            "type": "utterance.rejected",
+                            "utterance_id": committed_id,
+                        }
                     )
                 return
 
@@ -483,7 +494,11 @@ class VoiceSessionRuntime:
             )
             self.batch.partials.clear()
             self.batch.revision = 0
-            await self.start_answer(canonical_text, "new_utterance", resolved_locale)
+            await self.start_answer(
+                canonical_text,
+                "new_utterance",
+                resolved_locale,
+            )
 
     async def finish_utterance(
         self,
@@ -577,7 +592,10 @@ class VoiceSessionRuntime:
         if self.asr_stream is not None:
             await self.asr_stream.send_audio(data)
 
-    async def handle_utterance_start(self, event: dict[str, Any]) -> None:
+    async def handle_utterance_start(
+        self,
+        command: UtteranceStartCommand,
+    ) -> None:
         async with self.batch_lock:
             self.utterance_sequence += 1
             utterance_id = self.utterance_sequence
@@ -586,10 +604,11 @@ class VoiceSessionRuntime:
                 "voice.vad.utterance_start connection=%s utterance=%s interrupt=%s level=%s threshold=%s",
                 self.connection_id,
                 utterance_id,
-                bool(event.get("interrupt")),
-                event.get("level", "-"),
-                event.get("threshold", "-"),
+                command.interrupt,
+                command.level if command.level is not None else "-",
+                command.threshold if command.threshold is not None else "-",
             )
+
             if self.asr_stream is not None:
                 previous_stream, self.asr_stream = self.asr_stream, None
                 previous_start, self.asr_start_task = self.asr_start_task, None
@@ -600,7 +619,11 @@ class VoiceSessionRuntime:
                     previous_id,
                 )
                 if previous_start is not None:
-                    self.schedule_finalize(previous_stream, previous_start, previous_id)
+                    self.schedule_finalize(
+                        previous_stream,
+                        previous_start,
+                        previous_id,
+                    )
                 else:
                     await previous_stream.close()
 
@@ -632,10 +655,11 @@ class VoiceSessionRuntime:
                     partial_logged = True
                 await self.send_batch_partial(current, text)
 
-            if event.get("interrupt"):
+            if command.interrupt:
                 self.batch.pending_user_speaking.add(utterance_id)
             else:
                 self.batch.pending_user_speaking.discard(utterance_id)
+
             self.asr_stream = self.make_asr_stream(send_partial)
             self.asr_start_task = asyncio.create_task(
                 self.start_asr(self.asr_stream, utterance_id)
@@ -662,7 +686,11 @@ class VoiceSessionRuntime:
             completed_stream, self.asr_stream = self.asr_stream, None
             completed_start, self.asr_start_task = self.asr_start_task, None
             if completed_start is not None:
-                self.schedule_finalize(completed_stream, completed_start, utterance_id)
+                self.schedule_finalize(
+                    completed_stream,
+                    completed_start,
+                    utterance_id,
+                )
             else:
                 await completed_stream.close()
 
@@ -694,15 +722,17 @@ class VoiceSessionRuntime:
             }
         )
 
-    async def handle_text(self, event: dict[str, Any]) -> None:
-        text = str(event.get("text") or "").strip()
-        if not text:
+    async def handle_text(self, command: TextCommand) -> None:
+        if not command.text:
             return
         async with self.batch_lock:
             self.batch.clear()
             await self.stop_finalize_tasks()
             await self.close_active_asr()
-            await self.start_answer(text, "text_input")
+            await self.start_answer(command.text, "text_input")
+
+    def handle_context(self, command: ContextCommand) -> None:
+        self.update_context(command)
 
     async def handle_interrupt(self) -> None:
         async with self.batch_lock:
@@ -718,21 +748,20 @@ class VoiceSessionRuntime:
                 }
             )
 
-    async def handle_event(self, event: dict[str, Any]) -> None:
-        event_type = event.get("type")
-        if event_type == "utterance.start":
-            await self.handle_utterance_start(event)
-        elif event_type == "utterance.end":
+    async def handle_command(self, command: VoiceCommand) -> None:
+        if isinstance(command, UtteranceStartCommand):
+            await self.handle_utterance_start(command)
+        elif isinstance(command, UtteranceEndCommand):
             await self.handle_utterance_end()
-        elif event_type == "utterance.cancel":
+        elif isinstance(command, UtteranceCancelCommand):
             await self.handle_utterance_cancel()
-        elif event_type == "barge_in":
+        elif isinstance(command, BargeInCommand):
             await self.handle_barge_in()
-        elif event_type == "text":
-            await self.handle_text(event)
-        elif event_type == "context":
-            self.update_context(event)
-        elif event_type == "interrupt":
+        elif isinstance(command, TextCommand):
+            await self.handle_text(command)
+        elif isinstance(command, ContextCommand):
+            self.handle_context(command)
+        elif isinstance(command, InterruptCommand):
             await self.handle_interrupt()
 
     async def close(self) -> None:
@@ -740,70 +769,6 @@ class VoiceSessionRuntime:
         await self.stop_finalize_tasks()
         await self.stop_answer("connection_closed")
         await self.close_active_asr()
-
-    async def run(self) -> None:
-        try:
-            await self.send({"type": "ready"})
-            while True:
-                message = await self.websocket.receive()
-                if message.get("type") == "websocket.disconnect":
-                    break
-                data = message.get("bytes")
-                if data is not None:
-                    await self.handle_audio(data)
-                    continue
-                raw = message.get("text")
-                if not raw:
-                    continue
-                try:
-                    event = json.loads(raw)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(event, dict):
-                    await self.handle_event(event)
-        except WebSocketDisconnect:
-            pass
-        finally:
-            await self.close()
-
-
-def register_voice_route(
-    app: FastAPI,
-    *,
-    assistant: AssistantService,
-    sessions: SessionStore,
-    knowledge_base: KnowledgeBase,
-    app_id: str,
-    api_key: str,
-    api_secret: str,
-    asr_host: str,
-    stream_factory: Callable[..., Any] = XfyunStream,
-    normalize_final: Callable[..., NormalizedTranscript],
-    max_session_id_chars: int = 128,
-) -> None:
-    """Register the continuous browser VAD + ASR + assistant WebSocket route."""
-
-    @app.websocket("/api/voice")
-    async def browser_voice(websocket: WebSocket) -> None:
-        if not (app_id.strip() and api_key.strip() and api_secret.strip()):
-            await websocket.close(code=1013, reason="voice_unavailable")
-            return
-
-        await websocket.accept()
-        runtime = VoiceSessionRuntime(
-            websocket,
-            assistant=assistant,
-            sessions=sessions,
-            knowledge_base=knowledge_base,
-            app_id=app_id,
-            api_key=api_key,
-            api_secret=api_secret,
-            asr_host=asr_host,
-            stream_factory=stream_factory,
-            normalize_final=normalize_final,
-            max_session_id_chars=max_session_id_chars,
-        )
-        await runtime.run()
 
 
 __all__ = [
@@ -813,5 +778,4 @@ __all__ = [
     "VoiceContextState",
     "VoiceSessionRuntime",
     "contains_spoken_text",
-    "register_voice_route",
 ]

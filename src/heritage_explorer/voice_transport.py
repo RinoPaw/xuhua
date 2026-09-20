@@ -11,42 +11,12 @@ from .asr_normalization import NormalizedTranscript
 from .dataset import KnowledgeBase
 from .sessions import SessionStore
 from .voice import XfyunStream
-from .voice_protocol import (
-    BargeInCommand,
-    ContextCommand,
-    InterruptCommand,
-    TextCommand,
-    UtteranceCancelCommand,
-    UtteranceEndCommand,
-    UtteranceStartCommand,
-    VoiceCommand,
-    decode_voice_command,
-)
+from .voice_protocol import VoiceCommand, decode_voice_command
 from .voice_session import VoiceSessionRuntime
 
 
 async def dispatch_voice_command(runtime: VoiceSessionRuntime, command: VoiceCommand) -> None:
-    if isinstance(command, UtteranceStartCommand):
-        await runtime.handle_utterance_start(
-            {
-                "type": "utterance.start",
-                "interrupt": command.interrupt,
-                "level": command.level,
-                "threshold": command.threshold,
-            }
-        )
-    elif isinstance(command, UtteranceEndCommand):
-        await runtime.handle_utterance_end()
-    elif isinstance(command, UtteranceCancelCommand):
-        await runtime.handle_utterance_cancel()
-    elif isinstance(command, BargeInCommand):
-        await runtime.handle_barge_in()
-    elif isinstance(command, TextCommand):
-        await runtime.handle_text({"type": "text", "text": command.text})
-    elif isinstance(command, ContextCommand):
-        runtime.update_context(command.as_event())
-    elif isinstance(command, InterruptCommand):
-        await runtime.handle_interrupt()
+    await runtime.handle_command(command)
 
 
 async def run_voice_transport(runtime: VoiceSessionRuntime) -> None:

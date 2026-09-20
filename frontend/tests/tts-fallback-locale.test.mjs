@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { TtsScheduler, ttsLocaleFromUrl } from "../src/lib/ttsScheduler.js";
+import { TtsScheduler } from "../src/lib/ttsScheduler.js";
 
 class FakeAudio extends EventTarget {
   constructor(url) {
@@ -18,9 +18,7 @@ class FakeAudio extends EventTarget {
 }
 
 test("network TTS fallback preserves the resolved speech locale", () => {
-  assert.equal(ttsLocaleFromUrl("/api/tts?text=%E7%B2%A4%E5%89%A7&locale=yue-HK"), "yue-HK");
-
-  const audio = new FakeAudio("/api/tts?locale=yue-HK");
+  const audio = new FakeAudio("/api/tts/private-token");
   const timers = [];
   let fallbackOptions = null;
   const scheduler = new TtsScheduler({
@@ -37,7 +35,10 @@ test("network TTS fallback preserves the resolved speech locale", () => {
   });
 
   scheduler.begin();
-  scheduler.enqueue("粤剧历史悠久。", { url: "/api/tts?locale=yue-HK" });
+  scheduler.enqueue("粤剧历史悠久。", {
+    url: "/api/tts/private-token",
+    locale: "yue-HK",
+  });
   scheduler.complete();
 
   audio.fail();

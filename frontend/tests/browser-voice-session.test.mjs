@@ -189,6 +189,22 @@ test("disconnected typed input has no voice-session side effects", () => {
   assert.equal(harness.calls.some((entry) => entry[0] === "input.supersede"), false);
 });
 
+test("failed typed socket send preserves the active local voice generation", () => {
+  const harness = createHarness();
+  harness.connection.connected = true;
+  harness.connection.sendJson = () => false;
+  harness.input.state.utteranceActive = true;
+  const callCount = harness.calls.length;
+
+  assert.equal(harness.session.sendText("汴绣"), false);
+  assert.equal(harness.input.state.utteranceActive, true);
+  const newCalls = harness.calls.slice(callCount);
+  assert.equal(newCalls.some((entry) => entry[0] === "input.supersede"), false);
+  assert.equal(newCalls.some((entry) => entry[0] === "transcript.clear"), false);
+  assert.equal(newCalls.some((entry) => entry[0] === "callback.bargeIn"), false);
+  assert.notEqual(harness.machine.turn, "thinking");
+});
+
 test("TTS terminal clears pending output machine state", async () => {
   const harness = createHarness();
   await harness.session.start();

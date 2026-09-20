@@ -258,6 +258,7 @@ function App() {
       fetch(apiUrl("/api/categories"), { signal: controller.signal }),
     ]).then(async ([metaResponse, categoriesResponse]) => {
       if (metaResponse.ok) setMeta(await metaResponse.json());
+      else setMeta({ levels: [], capabilities: { realtime_voice: false } });
       if (categoriesResponse.ok) setCategories(await categoriesResponse.json());
     }).catch((error) => {
       if (error?.name !== "AbortError") {
@@ -634,7 +635,13 @@ function App() {
               item={selected}
               loading={detailLoading}
               error={detailError}
-              onBack={() => setSelected(null)}
+              onBack={() => {
+                detailAbort.current?.abort();
+                detailAbort.current = null;
+                setDetailLoading(false);
+                setDetailError("");
+                setSelected(null);
+              }}
             />
           ) : (
             <>

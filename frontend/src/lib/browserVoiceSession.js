@@ -99,8 +99,12 @@ export class BrowserVoiceSession {
 
   handleOutputTerminal({ failed } = {}) {
     this.input.blockFor(450);
-    this.settleListening();
+    this.dispatchMany([
+      { type: "turn.idle" },
+      { type: "output.idle" },
+    ]);
     if (failed) this.reportError("speech_output_failed");
+    else this.settleListening();
   }
 
   clearError() {

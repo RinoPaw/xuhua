@@ -9,14 +9,14 @@ import uuid
 from collections.abc import AsyncIterator, Sequence
 
 from .answer_policy import (
-    confidence as _confidence,
-    fallback_answer as _fallback_answer,
-    is_greeting as _is_greeting,
-    localized_copy as _localized_copy,
-    localized_greeting_suggestions as _localized_greeting_suggestions,
-    short_reply_mode as _short_reply_mode,
-    suggestions as _suggestions,
-    used_sources as _used_sources,
+    confidence,
+    fallback_answer,
+    is_greeting,
+    localized_copy,
+    localized_greeting_suggestions,
+    short_reply_mode,
+    suggestions,
+    used_sources,
 )
 from .config import (
     AI_API_KEY,
@@ -30,24 +30,16 @@ from .config import (
 from .dataset import HeritageItem, KnowledgeBase, get_knowledge_base, item_to_dict, normalize_text
 from .events import EventSequence
 from .language import DEFAULT_LOCALE, detect_locale
-from .llm_stream import (
-    LLMEmptyStream as _LLMEmptyStream,
-    LLMFirstTokenTimeout as _LLMFirstTokenTimeout,
-    close_iterator as _close_iterator,
-    stream_with_first_token_retry as _stream_with_first_token_retry,
-)
+from .llm_stream import LLMEmptyStream, LLMFirstTokenTimeout, stream_with_first_token_retry
 from .models import AssistantEvent, ConversationTurn, SearchResponse
-from .prompting import build_messages, candidate_context as _candidate_context
+from .prompting import build_messages
 from .providers.llm import LLMProvider, OpenAICompatibleLLM
 from .retrieval_policy import (
     candidate_limit,
-    catalogue_anchors as _catalogue_anchors,
-    exploration_offset as _exploration_offset,
-    is_scope_browse as _is_scope_browse,
-    localized_search_query as _localized_search_query,
-    requested_item_count as _requested_item_count,
-    retrieval_basis as _retrieval_basis,
-    translated_search_anchor as _translated_search_anchor,
+    exploration_offset,
+    is_scope_browse,
+    localized_search_query,
+    retrieval_basis,
 )
 from .search import search_items
 from .sessions import SessionStore
@@ -147,13 +139,13 @@ class AssistantService:
         _, turn_id, cancel_event = self.sessions.begin_turn(session.session_id, turn_id)
         sequence = EventSequence(session.session_id, turn_id)
         history = self.sessions.history(session.session_id)
-        short_reply_mode = _short_reply_mode(question)
-        retrieval_basis = (
+        reply_mode = short_reply_mode(question)
+        basis = (
             "conversation_reply"
-            if short_reply_mode
-            else _retrieval_basis(self.search, question, category, locale=locale)
+            if reply_mode
+            else retrieval_basis(self.search, question, category, locale=locale)
         )
-        retrieval_query = _localized_search_query(question, locale, retrieval_basis)
+        retrieval_query = localized_search_query(question, locale, basis)
         answer_parts: list[str] = []
         candidates: tuple[HeritageItem, ...] = ()
 
@@ -165,8 +157,8 @@ class AssistantService:
                 )
                 return
 
-            if _is_greeting(question, locale):
-                answer = _localized_copy(locale, "greeting")
+            if is_greeting(question, locale):
+                answer = localized_copy(locale, "greeting")
                 self.sessions.append(
                     session.session_id,
                     ConversationTurn(
@@ -183,7 +175,7 @@ class AssistantService:
                     "turn.completed",
                     answer=answer,
                     confidence=1.0,
-                    suggested_questions=_localized_greeting_suggestions(locale),
+                    suggested_questions=localized_greeting_suggestions(locale),
                     locale=locale,
                 )
                 return
@@ -191,12 +183,12 @@ class AssistantService:
             yield sequence.make("retrieval.started")
             candidate_limit_value = (
                 self.max_candidates
-                if retrieval_basis == "multilingual_catalogue"
+                if basis == "multilingual_catalogue"
                 else self._candidate_limit(question, category)
             )
             result = (
                 SearchResponse(items=(), total=0)
-                if retrieval_basis in {"none", "conversation_reply"}
+                if basis in {"none", "conversation_reply"}
                 else await asyncio.to_thread(
                     self.search.search,
                     retrieval_query,
@@ -205,14 +197,14 @@ class AssistantService:
                 )
             )
             if (
-                not short_reply_mode
+                not reply_mode
                 and result.total > candidate_limit_value
                 and (
-                    retrieval_basis == "multilingual_catalogue"
-                    or _is_scope_browse(self.search, question, category)
+                    basis == "multilingual_catalogue"
+                    or is_scope_browse(self.search, question, category)
                 )
             ):
-                offset = _exploration_offset(
+                offset = exploration_offset(
                     session.session_id,
                     turn_id,
                     retrieval_query,
@@ -239,7 +231,7 @@ class AssistantService:
                 "[trace=%s turn=%s] retrieval.completed basis=%s history_turns=%s total=%s candidates=%s candidate_titles=%s",
                 session.session_id,
                 turn_id,
-                retrieval_basis,
+                basis,
                 len(history),
                 result.total,
                 len(candidates),
@@ -263,8 +255,8 @@ class AssistantService:
                     question,
                     candidates,
                     history,
-                    short_reply_mode=short_reply_mode,
-                    retrieval_basis=retrieval_basis,
+                    short_reply_mode=reply_mode,
+                    retrieval_basis=basis,
                     locale=locale,
                 )
                 try:
@@ -281,13 +273,13 @@ class AssistantService:
                         AI_FIRST_TOKEN_TIMEOUT,
                         len(candidates),
                         len(history),
-                        retrieval_basis,
+                        basis,
                     )
 
                     def start_provider_stream():
                         return self.llm.stream_chat(messages, temperature=0.2, max_tokens=700)
 
-                    async for delta in _stream_with_first_token_retry(
+                    async for delta in stream_with_first_token_retry(
                         start_provider_stream,
                         cancel_event,
                         timeout=AI_FIRST_TOKEN_TIMEOUT,
@@ -333,7 +325,7 @@ class AssistantService:
                     )
                 except asyncio.CancelledError:
                     raise
-                except _LLMFirstTokenTimeout as exc:
+                except LLMFirstTokenTimeout as exc:
                     LOGGER.error(
                         "[trace=%s turn=%s] llm.failed code=llm_first_token_timeout attempts=%s",
                         session.session_id,
@@ -344,7 +336,7 @@ class AssistantService:
                         "turn.failed", code="llm_first_token_timeout", attempts=exc.attempts
                     )
                     return
-                except _LLMEmptyStream as exc:
+                except LLMEmptyStream as exc:
                     LOGGER.error(
                         "[trace=%s turn=%s] llm.failed code=llm_empty_stream attempts=%s",
                         session.session_id,
@@ -371,15 +363,15 @@ class AssistantService:
                 )
                 return
 
-            answer = "".join(answer_parts).strip() or _fallback_answer(
+            answer = "".join(answer_parts).strip() or fallback_answer(
                 question, candidates, history=history, locale=locale
             )
             if not answer_parts:
                 yield sequence.make("response.text.delta", delta=answer, locale=locale)
 
-            used_sources = _used_sources(answer, candidates)
-            confidence = _confidence(used_sources, answer)
-            source_ids = tuple(item.id for item in used_sources)
+            source_items = used_sources(answer, candidates)
+            answer_confidence = confidence(source_items, answer)
+            source_ids = tuple(item.id for item in source_items)
             self.sessions.append(
                 session.session_id,
                 ConversationTurn(
@@ -390,7 +382,7 @@ class AssistantService:
                     locale=locale,
                 ),
             )
-            source_payload = [item_to_dict(item) for item in used_sources]
+            source_payload = [item_to_dict(item) for item in source_items]
             yield sequence.make("response.sources", sources=source_payload)
             LOGGER.info(
                 "[trace=%s turn=%s] text.complete chars=%s sources=%s",
@@ -402,8 +394,8 @@ class AssistantService:
             yield sequence.make(
                 "turn.completed",
                 answer=answer,
-                confidence=confidence,
-                suggested_questions=_suggestions(used_sources, locale=locale),
+                confidence=answer_confidence,
+                suggested_questions=suggestions(source_items, locale=locale),
                 locale=locale,
             )
         finally:
@@ -429,30 +421,8 @@ class AssistantService:
             question,
             candidates,
             history,
-            short_reply_mode=short_reply_mode or _short_reply_mode(question),
+            short_reply_mode=short_reply_mode or globals()["short_reply_mode"](question),
             retrieval_basis=retrieval_basis or ("retrieval" if candidates else "none"),
             locale=locale,
             max_context_chars=AI_MAX_CONTEXT_CHARS,
         )
-
-
-__all__ = [
-    "AssistantService",
-    "SearchService",
-    "_LLMEmptyStream",
-    "_LLMFirstTokenTimeout",
-    "_candidate_context",
-    "_catalogue_anchors",
-    "_close_iterator",
-    "_exploration_offset",
-    "_fallback_answer",
-    "_is_scope_browse",
-    "_localized_search_query",
-    "_requested_item_count",
-    "_retrieval_basis",
-    "_short_reply_mode",
-    "_stream_with_first_token_retry",
-    "_suggestions",
-    "_translated_search_anchor",
-    "_used_sources",
-]

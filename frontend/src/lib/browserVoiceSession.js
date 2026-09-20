@@ -7,6 +7,7 @@ import {
 import { VoiceConnectionController } from "./voiceConnection.js";
 import { routeVoiceServerEvent } from "./voiceEventRouter.js";
 import { VoiceInputController } from "./voiceInputController.js";
+import { VoiceLatencyTrace } from "./voiceLatency.js";
 import { VoiceOutputController } from "./voiceOutput.js";
 import {
   compactRecognitionContext,
@@ -36,6 +37,7 @@ export class BrowserVoiceSession {
     input = new VoiceInputController(),
     turns = new VoiceTurnTracker(),
     transcript = null,
+    latency = null,
     createOutput = (options) => new VoiceOutputController(options),
     log = console,
   } = {}) {
@@ -51,6 +53,7 @@ export class BrowserVoiceSession {
     this.input = input;
     this.turns = turns;
     this.log = log;
+    this.latency = latency || new VoiceLatencyTrace({ log });
     this.transcript = transcript || new VoiceTranscriptPresenter({ getCallbacks });
     this.output = createOutput({
       websocketPath,
@@ -70,17 +73,20 @@ export class BrowserVoiceSession {
     const trace = this.output?.traceId || "-";
     const elapsed = Number(event?.elapsedMs || 0) / 1000;
     if (event?.type === "request.start") {
+      if (event.segment === 0) this.latency.markTtsRequest();
       this.log.info?.(`[叙华][trace=${trace}] tts.request.start segment=${event.segment} reason=${event.reason}`);
     } else if (event?.type === "first_audio_chunk") {
+      if (event.segment === 0) this.latency.markFirstAudio();
       this.log.info?.(`[叙华][trace=${trace}] tts.first_audio_chunk segment=${event.segment} +${elapsed.toFixed(3)}s`);
-    } else if (event?.type === "playing") {
-      this.log.info?.(`[叙华][trace=${trace}] tts.playing segment=${event.segment} +${elapsed.toFixed(3)}s`);
+    } else if (event?.type === "playing" || event?.type === "fallback.playing") {
+      if (event.segment === 0) this.latency.markPlaying(trace);
+      this.log.info?.(`[叙华][trace=${trace}] tts.${event.type} segment=${event.segment} +${elapsed.toFixed(3)}s`);
       this.dispatchMany([
         { type: "turn.idle" },
         { type: "output.speaking" },
       ]);
     } else if (event?.type === "segment.complete") {
-      this.log.info?.(`[叙华][trace=${trace}] tts.sentence.complete segment=${event.segment} +${elapsed.toFixed(3)}s`);
+      this.log.info?.(`[叙华][trace=${trace}] tts.segment.complete segment=${event.segment} +${elapsed.toFixed(3)}s`);
     }
   }
 
@@ -217,7 +223,7 @@ export class BrowserVoiceSession {
   routeServerEvent(message) {
     const recognition = compactRecognitionContext(this.getRecognitionContext());
     const machine = this.getMachine();
-    return routeVoiceServerEvent(message, {
+    const accepted = routeVoiceServerEvent(message, {
       state: {
         input: this.input.state,
         machine,
@@ -235,17 +241,22 @@ export class BrowserVoiceSession {
         stopSpeech: (...args) => this.stopSpeech(...args),
         settleListening: () => this.settleListening(),
         markThinking: () => this.markThinking(),
-        appendSpeechDelta: (...args) => this.appendSpeechDelta(...args),
+        appendSpeechDelta: (...args) => {
+          this.latency.markFirstDelta();
+          return this.appendSpeechDelta(...args);
+        },
         finishSpeechStream: (...args) => this.finishSpeechStream(...args),
         clearError: () => this.clearError(),
         reportError: (value) => this.reportError(value),
       },
       callbacks: this.getCallbacks(),
     });
+    if (accepted && message?.type === "user.transcript") this.latency.markTranscript();
+    return accepted;
   }
 
   processAudio(samples, inputRate) {
-    return this.input.process(samples, inputRate, {
+    const result = this.input.process(samples, inputRate, {
       connection: this.connection,
       output: this.output,
       assistantPending: isVoiceAssistantPending(this.getMachine()),
@@ -254,9 +265,15 @@ export class BrowserVoiceSession {
       onTranscribing: () => this.dispatchVoice({ type: "input.transcribing" }),
       onTransportFailure: () => this.handleTransportFailure(),
     });
+    const ended = result?.actions?.some(
+      (action) => action?.kind === "json" && action?.payload?.type === "utterance.end",
+    );
+    if (ended) this.latency.markSpeechEnd(this.input.state.lastVoiceAt);
+    return result;
   }
 
   cleanup() {
+    this.latency.clear();
     this.transcript.clear(true);
     this.stopSpeech(false);
     this.turns.reset();
@@ -274,6 +291,7 @@ export class BrowserVoiceSession {
 
     this.transcript.clear(true);
     this.input.reset({ resetIds: true, discardResampler: true });
+    this.latency.clear();
     this.clearError();
     this.dispatchVoice({ type: "transport.connecting" });
 
@@ -314,6 +332,7 @@ export class BrowserVoiceSession {
     if (!text || !this.connection.connected) return false;
     const sent = this.send({ type: "text", text });
     if (!sent) return this.handleTransportFailure();
+    this.latency.clear();
     this.transcript.clear(true);
     this.input.supersedeUtterance();
     this.stopSpeech(true, false);

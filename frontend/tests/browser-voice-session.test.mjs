@@ -14,10 +14,6 @@ function createHarness() {
   const connection = {
     starting: false,
     connected: false,
-    media: {
-      muted: false,
-      setMuted(value) { this.muted = Boolean(value); calls.push(["media.mute", this.muted]); },
-    },
     sendJson(payload) {
       if (!this.connected) return false;
       sent.push(payload);
@@ -44,7 +40,6 @@ function createHarness() {
       activeUtteranceId: 0,
       nextUtteranceId: 0,
     },
-    muted: false,
     bargeInPhase: "idle",
     get utteranceActive() { return this.state.utteranceActive; },
     reset() { calls.push(["input.reset"]); this.state.utteranceActive = false; },
@@ -58,7 +53,6 @@ function createHarness() {
     },
     blockFor(ms) { calls.push(["input.block", ms]); },
     unblock() { calls.push(["input.unblock"]); },
-    toggleMuted() { this.muted = !this.muted; return this.muted; },
     process() { calls.push(["input.process"]); return {}; },
   };
   const output = {
@@ -90,7 +84,6 @@ function createHarness() {
     onError: (error) => calls.push(["callback.error", error.message]),
   };
   const errors = [];
-  const muted = [];
 
   const session = new BrowserVoiceSession({
     websocketPath: "/api/voice",
@@ -110,7 +103,6 @@ function createHarness() {
     }),
     getCallbacks: () => callbacks,
     onErrorState: (error) => errors.push(error?.message || null),
-    onMutedChange: (value) => muted.push(value),
     onSpectrum: () => {},
     connection,
     input,
@@ -129,7 +121,6 @@ function createHarness() {
     calls,
     sent,
     errors,
-    muted,
     get machine() { return machine; },
   };
 }
@@ -162,15 +153,6 @@ test("browser voice session centralizes barge-in output cancellation", () => {
   assert.equal(harness.turns.current, "");
   assert.deepEqual(harness.sent.at(-1), { type: "barge_in" });
   assert.equal(harness.calls.some((entry) => entry[0] === "callback.bargeIn"), true);
-});
-
-test("browser voice session owns mute state across input and media", () => {
-  const harness = createHarness();
-
-  assert.equal(harness.session.toggleMute(), true);
-  assert.equal(harness.input.muted, true);
-  assert.equal(harness.connection.media.muted, true);
-  assert.deepEqual(harness.muted, [true]);
 });
 
 test("browser voice session sends text through one turn transition", () => {

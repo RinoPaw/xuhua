@@ -46,6 +46,9 @@ export function useTextConversation({
       log,
     });
   }
+  sessionRef.current.setApiBase(apiBase);
+  sessionRef.current.fetchFn = fetchFn;
+  sessionRef.current.log = log;
 
   const ask = useCallback((text) => sessionRef.current.ask(text), []);
   const interrupt = useCallback(

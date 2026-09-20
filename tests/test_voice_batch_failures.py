@@ -30,6 +30,7 @@ def make_kb() -> KnowledgeBase:
 class RecordingAssistant:
     def __init__(self, search: SearchService) -> None:
         self.search = search
+        self.sessions = SessionStore()
         self.calls: list[str] = []
 
     async def stream_turn(
@@ -105,13 +106,8 @@ def test_partial_asr_failure_does_not_poison_successful_batch(monkeypatch) -> No
     MixedBatchStream.instances.clear()
     MixedBatchStream.first_finish_gate.clear()
 
-    search = SearchService(make_kb())
-    assistant = RecordingAssistant(search)
-    app = create_app(
-        assistant=assistant,  # type: ignore[arg-type]
-        search=search,
-        sessions=SessionStore(),
-    )
+    assistant = RecordingAssistant(SearchService(make_kb()))
+    app = create_app(assistant=assistant)  # type: ignore[arg-type]
 
     with TestClient(app) as client:
         with client.websocket_connect("/api/voice") as websocket:

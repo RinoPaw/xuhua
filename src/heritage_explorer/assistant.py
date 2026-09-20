@@ -255,7 +255,7 @@ class AssistantService:
                     question,
                     candidates,
                     history,
-                    short_reply_mode=reply_mode,
+                    reply_mode=reply_mode,
                     retrieval_basis=basis,
                     locale=locale,
                 )
@@ -413,7 +413,7 @@ class AssistantService:
         candidates: Sequence[HeritageItem],
         history: Sequence[ConversationTurn],
         *,
-        short_reply_mode: str | None = None,
+        reply_mode: str | None = None,
         retrieval_basis: str | None = None,
         locale: str = DEFAULT_LOCALE,
     ) -> list[dict[str, str]]:
@@ -421,7 +421,7 @@ class AssistantService:
             question,
             candidates,
             history,
-            short_reply_mode=short_reply_mode or globals()["short_reply_mode"](question),
+            short_reply_mode=reply_mode or short_reply_mode(question),
             retrieval_basis=retrieval_basis or ("retrieval" if candidates else "none"),
             locale=locale,
             max_context_chars=AI_MAX_CONTEXT_CHARS,

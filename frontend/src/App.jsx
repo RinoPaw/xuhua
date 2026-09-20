@@ -13,6 +13,7 @@ import {
 import { useHeritageBrowser } from "./hooks/useHeritageBrowser.js";
 import { useTextConversation } from "./hooks/useTextConversation.js";
 import { REALTIME_VOICE_STATUS, useVoiceConversation } from "./hooks/useVoiceConversation.js";
+import { apiEndpoint } from "./lib/apiEndpoint.js";
 import { createConversationSessionId } from "./lib/conversationSession.js";
 import {
   conversationReducer,
@@ -25,7 +26,6 @@ import { getLocaleHint, getPreferredLocales } from "./lib/locale.js";
 const API_BASE = import.meta.env.VITE_API_BASE || "";
 const LOCALE_HINT = getLocaleHint();
 const PREFERRED_LOCALES = getPreferredLocales();
-const apiUrl = (path) => `${API_BASE}${path}`;
 
 function App() {
   const [pageSessionId] = useState(createConversationSessionId);
@@ -108,7 +108,7 @@ function App() {
   }), [filters.category, items, pageSessionId, selected]);
 
   const realtime = useVoiceConversation({
-    websocketPath: apiUrl("/api/voice"),
+    websocketPath: apiEndpoint(API_BASE, "/api/voice"),
     recognitionContext,
     onUserPartial: (text, event) => dispatch({
       type: "realtime.user.partial",

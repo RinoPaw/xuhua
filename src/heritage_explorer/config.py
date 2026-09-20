@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 from pathlib import Path
 
@@ -27,8 +28,8 @@ def positive_int(name: str, default: int | None = None) -> int:
 def positive_float(name: str, default: float | None = None) -> float:
     raw = os.environ[name] if default is None else os.environ.get(name, str(default))
     value = float(raw)
-    if value <= 0:
-        raise ValueError(f"{name} must be positive")
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite positive number")
     return value
 
 

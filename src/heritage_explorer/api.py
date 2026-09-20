@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import logging
@@ -179,7 +180,8 @@ def create_app(
         limit: int = Query(default=30, ge=1, le=100),
         offset: int = Query(default=0, ge=0, le=100000),
     ) -> dict[str, Any]:
-        result = search.search(
+        result = await asyncio.to_thread(
+            search.search,
             q,
             category=category,
             province=province,

@@ -8,6 +8,7 @@ import pytest
 from heritage_explorer.admission import (
     AdmissionController,
     AdmissionDenied,
+    AdmissionMiddleware,
     AdmissionPolicy,
     client_key_from_scope,
 )
@@ -68,6 +69,18 @@ def test_admission_applies_client_and_global_rolling_windows() -> None:
 def test_client_key_uses_resolved_asgi_peer() -> None:
     assert client_key_from_scope({"client": ("203.0.113.7", 4321)}) == "203.0.113.7"
     assert client_key_from_scope({}) == "unknown"
+
+
+def test_tts_admission_wraps_only_the_expensive_stream_request() -> None:
+    assert AdmissionMiddleware.service_for_scope(
+        {"type": "http", "method": "POST", "path": "/api/tts"}
+    ) is None
+    assert AdmissionMiddleware.service_for_scope(
+        {"type": "http", "method": "GET", "path": "/api/tts/private-token"}
+    ) == "tts"
+    assert AdmissionMiddleware.service_for_scope(
+        {"type": "http", "method": "GET", "path": "/api/tts"}
+    ) is None
 
 
 class _Search:

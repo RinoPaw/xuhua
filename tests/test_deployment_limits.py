@@ -34,14 +34,20 @@ def test_nginx_configs_limit_expensive_public_routes() -> None:
     for filename in ("nginx-xuhua-http.conf", "nginx-xuhua-https.conf"):
         config = (ROOT / "deploy" / filename).read_text(encoding="utf-8")
         assert "zone=xuhua_chat_rate:10m rate=20r/m" in config
+        assert "zone=xuhua_tts_ticket_rate:10m rate=80r/m" in config
         assert "zone=xuhua_tts_rate:10m rate=80r/m" in config
         assert "zone=xuhua_voice_rate:10m rate=8r/m" in config
         assert "zone=xuhua_voice_conn:10m" in config
         assert "location = /api/chat" in config
         assert "limit_req zone=xuhua_chat_rate" in config
-        assert "location = /api/tts" in config
-        assert "location ^~ /api/tts/" in config
-        assert config.count("limit_req zone=xuhua_tts_rate") >= 2
+        assert (
+            "location = /api/tts {\n"
+            "        limit_req zone=xuhua_tts_ticket_rate burst=16 nodelay;"
+        ) in config
+        assert (
+            "location ^~ /api/tts/ {\n"
+            "        limit_req zone=xuhua_tts_rate burst=16 nodelay;"
+        ) in config
         assert "location = /api/voice" in config
         assert "limit_req zone=xuhua_voice_rate" in config
         assert "limit_conn xuhua_voice_conn 2" in config

@@ -59,6 +59,27 @@ test("speech helpers normalize locale and build TTS URL", () => {
   assert.match(url, /text=%E6%B1%B4%E7%BB%A3/u);
   assert.match(url, /trace_id=trace%201/u);
   assert.match(url, /segment=2/u);
+
+  const secureUrl = buildTtsUrl({
+    websocketPath: "wss://voice.example.com/api/voice",
+    text: "汴绣",
+    traceId: "trace-2",
+    segment: 0,
+    reason: "first_sentence",
+    locale: "zh-CN",
+  });
+  assert.match(secureUrl, /^https:\/\/voice\.example\.com\/api\/tts\?/u);
+  assert.doesNotMatch(secureUrl, /^wss:/u);
+
+  const localUrl = buildTtsUrl({
+    websocketPath: "ws://localhost:5050/api/voice",
+    text: "test",
+    traceId: "trace-3",
+    segment: 0,
+    reason: "text_complete",
+    locale: "en-US",
+  });
+  assert.match(localUrl, /^http:\/\/localhost:5050\/api\/tts\?/u);
 });
 
 test("assistant turn acceptance rejects stale or ignored turns", () => {

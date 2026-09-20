@@ -18,6 +18,9 @@ from .voice_protocol import VoiceCommand, decode_voice_command
 from .voice_session import VoiceSessionRuntime
 
 
+MAX_VOICE_FRAME_BYTES = 64 * 1024
+
+
 class VoiceWebSocketChannel:
     """Own the wire envelope and serialized writes for one WebSocket connection."""
 
@@ -47,18 +50,34 @@ async def dispatch_voice_command(runtime: VoiceSessionRuntime, command: VoiceCom
     await runtime.handle_command(command)
 
 
+def _frame_too_large(message: dict[str, Any]) -> bool:
+    data = message.get("bytes")
+    if data is not None:
+        return len(data) > MAX_VOICE_FRAME_BYTES
+
+    raw = message.get("text")
+    if raw is None:
+        return False
+    if len(raw) > MAX_VOICE_FRAME_BYTES:
+        return True
+    return len(raw.encode("utf-8")) > MAX_VOICE_FRAME_BYTES
+
+
 async def run_voice_transport(
     websocket: WebSocket,
     channel: VoiceWebSocketChannel,
     runtime: VoiceSessionRuntime,
 ) -> None:
-    """Receive frames, decode commands, and delegate all state to the runtime."""
+    """Receive bounded frames, decode commands, and delegate state to the runtime."""
 
     try:
         await channel.emit(ReadyEvent())
         while True:
             message = await websocket.receive()
             if message.get("type") == "websocket.disconnect":
+                break
+            if _frame_too_large(message):
+                await websocket.close(code=1009, reason="voice_frame_too_large")
                 break
 
             data = message.get("bytes")
@@ -121,6 +140,7 @@ def register_voice_route(
 
 
 __all__ = [
+    "MAX_VOICE_FRAME_BYTES",
     "VoiceWebSocketChannel",
     "dispatch_voice_command",
     "register_voice_route",

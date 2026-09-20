@@ -55,6 +55,9 @@ jobs:
       - name: Smoke production Docker image
         run: |
           docker run --rm --detach --name xuhua-verify \
+            --memory=512m \
+            --cpus=0.5 \
+            --pids-limit=256 \
             -p 127.0.0.1:5051:5050 \
             -e HOST=0.0.0.0 \
             -e PORT=5050 \
@@ -83,7 +86,7 @@ jobs:
 
           base = "http://127.0.0.1:5051"
           last_error = None
-          for _ in range(60):
+          for _ in range(120):
               try:
                   with urllib.request.urlopen(base + "/healthz", timeout=2) as response:
                       body = json.load(response)

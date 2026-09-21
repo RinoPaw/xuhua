@@ -343,6 +343,30 @@ test("TTS terminal clears pending output machine state", async () => {
   );
 });
 
+test("TTS failure is recoverable and keeps realtime transport listening", async () => {
+  const harness = createHarness();
+  await harness.session.start();
+  harness.session.dispatchMany([
+    { type: "turn.idle" },
+    { type: "output.pending" },
+  ]);
+  harness.output.pipelineActive = false;
+
+  harness.session.handleOutputTerminal({ failed: true, reason: "tts_provider_unavailable" });
+
+  assert.equal(harness.connection.connected, true);
+  assert.equal(harness.machine.transport, "connected");
+  assert.equal(harness.machine.fault, false);
+  assert.equal(harness.machine.output, "idle");
+  assert.equal(harness.machine.turn, "idle");
+  assert.equal(deriveVoiceStatus(harness.machine), "listening");
+  assert.equal(harness.errors.at(-1), "tts_provider_unavailable");
+  assert.equal(
+    harness.calls.some((entry) => entry[0] === "callback.error" && entry[1] === "tts_provider_unavailable"),
+    true,
+  );
+});
+
 test("connection cleanup resets turn identity from the old socket", () => {
   const harness = createHarness();
   harness.turns.current = "turn-2";

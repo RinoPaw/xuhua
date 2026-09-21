@@ -8,8 +8,8 @@
 - 流式问答：FastAPI SSE 输出，回答与资料来源共用同一检索核心。
 - 连续会话：服务端维护 session / turn，并支持取消当前回答。
 - 实时语音：浏览器端 VAD 采集 PCM，经讯飞流式 ASR 转写后进入同一回答链路。
-- 中英与中文方言：当前只使用讯飞“中英识别大模型”一条 ASR 链路，配置为 `zh_cn` / `mandarin` / `slm`。
-- Edge TTS：浏览器先向 `/api/tts` 提交朗读文本换取短期 ticket，再通过 `/api/tts/{token}` 流式播放；前端支持中断、重试与浏览器语音降级。
+- 中英语音识别：当前只使用讯飞“中英识别大模型”一条 ASR 链路，配置为 `zh_cn` / `mandarin` / `slm`。
+- Edge TTS：浏览器先向 `/api/tts` 提交朗读文本换取短期、客户端绑定的 ticket，再通过 `/api/tts/{token}` 获取完整 MP3 音频；前端支持中断与有界重试，不使用浏览器 `speechSynthesis` 降级。
 - 数字人界面：React / Vite Web 客户端，由 FastAPI 同源提供构建产物。
 
 ## 仓库结构
@@ -80,7 +80,7 @@ Copy-Item .env.example .env
 
 ## 环境变量
 
-核心运行配置需要显式提供；`.env.example` 给出了本项目当前模板。
+核心运行配置需要显式提供；`.env.example` 给出了本项目当前模板。Web 构建目录固定为仓库内的 `web/dist/client`，不通过环境变量覆盖。
 
 | 变量 | 示例值 | 用途 |
 | --- | --- | --- |
@@ -88,7 +88,6 @@ Copy-Item .env.example .env
 | `PORT` | `5050` | 服务端口 |
 | `DEBUG` | `0` | 是否开启 Uvicorn reload |
 | `DATASET_PATH` | `data/processed/heritage_items.json` | 主数据集 |
-| `FRONTEND_DIR` | `web/dist/client` | Web 构建目录 |
 | `AI_API_KEY` | 空 | OpenAI-compatible LLM 密钥；空值时使用本地降级回答 |
 | `AI_BASE_URL` | `https://api.deepseek.com` | LLM API 地址 |
 | `AI_MODEL` | `deepseek-flash` | DeepSeek 当前 Flash API 模型名；应用显式使用非思考模式 |
@@ -103,9 +102,9 @@ Copy-Item .env.example .env
 | `CHAT_MAX_CONCURRENCY` | `8` | 单实例同时进行的文字回答上限 |
 | `CHAT_MAX_PER_MINUTE` | `60` | 单实例每分钟允许启动的文字回答上限 |
 | `CHAT_MAX_PER_CLIENT_PER_MINUTE` | `20` | 单客户端每分钟允许启动的文字回答上限 |
-| `TTS_MAX_CONCURRENCY` | `12` | 单实例同时进行的 TTS 流上限 |
-| `TTS_MAX_PER_MINUTE` | `240` | 单实例每分钟允许启动的 TTS 流上限 |
-| `TTS_MAX_PER_CLIENT_PER_MINUTE` | `80` | 单客户端每分钟允许启动的 TTS 流上限 |
+| `TTS_MAX_CONCURRENCY` | `12` | 单实例同时进行的 TTS 合成上限 |
+| `TTS_MAX_PER_MINUTE` | `240` | 单实例每分钟允许启动的 TTS 合成上限 |
+| `TTS_MAX_PER_CLIENT_PER_MINUTE` | `80` | 单客户端每分钟允许启动的 TTS 合成上限 |
 | `VOICE_MAX_CONCURRENCY` | `4` | 单实例同时保持的实时语音连接上限 |
 | `VOICE_MAX_PER_MINUTE` | `30` | 单实例每分钟允许建立的实时语音连接上限 |
 | `VOICE_MAX_PER_CLIENT_PER_MINUTE` | `8` | 单客户端每分钟允许建立的实时语音连接上限 |
@@ -148,8 +147,8 @@ npm run dev
 | POST | `/api/chat` | SSE 流式问答 |
 | POST | `/api/chat/{session_id}/turn/{turn_id}/cancel` | 中断指定轮次 |
 | WS | `/api/voice` | VAD、讯飞 ASR、连续对话与抢话 |
-| POST | `/api/tts` | 提交朗读文本并获取短期 TTS token |
-| GET | `/api/tts/{token}` | 使用 token 流式获取 Edge TTS 音频 |
+| POST | `/api/tts` | 提交朗读文本并获取短期、客户端绑定的 TTS token |
+| GET | `/api/tts/{token}` | 使用 token 获取完整 Edge TTS MP3 音频 |
 
 实时语音路径：
 
@@ -160,8 +159,10 @@ npm run dev
   → XfyunStream
   → AssistantService / LLM
   → POST /api/tts 获取 ticket
-  → GET /api/tts/{token} 流式播放
+  → GET /api/tts/{token} 获取并播放完整音频
 ```
+
+本地唤醒词通过独立的 `wake` WebSocket 命令触发固定唤醒确认，不会伪装成普通文本问题进入检索 / LLM 链路。
 
 ## 数据维护
 
@@ -199,4 +200,4 @@ GitHub `verify` 会缓存已经校验过的唤醒资源，缓存未命中时先�
 
 ## 安全
 
-不要提交 `.env`、API Key、日志或其他凭据。公开部署前仍应在 DeepSeek、讯飞等服务侧设置额度与并发限制；应用 admission、反向代理限制与供应商额度应同时存在。
+浏览器实时语音 WebSocket 会校验 `Origin` 与当前对外站点同源；TTS ticket 绑定签发客户端，泄漏到其他客户端后不能直接复用。不要提交 `.env`、API Key、日志或其他凭据。公开部署前仍应在 DeepSeek、讯飞等服务侧设置额度与并发限制；应用 admission、反向代理限制与供应商额度应同时存在。

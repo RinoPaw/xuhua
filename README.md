@@ -8,7 +8,7 @@
 - 流式问答：FastAPI SSE 输出，回答与资料来源共用同一检索核心。
 - 连续会话：服务端维护 session / turn，并支持取消当前回答。
 - 实时语音：浏览器端 VAD 采集 PCM，经讯飞流式 ASR 转写后进入同一回答链路。
-- 中英与中文方言：当前只使用讯飞“中英识别大模型”一条 ASR 链路，配置为 `zh_cn` / `mandarin` / `slm`；该服务同时覆盖普通话、英语和中文方言。
+- 中英与中文方言：当前只使用讯飞“中英识别大模型”一条 ASR 链路，配置为 `zh_cn` / `mandarin` / `slm`。
 - Edge TTS：浏览器先向 `/api/tts` 提交朗读文本换取短期 ticket，再通过 `/api/tts/{token}` 流式播放；前端支持中断、重试与浏览器语音降级。
 - 数字人界面：React / Vite Web 客户端，由 FastAPI 同源提供构建产物。
 
@@ -23,11 +23,10 @@ xuhua/
 ├─ data/                       # 原始与处理后的非遗数据
 ├─ tools/                      # 数据构建、本地开发辅助工具
 │  └─ dev/start.bat            # Windows 本地启动入口
-├─ deploy/                     # Docker/Nginx/服务器与实验室部署
+├─ deploy/                     # Nginx 反向代理配置
 ├─ docs/                       # 设计与项目文档
-├─ Dockerfile
-├─ compose.yaml
 ├─ pyproject.toml
+├─ uv.lock
 └─ README.md
 ```
 
@@ -79,21 +78,9 @@ Copy-Item .env.example .env
 
 `tools/dev/start.bat --check` 只完成环境、构建与配置检查，不启动服务。
 
-### 实验室电脑一键安装
-
-可以运行 `deploy/bootstrap-xuhua.cmd`。它会下载并执行 `deploy/install-lab.ps1`，完成 Git、Node、uv、源码、Python 依赖和 Web 构建准备。当前安装器不会下载任何本地模型。
-
-如果把 `xuhua.env` 放在 `deploy/bootstrap-xuhua.cmd` 同目录，安装器会复制它为项目 `.env`；否则首次安装会从 `.env.example` 创建 `.env`。
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install-lab.ps1 -SkipLaunch
-```
-
-默认安装到 `D:\Projects\Packages\叙华`。
-
 ## 环境变量
 
-核心运行配置需要显式提供；`.env.example` 给出了本项目当前模板。公共服务预算另有代码默认值，因此旧部署不会因缺少新变量而无法启动，但生产环境建议显式配置，以便部署状态可审计。
+核心运行配置需要显式提供；`.env.example` 给出了本项目当前模板。
 
 | 变量 | 示例值 | 用途 |
 | --- | --- | --- |
@@ -123,7 +110,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install-lab.ps1 -Sk
 | `VOICE_MAX_PER_MINUTE` | `30` | 单实例每分钟允许建立的实时语音连接上限 |
 | `VOICE_MAX_PER_CLIENT_PER_MINUTE` | `8` | 单客户端每分钟允许建立的实时语音连接上限 |
 
-文字回答、TTS 与实时语音分别使用独立预算。HTTP 超出速率预算时返回 `429`，并发容量耗尽时返回 `503`；实时语音握手被拒绝时使用 WebSocket `1013`。这些预算按应用进程 / 实例计算；当前服务显式以单 worker 运行。如果未来水平扩容到多个 worker 或实例，需要先把 ticket、session 与集群级预算迁到共享存储或上游网关。
+文字回答、TTS 与实时语音分别使用独立预算。HTTP 超出速率预算时返回 `429`，并发容量耗尽时返回 `503`；实时语音握手被拒绝时使用 WebSocket `1013`。这些预算按应用进程 / 实例计算；当前服务显式以单 worker 运行。
 
 讯飞三个凭据为空时，文字功能仍可使用，页面会把实时语音能力标记为不可用。`AI_API_KEY` 为空时，文字链路使用本地降级回答。
 
@@ -200,21 +187,14 @@ npm test
 npm run build
 ```
 
-GitHub `verify` 还会构建生产 Docker 镜像并实际启动容器，对 `/healthz`、`/api/meta` 与首页做冒烟检查。
+GitHub `verify` 还会直接启动 `xuhua` 进程，对 `/healthz`、`/api/meta` 与首页做冒烟检查。
 
-## Docker / 服务器部署
+## 反向代理
 
-Docker 运行时同样要求显式提供核心环境配置：
+仓库保留 `deploy/nginx-xuhua-http.conf`、`deploy/nginx-xuhua-https.conf` 和 `deploy/reload-nginx.sh` 作为 Nginx 反向代理模板。它们针对 `/api/chat`、TTS ticket、TTS synthesis 与 `/api/voice` 提供单 IP 请求速率限制和实时语音连接数限制。
 
-```powershell
-docker build -t xuhua .
-docker run --rm -p 5050:5050 --env-file .env xuhua
-```
-
-`compose.yaml` 用于生产服务器部署，默认读取仓库外的 `/etc/xuhua/xuhua.env`，并由 Compose 显式设置容器内 `HOST=0.0.0.0`、`PORT=5050`。`deploy/xuhua-deploy.sh` 负责拉取 `main`、构建镜像、健康检查与失败回滚。
-
-应用自身的 `AdmissionMiddleware` 是昂贵服务的主保护层。仓库提供的 Nginx 配置还会针对 `/api/chat`、TTS ticket、TTS synthesis 与 `/api/voice` 分别增加单 IP 请求速率限制，并限制同一 IP 的实时语音连接数，作为第二层防护。
+当前仓库不再维护 Docker、Compose、自动服务器部署脚本或实验室一键安装器。若后续确定正式上线方式，再为那一条生产路径单独建立部署配置。
 
 ## 安全
 
-不要提交 `.env`、`xuhua.env`、API Key、日志或其他凭据。公开部署前仍应在 DeepSeek、讯飞等服务侧设置额度与并发限制；应用 admission、反向代理限制与供应商额度三层应同时存在。
+不要提交 `.env`、API Key、日志或其他凭据。公开部署前仍应在 DeepSeek、讯飞等服务侧设置额度与并发限制；应用 admission、反向代理限制与供应商额度应同时存在。

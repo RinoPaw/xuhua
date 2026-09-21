@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import aclosing
 import logging
 import time
 import uuid
@@ -24,7 +25,9 @@ from .config import (
     AI_FIRST_TOKEN_MAX_ATTEMPTS,
     AI_FIRST_TOKEN_TIMEOUT,
     AI_MAX_CONTEXT_CHARS,
+    AI_MAX_OUTPUT_CHARS,
     AI_MODEL,
+    AI_RESPONSE_TIMEOUT,
     AI_TIMEOUT,
 )
 from .dataset import HeritageItem, KnowledgeBase, get_knowledge_base, item_to_dict, normalize_text
@@ -271,12 +274,15 @@ class AssistantService:
                     delta_index = 0
                     text_chars = 0
                     next_progress_chars = 100
+                    output_limited = False
                     LOGGER.info(
-                        "[trace=%s turn=%s] llm.request.start attempts=%s first_token_timeout=%.3fs candidates=%s history_turns=%s retrieval_basis=%s",
+                        "[trace=%s turn=%s] llm.request.start attempts=%s first_token_timeout=%.3fs response_timeout=%.3fs max_output_chars=%s candidates=%s history_turns=%s retrieval_basis=%s",
                         session.session_id,
                         turn_id,
                         AI_FIRST_TOKEN_MAX_ATTEMPTS,
                         AI_FIRST_TOKEN_TIMEOUT,
+                        AI_RESPONSE_TIMEOUT,
+                        AI_MAX_OUTPUT_CHARS,
                         len(candidates),
                         len(history),
                         basis,
@@ -285,39 +291,87 @@ class AssistantService:
                     def start_provider_stream():
                         return self.llm.stream_chat(messages, temperature=0.2, max_tokens=700)
 
-                    async for delta in stream_with_first_token_retry(
+                    stream = stream_with_first_token_retry(
                         start_provider_stream,
                         cancel_event,
                         timeout=AI_FIRST_TOKEN_TIMEOUT,
                         max_attempts=AI_FIRST_TOKEN_MAX_ATTEMPTS,
                         log_context=f"trace={session.session_id} turn={turn_id}",
-                    ):
-                        if not delta:
-                            continue
-                        if first_delta_at is None:
-                            first_delta_at = time.perf_counter()
-                            LOGGER.info(
-                                "[trace=%s turn=%s] llm.first_text_delta +%.3fs",
+                    )
+                    try:
+                        async with asyncio.timeout(AI_RESPONSE_TIMEOUT):
+                            async with aclosing(stream):
+                                async for delta in stream:
+                                    if not delta:
+                                        continue
+                                    remaining_chars = AI_MAX_OUTPUT_CHARS - text_chars
+                                    if remaining_chars <= 0:
+                                        output_limited = True
+                                        break
+                                    safe_delta = delta[:remaining_chars]
+                                    if not safe_delta:
+                                        output_limited = True
+                                        break
+                                    if first_delta_at is None:
+                                        first_delta_at = time.perf_counter()
+                                        LOGGER.info(
+                                            "[trace=%s turn=%s] llm.first_text_delta +%.3fs",
+                                            session.session_id,
+                                            turn_id,
+                                            first_delta_at - llm_started,
+                                        )
+                                    answer_parts.append(safe_delta)
+                                    delta_index += 1
+                                    text_chars += len(safe_delta)
+                                    if text_chars >= next_progress_chars:
+                                        LOGGER.info(
+                                            "[trace=%s turn=%s] llm.text.progress chunks=%s chars=%s",
+                                            session.session_id,
+                                            turn_id,
+                                            delta_index,
+                                            text_chars,
+                                        )
+                                        next_progress_chars += 100
+                                    yield sequence.make(
+                                        "response.text.delta", delta=safe_delta, locale=locale
+                                    )
+                                    self._raise_if_cancelled(
+                                        session.session_id, turn_id, cancel_event
+                                    )
+                                    if len(safe_delta) < len(delta) or text_chars >= AI_MAX_OUTPUT_CHARS:
+                                        output_limited = True
+                                        break
+                    except TimeoutError:
+                        if not answer_parts:
+                            LOGGER.error(
+                                "[trace=%s turn=%s] llm.failed code=llm_response_timeout timeout=%.3fs",
                                 session.session_id,
                                 turn_id,
-                                first_delta_at - llm_started,
+                                AI_RESPONSE_TIMEOUT,
                             )
-                        answer_parts.append(delta)
-                        delta_index += 1
-                        text_chars += len(delta)
-                        if text_chars >= next_progress_chars:
-                            LOGGER.info(
-                                "[trace=%s turn=%s] llm.text.progress chunks=%s chars=%s",
-                                session.session_id,
-                                turn_id,
-                                delta_index,
-                                text_chars,
+                            yield sequence.make(
+                                "turn.failed",
+                                code="llm_response_timeout",
+                                timeout=AI_RESPONSE_TIMEOUT,
                             )
-                            next_progress_chars += 100
-                        yield sequence.make("response.text.delta", delta=delta, locale=locale)
-                        self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
+                            return
+                        LOGGER.warning(
+                            "[trace=%s turn=%s] llm.response.timeout +%.3fs chars=%s; finalizing partial answer",
+                            session.session_id,
+                            turn_id,
+                            time.perf_counter() - llm_started,
+                            text_chars,
+                        )
 
                     self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
+                    if output_limited:
+                        LOGGER.warning(
+                            "[trace=%s turn=%s] llm.output.limit chars=%s limit=%s",
+                            session.session_id,
+                            turn_id,
+                            text_chars,
+                            AI_MAX_OUTPUT_CHARS,
+                        )
                     LOGGER.info(
                         "[trace=%s turn=%s] llm.stream.complete +%.3fs chunks=%s chars=%s",
                         session.session_id,

@@ -13,7 +13,19 @@ from .retrieval_policy import requested_item_count
 GREETING_QUESTIONS = frozenset({"你好", "您好", "嗨", "哈喽", "在吗"})
 MULTILINGUAL_GREETINGS = {
     "zh-CN-henan": frozenset({"恁好"}),
-    "en-US": frozenset({"hello", "hi", "hey", "good morning", "good afternoon"}),
+    "en-US": frozenset(
+        {
+            "hello",
+            "hello there",
+            "hi",
+            "hi there",
+            "hey",
+            "hey there",
+            "good morning",
+            "good afternoon",
+            "good evening",
+        }
+    ),
     "ja-JP": frozenset({"こんにちは", "もしもし", "おはよう", "こんばんは"}),
     "ko-KR": frozenset({"안녕하세요", "안녕", "여보세요"}),
 }

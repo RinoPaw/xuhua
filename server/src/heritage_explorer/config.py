@@ -41,7 +41,10 @@ def port_number(name: str) -> int:
 
 
 DATASET_PATH = env_path("DATASET_PATH")
-FRONTEND_DIR = env_path("FRONTEND_DIR")
+# The Web client is part of this repository and is always served from the
+# canonical build output. Keeping this path out of .env prevents stale local
+# configuration from pointing the server at an old pre-refactor build tree.
+FRONTEND_DIR = PROJECT_ROOT / "web" / "dist" / "client"
 HOST = os.environ["HOST"]
 PORT = port_number("PORT")
 DEBUG = os.environ["DEBUG"] == "1"

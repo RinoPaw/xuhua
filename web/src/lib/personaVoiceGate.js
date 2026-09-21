@@ -8,17 +8,28 @@ export function isPersonaWakePhrase(value) {
   return text.startsWith(WAKE_WORD);
 }
 
+function formatSleepDelay(milliseconds) {
+  const seconds = Number(milliseconds || 0) / 1000;
+  return Number.isInteger(seconds) ? `${seconds}s` : `${seconds.toFixed(1)}s`;
+}
+
 export class PersonaVoiceGate {
   constructor({
     sleepDelayMs = PERSONA_RESPONSE_GRACE_MS,
     setTimeoutFn = globalThis.setTimeout,
     clearTimeoutFn = globalThis.clearTimeout,
+    log = console,
   } = {}) {
     this.sleepDelayMs = sleepDelayMs;
     this.setTimeoutFn = setTimeoutFn;
     this.clearTimeoutFn = clearTimeoutFn;
+    this.log = log;
     this.sleeping = true;
     this.sleepTimer = null;
+  }
+
+  logState(message) {
+    this.log?.info?.(`[叙华][persona] ${message}`);
   }
 
   clearCountdown() {
@@ -33,33 +44,39 @@ export class PersonaVoiceGate {
     this.sleeping = true;
   }
 
-  wake() {
+  wake(triggerText = "") {
+    const wasSleeping = this.sleeping;
     this.clearCountdown();
     this.sleeping = false;
+    const trigger = String(triggerText || "").trim();
+    if (trigger) this.logState(`wake: ${trigger}`);
+    if (wasSleeping) this.logState("awake");
   }
 
   noteUserActivity() {
     if (this.sleeping) return false;
-    this.clearCountdown();
+    if (this.clearCountdown()) this.logState("awake");
     return true;
   }
 
   acceptTranscript(text) {
     if (!this.sleeping) {
-      this.clearCountdown();
+      if (this.clearCountdown()) this.logState("awake");
       return "active";
     }
     if (!isPersonaWakePhrase(text)) return "ignore";
-    this.wake();
+    this.wake(text);
     return "wake";
   }
 
   responseSettled() {
     if (this.sleeping) return false;
     this.clearCountdown();
+    this.logState(`sleep countdown ${formatSleepDelay(this.sleepDelayMs)}`);
     this.sleepTimer = this.setTimeoutFn.call(globalThis, () => {
       this.sleepTimer = null;
       this.sleeping = true;
+      this.logState("sleeping");
     }, this.sleepDelayMs);
     return true;
   }

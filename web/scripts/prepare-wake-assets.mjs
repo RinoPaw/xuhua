@@ -68,7 +68,7 @@ export const WAKE_ASSETS = [
     url: `${MODEL_BASE}/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx`,
     digest: {
       algorithm: "sha256",
-      value: "dd784973fc9d2fabb3b800d6dcd20fc3b0ca84f8e2415afe54b032878e447f4d",
+      value: "017af32f2c0138f931d05fbc009ee864295e910aff304f77d2f563815fc834fb",
     },
   },
   {
@@ -76,7 +76,7 @@ export const WAKE_ASSETS = [
     url: `${MODEL_BASE}/decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx`,
     digest: {
       algorithm: "sha256",
-      value: "ed83454004d5bd16d831eaf00adcd181ed7734886aab6ef440f3ffa5aa3cfe3b",
+      value: "fe53b8d6a07bc5373d1770649025a5a985c8fb3dab70323386a1b73aacba0546",
     },
   },
   {
@@ -84,7 +84,7 @@ export const WAKE_ASSETS = [
     url: `${MODEL_BASE}/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx`,
     digest: {
       algorithm: "sha256",
-      value: "f79760052b87239e325f0567c752ad3130b30d92effb847d4307743c20c59a24",
+      value: "431de10b554f134ef8af320feea2db337e641290449a3d3f6cb6e5f5fd2c9c3d",
     },
   },
   {
@@ -92,7 +92,7 @@ export const WAKE_ASSETS = [
     url: `${MODEL_BASE}/tokens.txt`,
     digest: {
       algorithm: "sha256",
-      value: "cd06ca04c7926f37146b1a2b8a12ac382af0457d2bfacfc5a0949945fe6567b6",
+      value: "72316508d9119696145abc6f1f8cdc46287535c34e5ce7e595f845cb1499cf2e",
     },
   },
 ];

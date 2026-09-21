@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/prepare-wake-assets.mjs && vite build && node scripts/prepare-sites-build.mjs",
+    "prepare:assets": "node scripts/prepare-wake-assets.mjs",
+    "check:assets": "node scripts/prepare-wake-assets.mjs --check",
+    "build": "npm run check:assets && vite build && node scripts/prepare-sites-build.mjs",
     "preview": "vite preview",
     "lint": "npx --yes @biomejs/biome@2.5.14 lint src --only=correctness/useExhaustiveDependencies --only=correctness/useHookAtTopLevel --only=correctness/noUnusedImports --only=correctness/noUnusedVariables",
     "test": "node --test tests/*.test.mjs",

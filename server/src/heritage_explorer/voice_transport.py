@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
@@ -19,6 +20,53 @@ from .voice_session import VoiceSessionRuntime
 
 
 MAX_VOICE_FRAME_BYTES = 64 * 1024
+_ORIGIN_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _canonical_origin(value: str, *, fallback_scheme: str = "") -> tuple[str, str, int] | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    candidate = raw if "://" in raw else f"{fallback_scheme or 'http'}://{raw}"
+    try:
+        parsed = urlsplit(candidate)
+        scheme = parsed.scheme.casefold()
+        host = (parsed.hostname or "").casefold().rstrip(".")
+        port = parsed.port or _ORIGIN_DEFAULT_PORTS.get(scheme, 0)
+    except ValueError:
+        return None
+    if scheme not in _ORIGIN_DEFAULT_PORTS or not host or not port:
+        return None
+    return scheme, host, port
+
+
+def websocket_origin_allowed(
+    origin: str | None,
+    host: str,
+    *,
+    websocket_scheme: str,
+    forwarded_proto: str = "",
+) -> bool:
+    """Allow browser WebSockets only from the public origin serving this request.
+
+    Browsers always send ``Origin`` for a WebSocket handshake. Non-browser
+    clients may omit it, so absence remains compatible with CLI/test clients.
+    When an Origin is present we require an exact scheme/host/port match with
+    the externally visible request origin. Reverse proxies communicate the
+    public scheme through ``X-Forwarded-Proto`` while preserving ``Host``.
+    """
+
+    if origin is None or not str(origin).strip():
+        return True
+
+    ws_scheme = str(websocket_scheme or "").casefold()
+    external_scheme = str(forwarded_proto or "").split(",", 1)[0].strip().casefold()
+    if external_scheme not in _ORIGIN_DEFAULT_PORTS:
+        external_scheme = "https" if ws_scheme == "wss" else "http"
+
+    actual = _canonical_origin(str(origin))
+    expected = _canonical_origin(str(host), fallback_scheme=external_scheme)
+    return actual is not None and expected is not None and actual == expected
 
 
 class VoiceWebSocketChannel:
@@ -124,6 +172,15 @@ def register_voice_route(
             await websocket.close(code=1013, reason="voice_unavailable")
             return
 
+        if not websocket_origin_allowed(
+            websocket.headers.get("origin"),
+            websocket.headers.get("host", ""),
+            websocket_scheme=websocket.url.scheme,
+            forwarded_proto=websocket.headers.get("x-forwarded-proto", ""),
+        ):
+            await websocket.close(code=1008, reason="voice_origin_forbidden")
+            return
+
         await websocket.accept()
         channel = VoiceWebSocketChannel(websocket)
         runtime = VoiceSessionRuntime(
@@ -149,4 +206,5 @@ __all__ = [
     "dispatch_voice_command",
     "register_voice_route",
     "run_voice_transport",
+    "websocket_origin_allowed",
 ]

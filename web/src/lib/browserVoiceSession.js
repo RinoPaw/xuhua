@@ -15,6 +15,8 @@ import {
 } from "./voiceProtocol.js";
 import { VoiceTranscriptPresenter } from "./voiceTranscriptPresenter.js";
 
+const ACKNOWLEDGEMENT_TEXT = "我在。";
+
 function noop() {}
 
 /**
@@ -33,6 +35,7 @@ export class BrowserVoiceSession {
     getCallbacks = () => ({}),
     onErrorState = noop,
     onSpectrum = noop,
+    onMicrophoneEnabledChange = noop,
     connection = new VoiceConnectionController(),
     input = new VoiceInputController(),
     turns = new VoiceTurnTracker(),
@@ -49,12 +52,14 @@ export class BrowserVoiceSession {
     this.getCallbacks = getCallbacks;
     this.onErrorState = onErrorState;
     this.onSpectrum = onSpectrum;
+    this.onMicrophoneEnabledChange = onMicrophoneEnabledChange;
     this.connection = connection;
     this.input = input;
     this.turns = turns;
     this.log = log;
     this.latency = latency || new VoiceLatencyTrace({ log });
     this.transcript = transcript || new VoiceTranscriptPresenter({ getCallbacks });
+    this.microphoneEnabled = false;
     this.output = createOutput({
       websocketPath,
       getRecognitionContext,
@@ -67,6 +72,20 @@ export class BrowserVoiceSession {
   setWebsocketPath(path) {
     this.websocketPath = String(path || "/api/voice");
     this.output.setWebsocketPath(this.websocketPath);
+  }
+
+  setMicrophoneEnabled(value) {
+    const enabled = Boolean(value);
+    if (this.microphoneEnabled === enabled) return enabled;
+    this.microphoneEnabled = enabled;
+    this.onMicrophoneEnabledChange(enabled);
+    return enabled;
+  }
+
+  prewarmAcknowledgement() {
+    const locale = compactRecognitionContext(this.getRecognitionContext()).locale_hint;
+    const pending = this.output?.prewarm?.(ACKNOWLEDGEMENT_TEXT, locale);
+    if (pending?.catch) void pending.catch(() => {});
   }
 
   handleOutputEvent(event) {
@@ -121,6 +140,13 @@ export class BrowserVoiceSession {
     const error = value instanceof Error ? value : new Error(String(value || "voice_error"));
     this.onErrorState(error);
     this.dispatchVoice({ type: "fault.raise" });
+    this.getCallbacks()?.onError?.(error);
+    return error;
+  }
+
+  reportInputError(value) {
+    const error = value instanceof Error ? value : new Error(String(value || "voice_input_error"));
+    this.onErrorState(error);
     this.getCallbacks()?.onError?.(error);
     return error;
   }
@@ -272,6 +298,45 @@ export class BrowserVoiceSession {
     return result;
   }
 
+  pauseMicrophone() {
+    if (!this.connection.connected) return false;
+    const speechEndedAt = Number(this.input.state?.lastVoiceAt || 0);
+    const finished = this.input.finishActiveUtterance({
+      connection: this.connection,
+      onTranscribing: () => this.dispatchVoice({ type: "input.transcribing" }),
+      onTransportFailure: () => this.handleTransportFailure(),
+    });
+    if (!finished || !this.connection.connected) return false;
+    if (speechEndedAt > 0) this.latency.markSpeechEnd(speechEndedAt);
+    if (!this.connection.pauseInput()) return false;
+    this.setMicrophoneEnabled(false);
+    this.onSpectrum(Array(24).fill(0));
+    return true;
+  }
+
+  async resumeMicrophone() {
+    if (!this.connection.connected) return false;
+    if (this.microphoneEnabled) return true;
+    try {
+      const resumed = await this.connection.resumeInput(
+        (samples, inputRate) => this.processAudio(samples, inputRate),
+      );
+      if (!resumed) return false;
+      this.input.resetOnset();
+      this.clearError();
+      this.setMicrophoneEnabled(true);
+      this.settleListening();
+      return true;
+    } catch (error) {
+      this.reportInputError(error);
+      return false;
+    }
+  }
+
+  toggleMicrophone() {
+    return this.microphoneEnabled ? this.pauseMicrophone() : this.resumeMicrophone();
+  }
+
   cleanup() {
     this.latency.clear();
     this.transcript.clear(true);
@@ -279,6 +344,8 @@ export class BrowserVoiceSession {
     this.turns.reset();
     this.input.reset({ resetIds: true, discardResampler: true });
     this.connection.stop();
+    this.setMicrophoneEnabled(false);
+    this.onSpectrum(Array(24).fill(0));
     this.dispatchVoice({ type: "transport.idle" });
   }
 
@@ -294,6 +361,7 @@ export class BrowserVoiceSession {
     this.latency.clear();
     this.clearError();
     this.dispatchVoice({ type: "transport.connecting" });
+    this.prewarmAcknowledgement();
 
     try {
       const started = await this.connection.start(this.websocketPath, {
@@ -312,6 +380,7 @@ export class BrowserVoiceSession {
       });
       if (!started) return false;
       this.dispatchVoice({ type: "transport.connected" });
+      this.setMicrophoneEnabled(true);
       this.settleListening();
       return true;
     } catch (error) {
@@ -342,5 +411,8 @@ export class BrowserVoiceSession {
 
   destroy() {
     this.cleanup();
+    this.output?.dispose?.();
   }
 }
+
+export { ACKNOWLEDGEMENT_TEXT };

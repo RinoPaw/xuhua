@@ -240,7 +240,7 @@ function App() {
   const showVoiceStatusOnly = state.messages.length === 0 && !showConversationEmpty;
 
   return (
-    <main className={`app-shell voice-${voiceStatus}`}>
+    <main className={`app-shell voice-state-${voiceStatus}`}>
       <div className="mobile-toggle-row">
         <button
           type="button"

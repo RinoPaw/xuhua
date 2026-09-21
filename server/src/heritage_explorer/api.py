@@ -42,7 +42,7 @@ from .config import (
     XF_ASR_HOST,
 )
 from .dataset import item_to_dict
-from .language import detect_locale, get_language_profile, normalize_locale_hint
+from .language import detect_locale, get_language_profile
 from .request_limits import RequestBodyLimitMiddleware
 from .tts_tickets import TtsTicketCapacity, TtsTicketStore
 from .voice import XfyunStream
@@ -203,7 +203,7 @@ def create_app(
             ) from exc
 
         language_profile = get_language_profile(
-            normalize_locale_hint(ticket.locale) or detect_locale(ticket.text)
+            detect_locale(ticket.text, hint=ticket.locale)
         )
         started = time.perf_counter()
         LOGGER.info(

@@ -372,7 +372,7 @@ def test_voice_partial_is_calibrated_by_final(monkeypatch) -> None:
             final = next(message for message in messages if message.get("type") == "user.transcript")
             assert partial["text"] == "你"
             assert final["text"] == "你好"
-            assert final["asr_engine"] == "chinese"
+            assert final["asr_engine"] == "xfyun_slm"
 
 
 def test_voice_overlapping_finals_merge_in_id_order(monkeypatch) -> None:
@@ -510,5 +510,5 @@ def test_single_asr_stream_preserves_detected_english_locale(monkeypatch) -> Non
 
     transcript = next(message for message in messages if message.get("type") == "user.transcript")
     assert transcript["locale"] == "en-US"
-    assert transcript["asr_engine"] == "chinese"
+    assert transcript["asr_engine"] == "xfyun_slm"
     assert assistant.calls[0]["locale_hint"] == "en-US"

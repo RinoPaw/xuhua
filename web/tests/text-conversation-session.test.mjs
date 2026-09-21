@@ -65,7 +65,7 @@ test("text session owns request, SSE turn identity, and speech bridge", async ()
 
   assert.equal(await session.ask("  介绍汴绣  "), true);
   assert.equal(requests.length, 1);
-  assert.equal(requests[0][0], "/base/api/chat");
+  assert.equal(requests[0][0], "/api/chat");
   assert.deepEqual(JSON.parse(requests[0][1].body), {
     question: "介绍汴绣",
     session_id: "s1",

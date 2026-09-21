@@ -3,9 +3,9 @@ import { BrowserVoiceSession } from "./browserVoiceSession.js";
 import { PersonaVoiceGate } from "./personaVoiceGate.js";
 
 export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
-  constructor({ gate = new PersonaVoiceGate(), ...options } = {}) {
+  constructor({ gate = null, ...options } = {}) {
     super(options);
-    this.gate = gate;
+    this.gate = gate || new PersonaVoiceGate({ log: this.log });
   }
 
   processAudio(samples, inputRate) {

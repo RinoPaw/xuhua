@@ -4,15 +4,16 @@ import { StatefulPcmResampler } from "./pcmResampler.js";
 const WAKE_WORD = "叙华";
 const WAKE_KEYWORDS = "x ù h uá @叙华";
 const TARGET_SAMPLE_RATE = 16000;
-const SHERPA_WASM_BASE = "https://cdn.jsdelivr.net/npm/@siteed/sherpa-onnx.rn@1.3.1/wasm/";
-const SHERPA_MODEL_BASE = "https://huggingface.co/openEuler/sherpa-kws/resolve/main/assets";
+const SHERPA_WASM_BASE = "/wake/runtime/";
+const SHERPA_MODEL_BASE = "/wake/model";
 const SHERPA_MODEL_DIR = "/xuhua-kws";
 
 let runtimePromise = null;
 
 function loadScriptOnce(url) {
+  const absoluteUrl = new URL(url, globalThis.location?.href || "http://localhost/").href;
   const existing = Array.from(globalThis.document?.scripts || [])
-    .find((script) => script.src === url);
+    .find((script) => script.src === absoluteUrl);
   if (existing?.dataset?.loaded === "true") return Promise.resolve();
   if (existing) {
     return new Promise((resolve, reject) => {
@@ -44,7 +45,10 @@ function waitForSherpaReady(timeoutMs = 180000) {
     const startedAt = Date.now();
     const previousReady = globalThis.onSherpaOnnxReady;
     let timer = null;
+    let finished = false;
     const finish = (value, error = null) => {
+      if (finished) return;
+      finished = true;
       if (timer !== null) globalThis.clearTimeout.call(globalThis, timer);
       if (globalThis.onSherpaOnnxReady === onReady) globalThis.onSherpaOnnxReady = previousReady;
       if (error) reject(error);
@@ -126,9 +130,9 @@ export class LocalWakeWordDetector {
       const sherpa = await this.runtimeLoader();
       const loadedModel = await sherpa.KWS.loadModel({
         modelDir: SHERPA_MODEL_DIR,
-        encoder: `${this.modelBase}/onnx/encoder.onnx`,
-        decoder: `${this.modelBase}/onnx/decoder.onnx`,
-        joiner: `${this.modelBase}/onnx/joiner.onnx`,
+        encoder: `${this.modelBase}/encoder.onnx`,
+        decoder: `${this.modelBase}/decoder.onnx`,
+        joiner: `${this.modelBase}/joiner.onnx`,
         tokens: `${this.modelBase}/tokens.txt`,
         debug: false,
       });

@@ -12,7 +12,6 @@ jobs:
       PORT: "5050"
       DEBUG: "0"
       DATASET_PATH: data/processed/heritage_items.json
-      FRONTEND_DIR: web/dist/client
       AI_API_KEY: ""
       AI_BASE_URL: https://api.deepseek.com
       AI_MODEL: deepseek-flash
@@ -78,6 +77,11 @@ jobs:
               meta = json.load(response)
           assert meta["item_count"] >= 3000
           assert meta["category_count"] >= 10
+
+          with urllib.request.urlopen(base + "/api/items?limit=1&offset=0", timeout=3) as response:
+              items = json.load(response)
+          assert items["total"] >= 3000
+          assert len(items["items"]) == 1
 
           with urllib.request.urlopen(base + "/", timeout=3) as response:
               html = response.read().decode("utf-8")

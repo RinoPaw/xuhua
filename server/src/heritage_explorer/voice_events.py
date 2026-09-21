@@ -34,7 +34,14 @@ class UserTranscriptEvent:
     raw_text: str
     normalizations: tuple[dict[str, Any], ...]
     locale: str
-    asr_engine: str = "chinese"
+    asr_engine: str = "xfyun_slm"
+
+    def __post_init__(self) -> None:
+        # ``chinese`` was the old application label. The actual provider path
+        # is Xunfei's bilingual SLM model, so normalize the legacy value at the
+        # protocol boundary without keeping a second English/Chinese engine.
+        if self.asr_engine == "chinese":
+            object.__setattr__(self, "asr_engine", "xfyun_slm")
 
 
 @dataclass(frozen=True, slots=True)

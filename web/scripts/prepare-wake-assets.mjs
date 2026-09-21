@@ -17,7 +17,7 @@ const wakeRoot = path.join(root, "public", "wake");
 const runtimeDir = path.join(wakeRoot, "runtime");
 const modelDir = path.join(wakeRoot, "model");
 
-const SHERPA_PACKAGE_VERSION = "1.3.2-beta.0";
+const SHERPA_PACKAGE_VERSION = "1.3.1";
 const RUNTIME_BASE = `https://cdn.jsdelivr.net/npm/@siteed/sherpa-onnx.rn@${SHERPA_PACKAGE_VERSION}/wasm`;
 const MODEL_ARCHIVE_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2";
 const MODEL_FOLDER = "sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01";

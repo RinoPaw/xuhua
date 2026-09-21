@@ -21,10 +21,17 @@ export class VoiceConnectionController {
     this.socket = null;
     this.generation = 0;
     this.starting = false;
+    this.onSamples = null;
+    this.inputGeneration = 0;
+    this.inputStarting = false;
   }
 
   get connected() {
     return Boolean(this.socket && this.socket.readyState === this.openState);
+  }
+
+  get inputActive() {
+    return Boolean(this.media?.stream);
   }
 
   sendJson(payload) {
@@ -62,21 +69,25 @@ export class VoiceConnectionController {
     if (this.starting || this.socket) return false;
 
     const generation = this.generation + 1;
+    const inputGeneration = this.inputGeneration + 1;
     this.generation = generation;
+    this.inputGeneration = inputGeneration;
     this.starting = true;
+    this.inputStarting = true;
+    this.onSamples = onSamples || null;
     let stream = null;
     let socket = null;
     const isCurrent = () => this.generation === generation;
 
     try {
       stream = await this.media.requestStream();
-      if (!isCurrent()) {
+      if (!isCurrent() || this.inputGeneration !== inputGeneration) {
         this.releaseStartResources(stream, socket);
         return false;
       }
 
       socket = await this.openSocket(path);
-      if (!isCurrent()) {
+      if (!isCurrent() || this.inputGeneration !== inputGeneration) {
         this.releaseStartResources(stream, socket);
         return false;
       }
@@ -91,19 +102,22 @@ export class VoiceConnectionController {
         if (this.socket !== socket) return;
         this.socket = null;
         this.starting = false;
+        this.inputStarting = false;
         this.generation += 1;
+        this.inputGeneration += 1;
         this.media.stop();
         onClose?.(event);
       };
 
       onOpen?.(socket);
-      await this.media.attachProcessor(onSamples);
-      if (!isCurrent() || this.socket !== socket) {
+      await this.media.attachProcessor(this.onSamples);
+      if (!isCurrent() || this.inputGeneration !== inputGeneration || this.socket !== socket) {
         this.releaseStartResources(stream, socket);
         return false;
       }
 
       this.starting = false;
+      this.inputStarting = false;
       return true;
     } catch (error) {
       if (!isCurrent()) {
@@ -111,14 +125,75 @@ export class VoiceConnectionController {
         return false;
       }
       this.starting = false;
+      if (this.inputGeneration === inputGeneration) this.inputStarting = false;
       this.releaseStartResources(stream, socket);
       throw error;
     }
   }
 
+  pauseInput() {
+    if (!this.connected) return false;
+    this.inputGeneration += 1;
+    this.inputStarting = false;
+    this.media.stop();
+    return true;
+  }
+
+  async resumeInput(onSamples = this.onSamples) {
+    if (!this.connected) return false;
+    if (this.inputActive) return true;
+    if (this.inputStarting) return false;
+
+    const socket = this.socket;
+    const generation = this.generation;
+    const inputGeneration = this.inputGeneration + 1;
+    this.inputGeneration = inputGeneration;
+    this.inputStarting = true;
+    this.onSamples = onSamples || this.onSamples;
+    let stream = null;
+
+    try {
+      stream = await this.media.requestStream();
+      if (
+        generation !== this.generation
+        || inputGeneration !== this.inputGeneration
+        || socket !== this.socket
+        || !this.connected
+      ) {
+        this.media.release(stream);
+        return false;
+      }
+      await this.media.attachProcessor(this.onSamples);
+      if (
+        generation !== this.generation
+        || inputGeneration !== this.inputGeneration
+        || socket !== this.socket
+        || !this.connected
+      ) {
+        this.media.release(stream);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      if (stream) this.media.release(stream);
+      if (
+        generation !== this.generation
+        || inputGeneration !== this.inputGeneration
+        || socket !== this.socket
+        || !this.connected
+        || /voice_media_request_stale/u.test(String(error?.message || error))
+      ) return false;
+      throw error;
+    } finally {
+      if (inputGeneration === this.inputGeneration) this.inputStarting = false;
+    }
+  }
+
   stop(reason = "client_stop") {
     this.generation += 1;
+    this.inputGeneration += 1;
     this.starting = false;
+    this.inputStarting = false;
     const socket = this.socket;
     this.socket = null;
     if (socket) {

@@ -41,10 +41,11 @@ test("persona gate sleeps initially and wakes only on the wake phrase", () => {
   ]);
 });
 
-test("persona gate logs countdown cancellation and sleeping transition", () => {
+test("persona gate logs countdown cancellation and hands off to local sleep", () => {
   let timerCallback = null;
   let timerDelay = null;
   const cleared = [];
+  const sleeps = [];
   const log = createLog();
   const gate = new PersonaVoiceGate({
     setTimeoutFn(callback, delay) {
@@ -56,6 +57,9 @@ test("persona gate logs countdown cancellation and sleeping transition", () => {
     clearTimeoutFn(timer) {
       assert.equal(this, globalThis);
       cleared.push(timer);
+    },
+    onSleep() {
+      sleeps.push("sleep");
     },
     log: log.logger,
   });
@@ -72,6 +76,7 @@ test("persona gate logs countdown cancellation and sleeping transition", () => {
   assert.equal(gate.responseSettled(), true);
   timerCallback();
   assert.equal(gate.allowAssistantResponse(), false);
+  assert.deepEqual(sleeps, ["sleep"]);
   assert.deepEqual(log.messages, [
     "[叙华][persona] wake: 叙华",
     "[叙华][persona] awake",

@@ -23,53 +23,18 @@ function withRetryMarker(url, retry) {
   return `${url}${separator}tts_retry=${retry}`;
 }
 
-function guessSpeechLocale(text) {
-  const value = String(text || "");
-  if (/[\u3040-\u30ff]/u.test(value)) return "ja-JP";
-  if (/[\uac00-\ud7af]/u.test(value)) return "ko-KR";
-  if (/[\u3400-\u9fff]/u.test(value)) return "zh-CN";
-  return "en-US";
-}
-
-function browserFallbackSpeak(
-  text,
-  { onStart = noop, onEnd = noop, onError = noop, locale = "" } = {},
-) {
-  const synthesis = globalThis?.speechSynthesis;
-  const Utterance = globalThis?.SpeechSynthesisUtterance;
-  if (!synthesis || typeof synthesis.speak !== "function" || typeof Utterance !== "function") return null;
-
-  let utterance;
-  try {
-    utterance = new Utterance(String(text || ""));
-    utterance.lang = String(locale || "").trim() || guessSpeechLocale(text);
-    utterance.onstart = () => onStart();
-    utterance.onend = () => onEnd();
-    utterance.onerror = (event) => onError(event || new Error("speech_synthesis_failed"));
-    synthesis.speak(utterance);
-  } catch (error) {
-    onError(error);
-    return null;
-  }
-
-  return () => {
-    utterance.onstart = null;
-    utterance.onend = null;
-    utterance.onerror = null;
-    try {
-      synthesis.cancel();
-    } catch {
-      // Browser speech synthesis may already have stopped itself.
-    }
-  };
+function failureCode(reason, fallback = "tts_audio_failed") {
+  const message = String(reason?.message || reason || "").trim();
+  return message || fallback;
 }
 
 /**
- * Schedules the two browser TTS segments produced by TtsTextPlan.
+ * Schedules the two Edge TTS segments produced by TtsTextPlan.
  *
- * A source may be prepared asynchronously before the Audio element is created.
- * This lets the browser POST private speech text for a short-lived stream URL,
- * while preserving native streaming playback from the resulting GET source.
+ * Speech output has one canonical path: /api/tts -> Edge TTS -> HTMLAudioElement.
+ * If that path fails after bounded retries, the turn fails explicitly. There is
+ * intentionally no browser speechSynthesis fallback because it uses unrelated
+ * voices and can leak stale audio back into realtime ASR.
  */
 export class TtsScheduler {
   constructor({
@@ -78,7 +43,6 @@ export class TtsScheduler {
     onEvent = noop,
     onPlayingChange = noop,
     onTerminal = noop,
-    fallbackSpeak = browserFallbackSpeak,
     scheduleRetry = (callback, delay) => setTimeout(callback, delay),
     cancelRetry = (timer) => clearTimeout(timer),
   } = {}) {
@@ -87,7 +51,6 @@ export class TtsScheduler {
     this.onEvent = onEvent;
     this.onPlayingChange = onPlayingChange;
     this.onTerminal = onTerminal;
-    this.fallbackSpeak = fallbackSpeak;
     this.scheduleRetry = scheduleRetry;
     this.cancelRetry = cancelRetry;
     this.generation = 0;
@@ -97,11 +60,16 @@ export class TtsScheduler {
     this.completed = false;
     this.current = null;
     this.playing = false;
+    this.tentativePaused = false;
     this.terminal = false;
   }
 
   get isPlaying() {
     return this.playing;
+  }
+
+  get isTentativePaused() {
+    return this.tentativePaused;
   }
 
   get segmentCount() {
@@ -120,6 +88,8 @@ export class TtsScheduler {
     this.nextSegment = 0;
     this.completed = false;
     this.current = null;
+    this.playing = false;
+    this.tentativePaused = false;
     this.terminal = false;
     return this.activeGeneration;
   }
@@ -149,8 +119,6 @@ export class TtsScheduler {
       handlers: null,
       retryCount: 0,
       retryTimer: null,
-      useFallback: false,
-      fallbackCancel: null,
       prepareController: new AbortController(),
     };
     this.entries.set(segment, entry);
@@ -170,7 +138,7 @@ export class TtsScheduler {
         signal: entry.prepareController.signal,
       });
     } catch (error) {
-      this.prepareFallback(entry, error);
+      this.failEntry(entry, error, "tts_source_unavailable");
       return;
     }
 
@@ -179,7 +147,7 @@ export class TtsScheduler {
         .then((url) => this.activate(entry, url))
         .catch((error) => {
           if (!this.isCurrent(entry)) return;
-          this.prepareFallback(entry, error);
+          this.failEntry(entry, error, "tts_source_unavailable");
         });
       return;
     }
@@ -187,9 +155,9 @@ export class TtsScheduler {
   }
 
   activate(entry, url) {
-    if (!this.isCurrent(entry) || entry.ended || entry.useFallback) return false;
+    if (!this.isCurrent(entry) || entry.ended || this.terminal) return false;
     const source = String(url || "").trim();
-    if (!source) return this.prepareFallback(entry, new Error("tts_source_unavailable"));
+    if (!source) return this.failEntry(entry, "tts_source_unavailable", "tts_source_unavailable");
 
     entry.url = source;
     entry.prepareController = null;
@@ -199,7 +167,7 @@ export class TtsScheduler {
       if (!audio) throw new Error("tts_audio_unavailable");
       audio.preload = "auto";
     } catch (error) {
-      return this.prepareFallback(entry, error);
+      return this.failEntry(entry, error, "tts_audio_unavailable");
     }
 
     entry.audio = audio;
@@ -237,6 +205,7 @@ export class TtsScheduler {
     this.entries.clear();
     this.current = null;
     this.completed = false;
+    this.tentativePaused = false;
     this.terminal = true;
     this.setPlaying(false);
     return true;
@@ -262,6 +231,7 @@ export class TtsScheduler {
       playing: () => {
         if (!this.isCurrent(entry)) return;
         this.current = entry;
+        this.tentativePaused = false;
         this.setPlaying(true);
         this.emit({ type: "playing", segment: entry.segment, elapsedMs: now() - entry.startedAt });
       },
@@ -273,8 +243,7 @@ export class TtsScheduler {
   }
 
   start(entry) {
-    if (!this.isCurrent(entry) || entry.started || this.current) return false;
-    if (entry.useFallback) return this.startFallback(entry);
+    if (!this.isCurrent(entry) || entry.started || this.current || this.terminal) return false;
     if (!entry.audio) return false;
 
     entry.started = true;
@@ -290,39 +259,41 @@ export class TtsScheduler {
     return true;
   }
 
-  startFallback(entry) {
-    if (!this.isCurrent(entry) || entry.started || this.current) return false;
-    entry.started = true;
-    this.current = entry;
-    this.emit({ type: "fallback.start", segment: entry.segment, elapsedMs: now() - entry.startedAt });
-
-    const onStart = () => {
-      if (!this.isCurrent(entry) || this.current !== entry) return;
-      this.setPlaying(true);
-      this.emit({ type: "fallback.playing", segment: entry.segment, elapsedMs: now() - entry.startedAt });
-    };
-    const onEnd = () => {
-      if (!this.isCurrent(entry)) return;
-      this.end(entry);
-    };
-    const onError = () => {
-      if (!this.isCurrent(entry)) return;
-      this.emit({ type: "fallback.failed", segment: entry.segment, elapsedMs: now() - entry.startedAt });
-      this.end(entry);
-    };
-
-    const cancel = callFallback(this.fallbackSpeak, entry.content, {
-      onStart,
-      onEnd,
-      onError,
-      locale: entry.locale || guessSpeechLocale(entry.content),
-    });
-    if (!cancel) {
-      this.emit({ type: "fallback.unavailable", segment: entry.segment, elapsedMs: now() - entry.startedAt });
-      this.end(entry);
+  pauseTentative() {
+    const entry = this.current;
+    if (!entry?.audio || !this.isCurrent(entry) || this.terminal || this.tentativePaused) return false;
+    try {
+      entry.audio.pause?.();
+    } catch {
       return false;
     }
-    entry.fallbackCancel = typeof cancel === "function" ? cancel : null;
+    this.tentativePaused = true;
+    this.setPlaying(false);
+    this.emit({
+      type: "playback.pause_tentative",
+      segment: entry.segment,
+      elapsedMs: now() - entry.startedAt,
+    });
+    return true;
+  }
+
+  resumeTentative() {
+    const entry = this.current;
+    if (!this.tentativePaused || !entry?.audio || !this.isCurrent(entry) || this.terminal) return false;
+    this.tentativePaused = false;
+    let result;
+    try {
+      result = entry.audio.play?.();
+    } catch (error) {
+      this.handleAudioError(entry, error);
+      return false;
+    }
+    if (result?.catch) result.catch((error) => this.handleAudioError(entry, error));
+    this.emit({
+      type: "playback.resume_tentative",
+      segment: entry.segment,
+      elapsedMs: now() - entry.startedAt,
+    });
     return true;
   }
 
@@ -331,8 +302,8 @@ export class TtsScheduler {
     entry.ended = true;
     const wasCurrent = this.current === entry;
     if (wasCurrent) this.current = null;
+    if (wasCurrent) this.tentativePaused = false;
     if (wasCurrent) this.setPlaying(false);
-    entry.fallbackCancel = null;
     this.emit({ type: "segment.complete", segment: entry.segment, elapsedMs: now() - entry.startedAt });
 
     const next = this.entries.get(entry.segment + 1);
@@ -347,6 +318,7 @@ export class TtsScheduler {
     for (const entry of this.entries.values()) this.release(entry);
     this.entries.clear();
     this.current = null;
+    this.tentativePaused = false;
     this.setPlaying(false);
     callSafely(this.onTerminal, { generation, failed: false });
     return true;
@@ -360,12 +332,12 @@ export class TtsScheduler {
   }
 
   handleAudioError(entry, reason) {
-    if (!this.isCurrent(entry) || this.terminal || entry.ended || entry.useFallback) return;
+    if (!this.isCurrent(entry) || this.terminal || entry.ended) return;
     if (!entry.firstChunk && entry.retryCount < MAX_AUDIO_RETRIES) {
       this.retry(entry, reason);
       return;
     }
-    this.prepareFallback(entry, reason);
+    this.failEntry(entry, reason, "tts_audio_failed");
   }
 
   retry(entry, reason) {
@@ -375,6 +347,7 @@ export class TtsScheduler {
     const delay = RETRY_DELAYS_MS[Math.min(retry - 1, RETRY_DELAYS_MS.length - 1)] || 0;
     const wasCurrent = this.current === entry;
     if (wasCurrent) this.current = null;
+    if (wasCurrent) this.tentativePaused = false;
     if (wasCurrent) this.setPlaying(false);
     entry.started = false;
     entry.firstChunk = false;
@@ -384,7 +357,7 @@ export class TtsScheduler {
       retry,
       delayMs: delay,
       elapsedMs: now() - entry.startedAt,
-      reason,
+      reason: failureCode(reason),
     });
 
     entry.retryTimer = this.scheduleRetry(() => {
@@ -405,41 +378,18 @@ export class TtsScheduler {
     return true;
   }
 
-  prepareFallback(entry, reason) {
-    if (!this.isCurrent(entry) || entry.ended) return false;
-    entry.prepareController?.abort();
-    entry.prepareController = null;
-    if (entry.retryTimer !== null) {
-      this.cancelRetry(entry.retryTimer);
-      entry.retryTimer = null;
-    }
-    const wasCurrent = this.current === entry;
-    if (wasCurrent) this.current = null;
-    if (wasCurrent) this.setPlaying(false);
-    entry.started = false;
-    entry.useFallback = true;
-    const audio = entry.audio;
-    if (audio) {
-      try {
-        audio.pause?.();
-        audio.removeAttribute?.("src");
-        audio.src = "";
-        audio.load?.();
-      } catch {
-        // The network media element is no longer required once fallback begins.
-      }
-    }
+  failEntry(entry, reason, fallbackCode) {
+    if (!this.isCurrent(entry) || this.terminal || entry.ended) return false;
+    const code = failureCode(reason, fallbackCode);
     this.emit({
-      type: "request.degraded",
+      type: "request.failed",
       segment: entry.segment,
       retries: entry.retryCount,
       elapsedMs: now() - entry.startedAt,
-      reason,
+      reason: code,
     });
-
-    const previous = this.entries.get(entry.segment - 1);
-    if (entry.segment === 0 || previous?.ended) this.start(entry);
-    return true;
+    this.fail(entry.generation, code);
+    return false;
   }
 
   fail(generation, reason) {
@@ -448,6 +398,7 @@ export class TtsScheduler {
     for (const entry of this.entries.values()) this.release(entry);
     this.entries.clear();
     this.current = null;
+    this.tentativePaused = false;
     this.setPlaying(false);
     callSafely(this.onTerminal, { generation, failed: true, reason });
   }
@@ -458,14 +409,6 @@ export class TtsScheduler {
     if (entry.retryTimer !== null) {
       this.cancelRetry(entry.retryTimer);
       entry.retryTimer = null;
-    }
-    if (entry.fallbackCancel) {
-      try {
-        entry.fallbackCancel();
-      } catch {
-        // The local speech synthesizer may already have completed.
-      }
-      entry.fallbackCancel = null;
     }
 
     const { audio, handlers } = entry;
@@ -496,15 +439,6 @@ export class TtsScheduler {
 
   emit(event) {
     callSafely(this.onEvent, { ...event, generation: this.activeGeneration });
-  }
-}
-
-function callFallback(fallbackSpeak, text, callbacks) {
-  try {
-    return fallbackSpeak?.(text, callbacks) || null;
-  } catch (error) {
-    callbacks.onError?.(error);
-    return null;
   }
 }
 

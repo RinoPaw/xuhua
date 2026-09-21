@@ -23,7 +23,6 @@ export class VoiceInputController {
     this.processFrame = processFrame;
     this.state = createVoiceInputState();
     this.bargeIn = createBargeInState();
-    this.tentativeOutput = null;
     this.blockedUntil = 0;
   }
 
@@ -53,11 +52,7 @@ export class VoiceInputController {
   }
 
   clearBargeInCandidate() {
-    const shouldResume = this.bargeIn.phase === BARGE_IN_PHASE.TENTATIVE;
-    const output = this.tentativeOutput;
     this.bargeIn = createBargeInState();
-    this.tentativeOutput = null;
-    if (shouldResume) output?.resumeTentative?.();
     return true;
   }
 
@@ -71,7 +66,6 @@ export class VoiceInputController {
     const confirmed = confirmBargeIn(this.bargeIn);
     if (!confirmed.confirmed) return false;
     this.bargeIn = confirmed.state;
-    this.tentativeOutput = null;
     return true;
   }
 
@@ -141,7 +135,6 @@ export class VoiceInputController {
 
       if (index === 0 && result.started) {
         if (result.started.shouldInterrupt) {
-          if (output?.playing && output.pauseTentative?.()) this.tentativeOutput = output;
           this.beginBargeInCandidate(result.started.utteranceId, this.state.utteranceStartedAt);
         } else if (result.nextStatus === "user_speaking") {
           onSpeaking();

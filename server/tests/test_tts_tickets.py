@@ -34,9 +34,10 @@ def test_tts_tickets_are_bounded_per_client_and_expire() -> None:
     )
     assert first == "token-a"
     assert second == "token-b"
-    first_ticket = store.get(first)
+    first_ticket = store.get(first, client_id="client-a")
     assert first_ticket is not None
     assert first_ticket.text == "第一句"
+    assert store.get(first, client_id="client-b") is None
 
     with pytest.raises(TtsTicketCapacity):
         store.issue(
@@ -60,7 +61,7 @@ def test_tts_tickets_are_bounded_per_client_and_expire() -> None:
     assert len(store) == 3
 
     now[0] = 111.0
-    assert store.get(first) is None
+    assert store.get(first, client_id="client-a") is None
     assert len(store) == 0
 
     replacement = store.issue(
@@ -72,3 +73,19 @@ def test_tts_tickets_are_bounded_per_client_and_expire() -> None:
         client_id="client-a",
     )
     assert replacement == "token-d"
+
+
+def test_tts_ticket_is_reusable_only_by_its_issuing_client() -> None:
+    store = TtsTicketStore(token_factory=lambda: "ticket-token")
+    token = store.issue(
+        text="汴绣是什么？",
+        locale="zh-CN",
+        trace_id="trace",
+        segment=0,
+        reason="first_sentence",
+        client_id="  client-a  ",
+    )
+
+    assert store.get(token, client_id="client-a") is not None
+    assert store.get(token, client_id="client-a") is not None
+    assert store.get(token, client_id="client-b") is None

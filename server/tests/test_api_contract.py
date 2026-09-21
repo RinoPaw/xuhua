@@ -455,6 +455,7 @@ def test_voice_context_normalizes_final_and_builds_hotwords(monkeypatch) -> None
             assert final["raw_text"] == "卞绣"
             assert normalized_calls[0]["asr_candidates"] == ("卞绣", "汴绣")
             assert FakeXfyunStream.instances[0].kwargs["hotwords"] == (
+                "叙华",
                 "传统技艺",
                 "苏绣",
                 "木雕技艺",

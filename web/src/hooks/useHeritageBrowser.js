@@ -4,9 +4,11 @@ import HeritageBrowserSession, {
   initialHeritageBrowserState,
 } from "../lib/heritageBrowserSession.js";
 
+const browserFetch = (...args) => globalThis.fetch(...args);
+
 export function useHeritageBrowser({
   apiBase = "",
-  fetchFn = globalThis.fetch,
+  fetchFn = browserFetch,
   promptSeed = 0,
 } = {}) {
   const [snapshot, setSnapshot] = useState(initialHeritageBrowserState);

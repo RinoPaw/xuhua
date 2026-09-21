@@ -15,6 +15,7 @@ function createHarness() {
   const connection = {
     starting: false,
     connected: false,
+    inputActive: false,
     sendJson(payload) {
       if (!this.connected) return false;
       sent.push(payload);
@@ -23,12 +24,27 @@ function createHarness() {
     stop() {
       this.starting = false;
       this.connected = false;
+      this.inputActive = false;
       calls.push(["connection.stop"]);
+    },
+    pauseInput() {
+      if (!this.connected) return false;
+      this.inputActive = false;
+      calls.push(["connection.pauseInput"]);
+      return true;
+    },
+    async resumeInput(onSamples) {
+      if (!this.connected) return false;
+      this.inputActive = true;
+      this.onSamples = onSamples;
+      calls.push(["connection.resumeInput"]);
+      return true;
     },
     async start(path, handlers) {
       calls.push(["connection.start", path]);
       this.starting = true;
       this.connected = true;
+      this.inputActive = true;
       this.handlers = handlers;
       handlers.onOpen?.();
       this.starting = false;
@@ -41,6 +57,7 @@ function createHarness() {
       latestUtteranceId: 0,
       activeUtteranceId: 0,
       nextUtteranceId: 0,
+      lastVoiceAt: 0,
     },
     bargeInPhase: "idle",
     get utteranceActive() { return this.state.utteranceActive; },
@@ -58,6 +75,17 @@ function createHarness() {
       calls.push(["input.confirmBargeIn"]);
       return true;
     },
+    finishActiveUtterance({ connection: activeConnection, onTranscribing, onTransportFailure }) {
+      calls.push(["input.finishActive"]);
+      if (!this.state.utteranceActive) return true;
+      if (!activeConnection.sendJson({ type: "utterance.end" })) {
+        onTransportFailure?.();
+        return false;
+      }
+      this.state.utteranceActive = false;
+      onTranscribing?.();
+      return true;
+    },
     blockFor(ms) { calls.push(["input.block", ms]); },
     unblock() { calls.push(["input.unblock"]); },
     process() { calls.push(["input.process"]); return {}; },
@@ -67,10 +95,12 @@ function createHarness() {
     playing: false,
     traceId: "",
     setWebsocketPath(path) { this.websocketPath = path; },
+    prewarm(text, locale) { calls.push(["output.prewarm", text, locale]); return Promise.resolve("blob:ack"); },
     begin(locale) { this.pipelineActive = true; calls.push(["output.begin", locale]); return 1; },
     append(text, locale) { calls.push(["output.append", text, locale]); return true; },
     finish(text, locale) { calls.push(["output.finish", text, locale]); return true; },
     stop() { this.pipelineActive = false; this.playing = false; calls.push(["output.stop"]); return true; },
+    dispose() { calls.push(["output.dispose"]); },
   };
   const turns = {
     current: "turn-1",
@@ -112,6 +142,7 @@ function createHarness() {
     getCallbacks: () => callbacks,
     onErrorState: (error) => errors.push(error?.message || null),
     onSpectrum: () => {},
+    onMicrophoneEnabledChange: (enabled) => calls.push(["microphone", enabled]),
     connection,
     input,
     turns,
@@ -138,6 +169,7 @@ test("browser voice session owns startup, context sync, and transport state", as
 
   assert.equal(await harness.session.start(), true);
   assert.equal(harness.machine.transport, "connected");
+  assert.equal(harness.session.microphoneEnabled, true);
   assert.deepEqual(harness.sent[0], {
     type: "context",
     category: "传统技艺",
@@ -148,6 +180,10 @@ test("browser voice session owns startup, context sync, and transport state", as
     preferred_locales: ["zh-CN"],
   });
   assert.equal(harness.calls.some((entry) => entry[0] === "connection.start"), true);
+  assert.equal(
+    harness.calls.some((entry) => entry[0] === "output.prewarm" && entry[1] === "我在。" && entry[2] === "zh-CN"),
+    true,
+  );
 });
 
 test("voice startup fails if the initial context frame cannot be sent", async () => {
@@ -158,6 +194,52 @@ test("voice startup fails if the initial context frame cannot be sent", async ()
   assert.equal(harness.connection.connected, false);
   assert.equal(harness.machine.transport, "idle");
   assert.equal(harness.errors.at(-1), "voice_socket_send_failed");
+});
+
+test("microphone pause keeps socket, output, and active agent turn alive", async () => {
+  const harness = createHarness();
+  await harness.session.start();
+  harness.output.pipelineActive = true;
+  harness.output.playing = true;
+  harness.turns.current = "turn-live";
+  const stopCount = harness.calls.filter((entry) => entry[0] === "output.stop").length;
+
+  assert.equal(harness.session.pauseMicrophone(), true);
+  assert.equal(harness.connection.connected, true);
+  assert.equal(harness.connection.inputActive, false);
+  assert.equal(harness.session.microphoneEnabled, false);
+  assert.equal(harness.output.pipelineActive, true);
+  assert.equal(harness.output.playing, true);
+  assert.equal(harness.turns.current, "turn-live");
+  assert.equal(harness.calls.filter((entry) => entry[0] === "output.stop").length, stopCount);
+  assert.equal(harness.calls.some((entry) => entry[0] === "callback.bargeIn"), false);
+});
+
+test("microphone pause finalizes an active utterance before releasing capture", async () => {
+  const harness = createHarness();
+  await harness.session.start();
+  harness.input.state.utteranceActive = true;
+  harness.input.state.lastVoiceAt = 123;
+
+  assert.equal(harness.session.pauseMicrophone(), true);
+  assert.equal(harness.input.state.utteranceActive, false);
+  assert.deepEqual(harness.sent.at(-1), { type: "utterance.end" });
+  assert.equal(harness.calls.some((entry) => entry[0] === "connection.pauseInput"), true);
+  assert.equal(harness.calls.some((entry) => entry[0] === "dispatch" && entry[1] === "input.transcribing"), true);
+});
+
+test("microphone can resume without reopening the voice socket", async () => {
+  const harness = createHarness();
+  await harness.session.start();
+  harness.session.pauseMicrophone();
+  const starts = harness.calls.filter((entry) => entry[0] === "connection.start").length;
+
+  assert.equal(await harness.session.resumeMicrophone(), true);
+  assert.equal(harness.connection.connected, true);
+  assert.equal(harness.connection.inputActive, true);
+  assert.equal(harness.session.microphoneEnabled, true);
+  assert.equal(harness.calls.filter((entry) => entry[0] === "connection.start").length, starts);
+  assert.equal(harness.calls.some((entry) => entry[0] === "connection.resumeInput"), true);
 });
 
 test("browser voice session centralizes barge-in output cancellation", () => {

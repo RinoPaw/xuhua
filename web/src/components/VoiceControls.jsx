@@ -1,4 +1,4 @@
-import { SpinnerGap } from "@phosphor-icons/react";
+import { Microphone, MicrophoneSlash, SpinnerGap, X } from "@phosphor-icons/react";
 
 import { REALTIME_VOICE_STATUS } from "../hooks/voiceState.js";
 
@@ -23,22 +23,54 @@ export function friendlyVoiceError(error, available) {
   return "实时语音连接失败，请重试。";
 }
 
-export function VoiceControl({ available, connected, status, onStart, onStop }) {
+export function VoiceControl({
+  available,
+  connected,
+  microphoneEnabled,
+  status,
+  onStart,
+  onToggleMicrophone,
+  onEnd,
+}) {
   const { label, detail } = VOICE_COPY[status] || VOICE_COPY[REALTIME_VOICE_STATUS.IDLE];
+  const connecting = status === REALTIME_VOICE_STATUS.CONNECTING;
+  const controlLabel = connected
+    ? (microphoneEnabled ? "关闭麦克风，当前回答会继续" : "开启麦克风")
+    : "开启连续实时对话";
+  const controlTitle = connected
+    ? (microphoneEnabled ? `${label} · 点击关闭麦克风` : "麦克风已关闭 · 点击重新开启")
+    : (available ? "开启连续实时对话" : "实时语音暂未就绪");
+
   return (
-    <button
-      type="button"
-      className={`voice-orb ${connected ? "active" : ""}`}
-      onClick={connected ? onStop : onStart}
-      disabled={!available || status === REALTIME_VOICE_STATUS.CONNECTING}
-      aria-label={connected ? `结束实时对话，${detail}` : "开启连续实时对话"}
-      title={connected ? `${label} · 点击结束` : (available ? "开启连续实时对话" : "实时语音暂未就绪")}
-    >
-      {status === REALTIME_VOICE_STATUS.CONNECTING ? <SpinnerGap className="spin" /> : (
-        <span className="voice-bars" aria-hidden="true"><i /><i /><i /><i /><i /></span>
+    <div className={`voice-control-cluster ${connected ? "is-connected" : ""}`}>
+      {connected && (
+        <button
+          type="button"
+          className="voice-end-button"
+          onClick={onEnd}
+          aria-label="结束实时对话"
+          title="结束实时对话"
+        >
+          <X />
+        </button>
       )}
-      <span className="sr-only">{label}</span>
-    </button>
+      <button
+        type="button"
+        className={`voice-orb ${connected && microphoneEnabled ? "active" : ""} ${connected && !microphoneEnabled ? "muted" : ""}`}
+        onClick={connected ? onToggleMicrophone : onStart}
+        disabled={!available || connecting}
+        aria-label={controlLabel}
+        aria-pressed={connected ? Boolean(microphoneEnabled) : undefined}
+        title={controlTitle}
+      >
+        {connecting ? <SpinnerGap className="spin" /> : (
+          connected
+            ? (microphoneEnabled ? <Microphone /> : <MicrophoneSlash />)
+            : <span className="voice-bars" aria-hidden="true"><i /><i /><i /><i /><i /></span>
+        )}
+        <span className="sr-only">{detail}</span>
+      </button>
+    </div>
   );
 }
 

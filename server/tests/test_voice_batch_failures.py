@@ -108,6 +108,28 @@ class CloseFailBatchStream:
         raise RuntimeError("cleanup failed")
 
 
+class NameCallStream:
+    instances: list["NameCallStream"] = []
+
+    def __init__(self, **kwargs: object) -> None:
+        self.hotwords = tuple(kwargs.get("hotwords", ()))
+        self.candidates = ("叙华",)
+        self.detected_language = "zh"
+        self.__class__.instances.append(self)
+
+    async def start(self) -> None:
+        return
+
+    async def send_audio(self, _data: bytes) -> None:
+        return
+
+    async def finish(self) -> str:
+        return "叙华"
+
+    async def close(self) -> None:
+        return
+
+
 def receive_until(websocket, predicate, *, limit: int = 30) -> list[dict[str, object]]:
     messages: list[dict[str, object]] = []
     for _ in range(limit):
@@ -185,3 +207,29 @@ def test_asr_close_failure_does_not_poison_successful_batch(monkeypatch) -> None
     transcript = next(message for message in messages if message.get("type") == "user.transcript")
     assert transcript["text"] == "可用句"
     assert assistant.calls == ["可用句"]
+
+
+def test_assistant_name_is_hotword_and_uses_local_acknowledgement(monkeypatch) -> None:
+    configure_voice(monkeypatch, NameCallStream)
+    NameCallStream.instances.clear()
+
+    assistant = RecordingAssistant(SearchService(make_kb()))
+    app = create_app(assistant=assistant)  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/voice") as websocket:
+            assert websocket.receive_json()["type"] == "ready"
+            websocket.send_json({"type": "utterance.start"})
+            receive_until(websocket, lambda message: message.get("status") == "user_speaking")
+            websocket.send_json({"type": "utterance.end"})
+            messages = receive_until(
+                websocket,
+                lambda message: message.get("type") == "assistant.done",
+            )
+
+    transcript = next(message for message in messages if message.get("type") == "user.transcript")
+    done = next(message for message in messages if message.get("type") == "assistant.done")
+    assert transcript["text"] == "叙华"
+    assert done["text"] == "我在。"
+    assert assistant.calls == []
+    assert NameCallStream.instances[0].hotwords[0] == "叙华"

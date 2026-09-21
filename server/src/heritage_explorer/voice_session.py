@@ -48,6 +48,9 @@ from .voice_protocol import (
 
 MAX_VOICE_CONTEXT_TITLES = 8
 MAX_VOICE_RECENT_ITEMS = 8
+ASSISTANT_NAME = "叙华"
+ASSISTANT_ACKNOWLEDGEMENT = "我在。"
+_ASSISTANT_ADDRESS_TRIM = " \t\r\n，,。！？!?：:、~～"
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
@@ -56,6 +59,32 @@ def contains_spoken_text(value: object) -> bool:
     """Punctuation-only ASR hypotheses are not evidence of human speech."""
 
     return any(character.isalnum() for character in str(value or ""))
+
+
+def is_assistant_address_only(value: object) -> bool:
+    """Return whether one final transcript only calls the assistant by name."""
+
+    return str(value or "").strip(_ASSISTANT_ADDRESS_TRIM) == ASSISTANT_NAME
+
+
+def build_voice_hotwords(
+    category: str,
+    titles: list[str] | tuple[str, ...],
+    recent_titles: list[str] | tuple[str, ...],
+) -> tuple[str, ...]:
+    """Keep the assistant name in every ASR request before contextual terms."""
+
+    hotwords = [ASSISTANT_NAME]
+    seen = {ASSISTANT_NAME}
+    limit = 1 + MAX_VOICE_CONTEXT_TITLES + MAX_VOICE_RECENT_ITEMS
+    for value in (category, *titles, *recent_titles):
+        title = str(value or "").strip()
+        if title and title not in seen:
+            seen.add(title)
+            hotwords.append(title)
+        if len(hotwords) >= limit:
+            break
+    return tuple(hotwords)
 
 
 @dataclass(slots=True)
@@ -186,15 +215,11 @@ class VoiceSessionRuntime:
     def make_asr_stream(self, on_partial: Any) -> Any:
         recent = self.recent_voice_items()
         recent_titles = [str(getattr(item, "title", "") or "") for item in recent]
-        hotwords: list[str] = []
-        seen: set[str] = set()
-        for title in [self.context.category, *self.context.titles, *recent_titles]:
-            title = title.strip()
-            if title and title not in seen:
-                seen.add(title)
-                hotwords.append(title)
-            if len(hotwords) >= MAX_VOICE_CONTEXT_TITLES + MAX_VOICE_RECENT_ITEMS:
-                break
+        hotwords = build_voice_hotwords(
+            self.context.category,
+            self.context.titles,
+            recent_titles,
+        )
         return self.stream_factory(
             app_id=self.app_id,
             api_key=self.api_key,
@@ -205,7 +230,7 @@ class VoiceSessionRuntime:
             domain="slm",
             dynamic_correction=True,
             on_partial=on_partial,
-            hotwords=tuple(hotwords),
+            hotwords=hotwords,
         )
 
     async def send(self, event: VoiceServerEvent) -> None:
@@ -241,6 +266,37 @@ class VoiceSessionRuntime:
     async def stop_answer(self, reason: str) -> None:
         self.log_answer_cancel(reason)
         await self.lifecycle.cancel_answer()
+
+    async def acknowledge_address(self, locale_hint: str = "") -> None:
+        """Answer a pure name call without retrieval, LLM work, or session history."""
+
+        turn_id = uuid.uuid4().hex
+        locale = detect_locale(
+            ASSISTANT_ACKNOWLEDGEMENT,
+            hint=locale_hint or self.context.locale_hint,
+        )
+        session_id = self.context.session_id or ""
+        LOGGER.info(
+            "voice.address.ack connection=%s turn=%s",
+            self.connection_id,
+            turn_id,
+        )
+        await self.send(
+            AssistantDeltaEvent(
+                session_id=session_id,
+                turn_id=turn_id,
+                text=ASSISTANT_ACKNOWLEDGEMENT,
+                locale=locale,
+            )
+        )
+        await self.send(
+            AssistantDoneEvent(
+                session_id=session_id,
+                turn_id=turn_id,
+                text=ASSISTANT_ACKNOWLEDGEMENT,
+                locale=locale,
+            )
+        )
 
     async def answer(self, question: str, turn_id: str, locale_hint: str = "") -> None:
         answer_locale = detect_locale(
@@ -457,6 +513,9 @@ class VoiceSessionRuntime:
             )
             self.batch.partials.clear()
             self.batch.revision = 0
+            if is_assistant_address_only(canonical_text):
+                await self.acknowledge_address(resolved_locale)
+                return
             await self.start_answer(
                 canonical_text,
                 "new_utterance",
@@ -728,10 +787,14 @@ class VoiceSessionRuntime:
 
 
 __all__ = [
+    "ASSISTANT_ACKNOWLEDGEMENT",
+    "ASSISTANT_NAME",
     "MAX_VOICE_CONTEXT_TITLES",
     "MAX_VOICE_RECENT_ITEMS",
     "VoiceBatchState",
     "VoiceContextState",
     "VoiceSessionRuntime",
+    "build_voice_hotwords",
     "contains_spoken_text",
+    "is_assistant_address_only",
 ]

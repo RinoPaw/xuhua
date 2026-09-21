@@ -1,4 +1,5 @@
 import { DEFAULT_LOCALE } from "./locale.js";
+import { TtsClipCache } from "./ttsClipCache.js";
 import { TtsScheduler } from "./ttsScheduler.js";
 import { TtsTextPlan } from "./ttsTextPlan.js";
 import {
@@ -26,6 +27,7 @@ export class VoiceOutputController {
     websocketPath = "/api/voice",
     getRecognitionContext = () => null,
     createScheduler = (options) => new TtsScheduler(options),
+    createClipCache = () => new TtsClipCache(),
     createTraceId = makeTraceId,
     onEvent = () => {},
     onPlayingChange = () => {},
@@ -42,16 +44,9 @@ export class VoiceOutputController {
     this.traceId = "";
     this.locale = DEFAULT_LOCALE;
     this.textPlan = new TtsTextPlan(DEFAULT_LOCALE);
+    this.clipCache = createClipCache();
     this.scheduler = createScheduler({
-      prepareSource: ({ text, segment, reason, locale, signal }) => requestTtsSource({
-        websocketPath: this.websocketPath,
-        text,
-        traceId: this.traceId,
-        segment,
-        reason,
-        locale,
-        signal,
-      }),
+      prepareSource: (options) => this.prepareSource(options),
       onEvent: (event) => this.onEvent(event),
       onPlayingChange: (playing) => {
         this.playing = playing;
@@ -66,6 +61,34 @@ export class VoiceOutputController {
 
   setWebsocketPath(path) {
     this.websocketPath = String(path || "/api/voice");
+  }
+
+  async prepareSource({ text, segment, reason, locale, signal }) {
+    const cached = await this.clipCache.sourceFor(text, locale);
+    if (cached) return cached;
+    return requestTtsSource({
+      websocketPath: this.websocketPath,
+      text,
+      traceId: this.traceId,
+      segment,
+      reason,
+      locale,
+      signal,
+    });
+  }
+
+  prewarm(text, locale = "") {
+    const content = normalizeSpeechText(text);
+    if (!content) return Promise.resolve("");
+    const resolvedLocale = resolveSpeechLocale(
+      locale,
+      compactRecognitionContext(this.getRecognitionContext()).locale_hint,
+    );
+    return this.clipCache.prewarm({
+      websocketPath: this.websocketPath,
+      text: content,
+      locale: resolvedLocale,
+    });
   }
 
   clearTurnState() {
@@ -93,6 +116,11 @@ export class VoiceOutputController {
     this.scheduler.stop();
     this.clearTurnState();
     return true;
+  }
+
+  dispose() {
+    this.stop();
+    this.clipCache.dispose();
   }
 
   enqueue(segment, reason) {

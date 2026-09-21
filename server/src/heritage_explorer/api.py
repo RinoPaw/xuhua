@@ -198,11 +198,12 @@ def create_app(
         ordinary HTTP error that the browser can retry safely.
         """
 
-        ticket = tts_tickets.get(token)
+        client_id = client_key_from_scope(request.scope)
+        ticket = tts_tickets.get(token, client_id=client_id)
         if ticket is None:
             raise HTTPException(status_code=404, detail="tts_ticket_not_found")
         try:
-            lease = await admission.acquire("tts", client_key_from_scope(request.scope))
+            lease = await admission.acquire("tts", client_id)
         except AdmissionDenied as exc:
             status = 503 if exc.reason == "capacity" else 429
             raise HTTPException(

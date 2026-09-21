@@ -16,7 +16,6 @@ const NORMAL_VAD_POLICY = getVADOnsetPolicy(false);
 const SILENCE_MS = 420;
 const MAX_UTTERANCE_MS = 20000;
 const SPECTRUM_INTERVAL_MS = 50;
-const PLAYBACK_PRE_ROLL_MS = 80;
 
 export function createVoiceInputState() {
   return {
@@ -123,17 +122,17 @@ export function processVoiceInputFrame(state, {
     return { actions, spectrum, started, nextStatus };
   }
 
-  const playbackOnset = !state.utteranceActive && playbackActive;
   const pcm = encodePcm(samples, inputRate, ensureResampler(state, inputRate));
   state.preRoll = appendPreRoll(
     state.preRoll,
     pcm,
     (samples.length / inputRate) * 1000,
-    playbackOnset ? PLAYBACK_PRE_ROLL_MS : PRE_ROLL_MS,
+    PRE_ROLL_MS,
   );
 
   const level = rms(samples);
   const shouldInterrupt = !state.utteranceActive && agentBusy;
+  const playbackOnset = !state.utteranceActive && playbackActive;
   const onsetPolicy = getVADOnsetPolicy(playbackOnset);
   const threshold = onsetPolicy.threshold;
   state.gate = advanceVADGate(state.gate, {
@@ -204,5 +203,4 @@ export const VOICE_INPUT_LIMITS = Object.freeze({
   silenceMs: SILENCE_MS,
   maxUtteranceMs: MAX_UTTERANCE_MS,
   spectrumIntervalMs: SPECTRUM_INTERVAL_MS,
-  playbackPreRollMs: PLAYBACK_PRE_ROLL_MS,
 });

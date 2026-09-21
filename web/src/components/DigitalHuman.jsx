@@ -27,7 +27,7 @@ function stopVideo(video) {
   video.onerror = null;
 }
 
-export function DigitalHuman({ mode = "idle" }) {
+export function DigitalHuman({ mode = "idle", showBrand = true }) {
   const normalizedMode = mode === "speaking" ? "speaking" : "idle";
   const videosRef = useRef([]);
   const activeSlotRef = useRef(0);
@@ -115,15 +115,17 @@ export function DigitalHuman({ mode = "idle" }) {
         />
       ))}
       <div className="human-vignette" />
-      <div className="human-caption">
-        <div className="human-brand">
-          <img src="/assets/brand/xuhua-seal.png" alt="" />
-          <div>
-            <strong>叙华</strong>
-            <small>非遗资料助手</small>
+      {showBrand && (
+        <div className="human-caption">
+          <div className="human-brand">
+            <img src="/assets/brand/xuhua-seal.png" alt="" />
+            <div>
+              <strong>叙华</strong>
+              <small>非遗资料助手</small>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

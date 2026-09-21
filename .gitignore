@@ -26,3 +26,4 @@ Thumbs.db
 .superdesign/tmp/
 web/node_modules/
 web/dist/
+web/public/wake/

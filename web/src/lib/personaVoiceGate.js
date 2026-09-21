@@ -18,14 +18,20 @@ export class PersonaVoiceGate {
     sleepDelayMs = PERSONA_RESPONSE_GRACE_MS,
     setTimeoutFn = globalThis.setTimeout,
     clearTimeoutFn = globalThis.clearTimeout,
+    onSleep = null,
     log = console,
   } = {}) {
     this.sleepDelayMs = sleepDelayMs;
     this.setTimeoutFn = setTimeoutFn;
     this.clearTimeoutFn = clearTimeoutFn;
+    this.onSleep = onSleep;
     this.log = log;
     this.sleeping = true;
     this.sleepTimer = null;
+  }
+
+  setOnSleep(callback) {
+    this.onSleep = typeof callback === "function" ? callback : null;
   }
 
   logState(message) {
@@ -77,6 +83,12 @@ export class PersonaVoiceGate {
       this.sleepTimer = null;
       this.sleeping = true;
       this.logState("sleeping");
+      try {
+        const pending = this.onSleep?.();
+        pending?.catch?.((error) => this.log?.error?.("[叙华][persona] sleep transition failed", error));
+      } catch (error) {
+        this.log?.error?.("[叙华][persona] sleep transition failed", error);
+      }
     }, this.sleepDelayMs);
     return true;
   }
@@ -87,5 +99,6 @@ export class PersonaVoiceGate {
 
   dispose() {
     this.reset();
+    this.onSleep = null;
   }
 }

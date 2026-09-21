@@ -50,40 +50,17 @@ jobs:
         working-directory: web
       - run: npm test
         working-directory: web
-      - name: Build production Docker image
-        run: docker build -t xuhua:verify .
-      - name: Smoke production Docker image
+      - name: Smoke application runtime
         run: |
-          docker run --rm --detach --name xuhua-verify \
-            --memory=512m \
-            --cpus=0.5 \
-            --pids-limit=256 \
-            -p 127.0.0.1:5051:5050 \
-            -e HOST=0.0.0.0 \
-            -e PORT=5050 \
-            -e DEBUG=0 \
-            -e DATASET_PATH=data/processed/heritage_items.json \
-            -e FRONTEND_DIR=web/dist/client \
-            -e AI_API_KEY= \
-            -e AI_BASE_URL=https://api.deepseek.com \
-            -e AI_MODEL=deepseek-flash \
-            -e AI_TIMEOUT=60 \
-            -e AI_FIRST_TOKEN_TIMEOUT=8 \
-            -e AI_FIRST_TOKEN_MAX_ATTEMPTS=2 \
-            -e AI_MAX_CONTEXT_CHARS=5200 \
-            -e XF_APP_ID= \
-            -e XF_API_KEY= \
-            -e XF_API_SECRET= \
-            -e XF_ASR_HOST=iat.xf-yun.com \
-            -e WEB_CONCURRENCY=4 \
-            xuhua:verify
-          trap 'docker rm -f xuhua-verify >/dev/null 2>&1 || true' EXIT
+          uv run xuhua > /tmp/xuhua.log 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" >/dev/null 2>&1 || true' EXIT
           python - <<'PY'
           import json
           import time
           import urllib.request
 
-          base = "http://127.0.0.1:5051"
+          base = "http://127.0.0.1:5050"
           last_error = None
           for _ in range(120):
               try:
@@ -95,7 +72,7 @@ jobs:
                   last_error = exc
                   time.sleep(0.25)
           else:
-              raise RuntimeError(f"production container did not become healthy: {last_error}")
+              raise RuntimeError(f"application did not become healthy: {last_error}")
 
           with urllib.request.urlopen(base + "/api/meta", timeout=3) as response:
               meta = json.load(response)

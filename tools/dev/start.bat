@@ -81,6 +81,13 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+call "%NPM_EXE%" run prepare:assets
+if errorlevel 1 (
+    popd
+    echo [ERROR] Wake asset preparation failed.
+    pause
+    exit /b 1
+)
 call "%NPM_EXE%" run build
 if errorlevel 1 (
     popd

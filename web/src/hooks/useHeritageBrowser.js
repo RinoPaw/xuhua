@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { browserFetch } from "../lib/browserFetch.js";
 import HeritageBrowserSession, {
   initialHeritageBrowserState,
 } from "../lib/heritageBrowserSession.js";
-
-const browserFetch = (...args) => globalThis.fetch(...args);
 
 export function useHeritageBrowser({
   apiBase = "",

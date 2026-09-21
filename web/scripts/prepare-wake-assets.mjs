@@ -44,6 +44,36 @@ async function download(url, destination) {
   writeFileSync(destination, bytes);
 }
 
+function tarExecutable() {
+  if (process.platform !== "win32") return "tar";
+  const systemRoot = process.env.SystemRoot || process.env.WINDIR;
+  if (systemRoot) {
+    const systemTar = path.join(systemRoot, "System32", "tar.exe");
+    if (existsSync(systemTar)) return systemTar;
+  }
+  return "tar.exe";
+}
+
+function extractTarBz2(archive, destination) {
+  const executable = tarExecutable();
+  const result = spawnSync(executable, ["-xjf", archive, "-C", destination], {
+    encoding: "utf8",
+    stdio: "pipe",
+    windowsHide: true,
+  });
+  if (result.error) {
+    throw new Error(
+      `Failed to start tar (${executable}): ${result.error.code || result.error.message}`,
+    );
+  }
+  if (result.status !== 0) {
+    const detail = String(result.stderr || result.stdout || "").trim();
+    throw new Error(
+      `Failed to extract KWS model with tar (${executable}, exit ${result.status})${detail ? `: ${detail}` : ""}`,
+    );
+  }
+}
+
 async function prepareRuntime() {
   mkdirSync(runtimeDir, { recursive: true });
   for (const name of runtimeFiles) {
@@ -64,14 +94,7 @@ async function prepareModel() {
     const archive = path.join(temp, "model.tar.bz2");
     console.log("Downloading sherpa-onnx Chinese KWS model...");
     await download(MODEL_ARCHIVE_URL, archive);
-
-    const result = spawnSync("tar", ["-xjf", archive, "-C", temp], {
-      encoding: "utf8",
-      stdio: "pipe",
-    });
-    if (result.status !== 0) {
-      throw new Error(`Failed to extract KWS model with tar: ${result.stderr || result.stdout}`);
-    }
+    extractTarBz2(archive, temp);
 
     const sourceDir = path.join(temp, MODEL_FOLDER);
     for (const [sourceName, targetName] of Object.entries(modelFiles)) {

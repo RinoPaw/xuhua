@@ -39,6 +39,7 @@ def test_text_is_authoritative_for_language_and_dialect_detection() -> None:
     assert detect_locale("恁看看这个手艺中不中？") == "zh-CN-henan"
     assert detect_locale("河南话呢") == "zh-CN-henan"
     assert detect_locale("Tell me about this heritage project", hint="zh-CN") == "en-US"
+    assert detect_locale("Hi there.", hint="zh-CN") == "en-US"
     assert detect_locale("곤곡이라는 전통 예술을 소개해 주세요") == "ko-KR"
     assert detect_locale("昆曲", hint="ja-JP") == "ja-JP"
 

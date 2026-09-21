@@ -28,6 +28,7 @@ export function useVoiceConversation({
   } = useVoiceMachineState();
   const [error, setError] = useState(null);
   const [spectrum, setSpectrum] = useState(() => Array(24).fill(0));
+  const [microphoneEnabled, setMicrophoneEnabled] = useState(false);
 
   const connected = voiceMachine.transport === VOICE_TRANSPORT_PHASE.CONNECTED;
   const isPlaying = voiceMachine.output === VOICE_OUTPUT_PHASE.SPEAKING;
@@ -59,6 +60,7 @@ export function useVoiceConversation({
     dispatchMany,
     setError,
     setSpectrum,
+    setMicrophoneEnabled,
   };
 
   const sessionRef = useRef(null);
@@ -72,12 +74,16 @@ export function useVoiceConversation({
       getCallbacks: () => callbacksRef.current,
       onErrorState: (value) => bindingsRef.current.setError(value),
       onSpectrum: (value) => bindingsRef.current.setSpectrum(value),
+      onMicrophoneEnabledChange: (value) => bindingsRef.current.setMicrophoneEnabled(value),
     });
   }
   sessionRef.current.setWebsocketPath(websocketPath);
 
   const start = useCallback(() => sessionRef.current.start(), []);
   const stop = useCallback(() => sessionRef.current.stop(), []);
+  const toggleMicrophone = useCallback(() => sessionRef.current.toggleMicrophone(), []);
+  const pauseMicrophone = useCallback(() => sessionRef.current.pauseMicrophone(), []);
+  const resumeMicrophone = useCallback(() => sessionRef.current.resumeMicrophone(), []);
   const sendText = useCallback((value) => sessionRef.current.sendText(value), []);
   const stopSpeaking = useCallback(() => sessionRef.current.stopSpeech(false), []);
   const appendSpeechDelta = useCallback(
@@ -101,11 +107,15 @@ export function useVoiceConversation({
     status,
     error,
     isConnected: connected,
+    isMicrophoneEnabled: microphoneEnabled,
     isPlaying,
     isSpeechPending,
     spectrum,
     start,
     stop,
+    toggleMicrophone,
+    pauseMicrophone,
+    resumeMicrophone,
     sendText,
     stopSpeaking,
     appendSpeechDelta,

@@ -23,7 +23,7 @@ export class PersonaVoiceGate {
 
   clearCountdown() {
     if (this.sleepTimer === null) return false;
-    this.clearTimeoutFn(this.sleepTimer);
+    this.clearTimeoutFn.call(globalThis, this.sleepTimer);
     this.sleepTimer = null;
     return true;
   }
@@ -57,7 +57,7 @@ export class PersonaVoiceGate {
   responseSettled() {
     if (this.sleeping) return false;
     this.clearCountdown();
-    this.sleepTimer = this.setTimeoutFn(() => {
+    this.sleepTimer = this.setTimeoutFn.call(globalThis, () => {
       this.sleepTimer = null;
       this.sleeping = true;
     }, this.sleepDelayMs);

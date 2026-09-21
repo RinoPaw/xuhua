@@ -149,6 +149,7 @@ function App() {
 
   const available = Boolean(meta?.capabilities?.realtime_voice);
   const connected = Boolean(realtime.isConnected);
+  const microphoneEnabled = Boolean(realtime.isMicrophoneEnabled);
   const voiceStatus = effectiveVoiceStatus(
     connected,
     realtime.status,
@@ -177,6 +178,11 @@ function App() {
     if (interruptedTextTurn) dispatch({ type: "cancel" });
     dispatch({ type: "clear.error" });
     await realtime.start();
+  };
+
+  const toggleVoiceMicrophone = () => {
+    void realtime.toggleMicrophone();
+    dispatch({ type: "clear.error" });
   };
 
   const stopVoice = () => {
@@ -316,7 +322,7 @@ function App() {
             <div className="composer-row">
               <form onSubmit={submit} className="composer-form">
                 {connected ? (
-                  <VoiceSpectrum values={realtime.spectrum} />
+                  <VoiceSpectrum values={microphoneEnabled ? realtime.spectrum : Array(24).fill(0)} />
                 ) : (
                   <textarea
                     name="question"
@@ -342,9 +348,11 @@ function App() {
               <VoiceControl
                 available={available}
                 connected={connected}
+                microphoneEnabled={microphoneEnabled}
                 status={voiceStatus}
                 onStart={startVoice}
-                onStop={stopVoice}
+                onToggleMicrophone={toggleVoiceMicrophone}
+                onEnd={stopVoice}
               />
             </div>
           </div>

@@ -11,7 +11,6 @@ from typing import Any
 
 import edge_tts
 from fastapi import FastAPI, HTTPException, Path as ApiPath, Query, Request, Response
-from fastapi.responses import StreamingResponse
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from pydantic import BaseModel, Field
 
@@ -188,7 +187,17 @@ def create_app(
     async def synthesize_speech(
         request: Request,
         token: str = ApiPath(..., min_length=16, max_length=128),
-    ) -> StreamingResponse:
+    ) -> Response:
+        """Synthesize one complete audio clip before committing HTTP headers.
+
+        Edge TTS can fail before or during its async stream. Returning a
+        StreamingResponse committed a misleading 200 response before those
+        failures were known, which surfaced in Chromium as
+        ERR_INCOMPLETE_CHUNKED_ENCODING. Buffering each already-short speech
+        segment keeps one canonical TTS path while making provider failure an
+        ordinary HTTP error that the browser can retry safely.
+        """
+
         ticket = tts_tickets.get(token)
         if ticket is None:
             raise HTTPException(status_code=404, detail="tts_ticket_not_found")
@@ -215,40 +224,64 @@ def create_app(
             language_profile.code,
         )
 
-        async def audio_stream() -> AsyncIterator[bytes]:
-            try:
-                communicate = edge_tts.Communicate(
-                    ticket.text,
-                    voice=language_profile.tts_voice,
-                    rate="-2%",
-                    pitch="+0Hz",
-                )
-                first_chunk = True
-                async for chunk in communicate.stream():
-                    if chunk.get("type") == "audio" and chunk.get("data"):
-                        if first_chunk:
-                            first_chunk = False
-                            LOGGER.info(
-                                "[trace=%s segment=%s] tts.first_audio_chunk +%.3fs",
-                                ticket.trace_id or "-",
-                                ticket.segment,
-                                time.perf_counter() - started,
-                            )
-                        yield chunk["data"]
-                LOGGER.info(
-                    "[trace=%s segment=%s] tts.stream.complete +%.3fs",
-                    ticket.trace_id or "-",
-                    ticket.segment,
-                    time.perf_counter() - started,
-                )
-            finally:
-                await lease.release()
+        audio = bytearray()
+        first_chunk_logged = False
+        try:
+            communicate = edge_tts.Communicate(
+                ticket.text,
+                voice=language_profile.tts_voice,
+                rate="-2%",
+                pitch="+0Hz",
+            )
+            async for chunk in communicate.stream():
+                if chunk.get("type") != "audio" or not chunk.get("data"):
+                    continue
+                if not first_chunk_logged:
+                    first_chunk_logged = True
+                    LOGGER.info(
+                        "[trace=%s segment=%s] tts.first_audio_chunk +%.3fs",
+                        ticket.trace_id or "-",
+                        ticket.segment,
+                        time.perf_counter() - started,
+                    )
+                audio.extend(chunk["data"])
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            LOGGER.warning(
+                "[trace=%s segment=%s] tts.provider.failed locale=%s reason=%s",
+                ticket.trace_id or "-",
+                ticket.segment,
+                language_profile.code,
+                type(exc).__name__,
+            )
+            raise HTTPException(status_code=502, detail="tts_provider_unavailable") from None
+        finally:
+            await lease.release()
 
-        return StreamingResponse(
-            audio_stream(),
+        if not audio:
+            LOGGER.warning(
+                "[trace=%s segment=%s] tts.provider.empty locale=%s",
+                ticket.trace_id or "-",
+                ticket.segment,
+                language_profile.code,
+            )
+            raise HTTPException(status_code=502, detail="tts_provider_no_audio")
+
+        payload = bytes(audio)
+        LOGGER.info(
+            "[trace=%s segment=%s] tts.complete +%.3fs bytes=%s",
+            ticket.trace_id or "-",
+            ticket.segment,
+            time.perf_counter() - started,
+            len(payload),
+        )
+        return Response(
+            content=payload,
             media_type="audio/mpeg",
             headers={
                 "Cache-Control": "no-store",
+                "Content-Length": str(len(payload)),
                 "X-Speech-Locale": language_profile.code,
             },
         )

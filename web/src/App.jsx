@@ -322,7 +322,13 @@ function App() {
             <div className="composer-row">
               <form onSubmit={submit} className="composer-form">
                 {connected ? (
-                  <VoiceSpectrum values={microphoneEnabled ? realtime.spectrum : Array(24).fill(0)} />
+                  microphoneEnabled ? (
+                    <VoiceSpectrum values={realtime.spectrum} />
+                  ) : (
+                    <div className="voice-muted-copy" role="status">
+                      麦克风已关闭 · 当前回答仍会继续
+                    </div>
+                  )
                 ) : (
                   <textarea
                     name="question"

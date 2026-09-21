@@ -10,19 +10,40 @@
 - 实时语音：浏览器端 VAD 采集 PCM，经讯飞流式 ASR 转写后进入同一回答链路。
 - 中英与中文方言：当前只使用讯飞“中英识别大模型”一条 ASR 链路，配置为 `zh_cn` / `mandarin` / `slm`；该服务同时覆盖普通话、英语和中文方言。
 - Edge TTS：浏览器先向 `/api/tts` 提交朗读文本换取短期 ticket，再通过 `/api/tts/{token}` 流式播放；前端支持中断、重试与浏览器语音降级。
-- 数字人界面：React / Vite 前端，由 FastAPI 同源提供构建产物。
+- 数字人界面：React / Vite Web 客户端，由 FastAPI 同源提供构建产物。
+
+## 仓库结构
+
+```text
+xuhua/
+├─ server/
+│  ├─ src/heritage_explorer/   # FastAPI、智能体、检索、语音与 provider
+│  └─ tests/                   # Python 测试
+├─ web/                        # React / Vite Web 客户端
+├─ data/                       # 原始与处理后的非遗数据
+├─ tools/                      # 数据构建、本地开发辅助工具
+│  └─ dev/start.bat            # Windows 本地启动入口
+├─ deploy/                     # Docker/Nginx/服务器与实验室部署
+├─ docs/                       # 设计与项目文档
+├─ Dockerfile
+├─ compose.yaml
+├─ pyproject.toml
+└─ README.md
+```
+
+未来如果增加玩偶端，会新增独立的 `device/` 客户端；服务端与 Web 端不再混在同一个源码目录里。
 
 ## 架构
 
 ```text
-React / Vite
+Web / React / Vite
   ├─ 项目检索与筛选
   ├─ POST /api/chat
   ├─ WebSocket /api/voice
   ├─ POST /api/tts
   └─ GET /api/tts/{token}
 
-FastAPI
+Server / FastAPI
   ├─ AdmissionMiddleware（昂贵服务容量 / 速率预算）
   ├─ AssistantService
   ├─ SearchService（词法 + 拼音检索）
@@ -39,30 +60,30 @@ FastAPI
 
 ## Windows 快速开始
 
-要求：Node.js 22+、Python 3.12，以及 `uv`。统一放在 `Packages` 目录时，`start.bat` 会优先复用 `Packages/runtime/uv/uv.exe` 和 `Packages/.venv`。
+要求：Node.js 22+、Python 3.12，以及 `uv`。统一放在 `Packages` 目录时，`tools/dev/start.bat` 会优先复用 `Packages/runtime/uv/uv.exe` 和 `Packages/.venv`。
 
 ```powershell
 cd D:\Projects\Packages\叙华
 Copy-Item .env.example .env
 # 编辑 .env，填入自己的密钥
-.\start.bat
+.\tools\dev\start.bat
 ```
 
-`start.bat` 会：
+`tools/dev/start.bat` 会：
 
 1. 检查 `.env`、`uv`、Node/npm 与端口。
-2. `npm ci` 并构建前端。
-3. 检查并补齐共享 Python 环境依赖。
+2. 在 `web/` 中执行 `npm ci` 并构建 Web 客户端。
+3. 根据根目录 `pyproject.toml` / `uv.lock` 同步 Python 项目与依赖。
 4. 用 `.env` 实际导入配置，确认配置完整且类型有效。
-5. 启动后端，并在健康检查通过后打开浏览器。
+5. 通过项目入口 `xuhua` 启动后端，并在健康检查通过后打开浏览器。
 
-`start.bat --check` 只完成环境、构建与配置检查，不启动服务。
+`tools/dev/start.bat --check` 只完成环境、构建与配置检查，不启动服务。
 
 ### 实验室电脑一键安装
 
-可以直接运行仓库根目录的 `bootstrap-xuhua.cmd`。它会下载并执行 `deploy/install-lab.ps1`，完成 Git、Node、uv、源码、Python 依赖和前端构建准备。当前安装器不会下载任何本地模型。
+可以运行 `deploy/bootstrap-xuhua.cmd`。它会下载并执行 `deploy/install-lab.ps1`，完成 Git、Node、uv、源码、Python 依赖和 Web 构建准备。当前安装器不会下载任何本地模型。
 
-如果把 `xuhua.env` 放在 `bootstrap-xuhua.cmd` 同目录，安装器会复制它为项目 `.env`；否则首次安装会从 `.env.example` 创建 `.env`。
+如果把 `xuhua.env` 放在 `deploy/bootstrap-xuhua.cmd` 同目录，安装器会复制它为项目 `.env`；否则首次安装会从 `.env.example` 创建 `.env`。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install-lab.ps1 -SkipLaunch
@@ -80,7 +101,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\deploy\install-lab.ps1 -Sk
 | `PORT` | `5050` | 服务端口 |
 | `DEBUG` | `0` | 是否开启 Uvicorn reload |
 | `DATASET_PATH` | `data/processed/heritage_items.json` | 主数据集 |
-| `FRONTEND_DIR` | `frontend/dist/client` | 前端构建目录 |
+| `FRONTEND_DIR` | `web/dist/client` | Web 构建目录 |
 | `AI_API_KEY` | 空 | OpenAI-compatible LLM 密钥；空值时使用本地降级回答 |
 | `AI_BASE_URL` | `https://api.deepseek.com` | LLM API 地址 |
 | `AI_MODEL` | `deepseek-flash` | DeepSeek 当前 Flash API 模型名；应用显式使用非思考模式 |
@@ -117,10 +138,10 @@ uv sync --group dev
 uv run --env-file .env uvicorn heritage_explorer.api:app --reload --host 127.0.0.1 --port 5050
 ```
 
-前端开发服务器：
+Web 开发服务器：
 
 ```powershell
-cd frontend
+cd web
 npm install
 npm run dev
 ```
@@ -159,7 +180,7 @@ Vite 会代理 `/api` 与 `/healthz` 到本地 FastAPI。
 源数据位于 `data/source/heritage_source.json`，运行数据可重新生成：
 
 ```powershell
-uv run python scripts/build_dataset.py `
+uv run python tools/build_dataset.py `
   --input data/source/heritage_source.json `
   --output data/processed/heritage_items.json
 ```
@@ -169,10 +190,10 @@ uv run python scripts/build_dataset.py `
 ```powershell
 uv lock --check
 uv run pytest -q
-uv run ruff check src scripts tests app.py
-uv run python -m compileall -q src scripts app.py
+uv run ruff check server/src tools server/tests
+uv run python -m compileall -q server/src tools
 
-cd frontend
+cd web
 npm ci
 npm run lint
 npm test

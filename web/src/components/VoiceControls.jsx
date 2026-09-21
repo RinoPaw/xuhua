@@ -1,6 +1,7 @@
 import { Microphone, MicrophoneSlash, SpinnerGap, X } from "@phosphor-icons/react";
 
 import { REALTIME_VOICE_STATUS } from "../hooks/voiceState.js";
+import "./VoiceControls.css";
 
 export const VOICE_COPY = {
   [REALTIME_VOICE_STATUS.IDLE]: { label: "实时对话", detail: "等待开启", owner: "system" },

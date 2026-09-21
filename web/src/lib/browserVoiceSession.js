@@ -19,6 +19,12 @@ const ACKNOWLEDGEMENT_TEXT = "我在。";
 
 function noop() {}
 
+function logFinalVoiceText(log, speaker, text) {
+  const content = String(text || "").trim();
+  if (!content) return;
+  log.info?.(`[叙华][voice] ${speaker}: ${content}`);
+}
+
 /**
  * Browser-side realtime voice session coordinator.
  *
@@ -277,7 +283,12 @@ export class BrowserVoiceSession {
       },
       callbacks: this.getCallbacks(),
     });
-    if (accepted && message?.type === "user.transcript") this.latency.markTranscript();
+    if (accepted && message?.type === "user.transcript") {
+      this.latency.markTranscript();
+      logFinalVoiceText(this.log, "用户", message.text);
+    } else if (accepted && message?.type === "assistant.done") {
+      logFinalVoiceText(this.log, "叙华", message.text);
+    }
     return accepted;
   }
 

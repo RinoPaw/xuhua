@@ -1,8 +1,9 @@
-"""Short-lived references for browser TTS requests.
+"""Short-lived, client-bound references for browser TTS requests.
 
 The browser cannot attach a POST body to an ``<audio>`` source. A ticket keeps
 spoken text out of URLs and reverse-proxy access logs while preserving native
-streaming playback from a normal GET request.
+playback from a normal GET request. Tickets are reusable for bounded browser
+retries, but only by the client identity that issued them.
 """
 
 from __future__ import annotations
@@ -51,6 +52,10 @@ class TtsTicketStore:
         self.token_factory = token_factory
         self._tickets: dict[str, TtsTicket] = {}
 
+    @staticmethod
+    def _client_key(client_id: object) -> str:
+        return str(client_id or "unknown").strip()[:256] or "unknown"
+
     def _prune(self, now: float) -> None:
         for token, ticket in tuple(self._tickets.items()):
             if ticket.expires_at <= now:
@@ -68,7 +73,7 @@ class TtsTicketStore:
     ) -> str:
         now = self.clock()
         self._prune(now)
-        client_key = str(client_id or "unknown").strip()[:256] or "unknown"
+        client_key = self._client_key(client_id)
         client_count = sum(ticket.client_id == client_key for ticket in self._tickets.values())
         if client_count >= self.max_per_client or len(self._tickets) >= self.max_entries:
             raise TtsTicketCapacity("TTS ticket capacity reached")
@@ -87,10 +92,15 @@ class TtsTicketStore:
         )
         return token
 
-    def get(self, token: str) -> TtsTicket | None:
+    def get(self, token: str, *, client_id: str) -> TtsTicket | None:
+        """Resolve a live ticket only for the client that originally issued it."""
+
         now = self.clock()
         self._prune(now)
-        return self._tickets.get(str(token or ""))
+        ticket = self._tickets.get(str(token or ""))
+        if ticket is None or ticket.client_id != self._client_key(client_id):
+            return None
+        return ticket
 
     def __len__(self) -> int:
         self._prune(self.clock())

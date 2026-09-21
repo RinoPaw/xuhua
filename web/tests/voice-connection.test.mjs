@@ -142,6 +142,39 @@ test("stale connection start cannot replace a newer session", async () => {
   assert.equal(secondSocket.readyState, 1);
 });
 
+test("microphone can pause and resume without reopening the current socket", async () => {
+  const media = makeMedia();
+  const socket = makeSocket();
+  const samples = [];
+  const connection = new VoiceConnectionController({
+    media,
+    openSocket: async () => socket,
+    parseMessage: (event) => event,
+    openState: 1,
+    closingState: 2,
+  });
+
+  assert.equal(await connection.start("/api/voice", {
+    onSamples: (value, rate) => samples.push([value, rate]),
+  }), true);
+  const firstStream = media.stream;
+
+  assert.equal(connection.pauseInput(), true);
+  assert.equal(connection.connected, true);
+  assert.equal(connection.socket, socket);
+  assert.equal(connection.inputActive, false);
+  assert.equal(socket.closeCalls.length, 0);
+
+  assert.equal(await connection.resumeInput(), true);
+  assert.equal(connection.connected, true);
+  assert.equal(connection.socket, socket);
+  assert.equal(connection.inputActive, true);
+  assert.notEqual(media.stream, firstStream);
+  media.onSamples("pcm-2", 48000);
+  assert.deepEqual(samples, [["pcm-2", 48000]]);
+  assert.equal(socket.closeCalls.length, 0);
+});
+
 test("unexpected current socket close invalidates connection and stops media", async () => {
   const media = makeMedia();
   const socket = makeSocket();

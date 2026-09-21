@@ -1,10 +1,10 @@
+import { browserFetch } from "./browserFetch.js";
+
 const TERMINAL_TURN_EVENTS = new Set([
   "turn.completed",
   "turn.failed",
   "turn.cancelled",
 ]);
-
-const browserFetch = (...args) => globalThis.fetch(...args);
 
 export function isTerminalTurnEvent(type) {
   return TERMINAL_TURN_EVENTS.has(String(type || ""));

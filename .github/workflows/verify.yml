@@ -36,12 +36,18 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - uses: actions/cache@v4
+        with:
+          path: web/public/wake
+          key: wake-assets-${{ runner.os }}-${{ hashFiles('web/scripts/prepare-wake-assets.mjs') }}
       - run: uv lock --check
       - run: uv sync --frozen --group dev
       - run: uv run pytest -q
       - run: uv run ruff check server/src tools server/tests
       - run: uv run python -m compileall -q server/src tools
       - run: npm ci --no-audit --no-fund
+        working-directory: web
+      - run: npm run prepare:assets
         working-directory: web
       - run: npm run lint
         working-directory: web

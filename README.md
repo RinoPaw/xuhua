@@ -71,7 +71,7 @@ Copy-Item .env.example .env
 `tools/dev/start.bat` 会：
 
 1. 检查 `.env`、`uv`、Node/npm 与端口。
-2. 在 `web/` 中执行 `npm ci` 并构建 Web 客户端。
+2. 在 `web/` 中执行 `npm ci`，准备并校验固定版本的本地唤醒资源，再构建 Web 客户端。
 3. 根据根目录 `pyproject.toml` / `uv.lock` 同步 Python 项目与依赖。
 4. 用 `.env` 实际导入配置，确认配置完整且类型有效。
 5. 通过项目入口 `xuhua` 启动后端，并在健康检查通过后打开浏览器。
@@ -125,15 +125,16 @@ uv sync --group dev
 uv run --env-file .env uvicorn heritage_explorer.api:app --reload --host 127.0.0.1 --port 5050
 ```
 
-Web 开发服务器：
+Web 开发服务器首次运行或唤醒资源版本变化后，先显式准备资源：
 
 ```powershell
 cd web
 npm install
+npm run prepare:assets
 npm run dev
 ```
 
-Vite 会代理 `/api` 与 `/healthz` 到本地 FastAPI。
+`web/public/wake/` 不提交到 Git。`npm run prepare:assets` 只下载清单中固定来源的资源，并在写入前校验内容摘要；`npm run build` 只校验这些资源已经准备好，不再在构建阶段访问网络或调用系统 `tar`。Vite 会代理 `/api` 与 `/healthz` 到本地 FastAPI。
 
 ## API
 
@@ -182,12 +183,13 @@ uv run python -m compileall -q server/src tools
 
 cd web
 npm ci
+npm run prepare:assets
 npm run lint
 npm test
 npm run build
 ```
 
-GitHub `verify` 还会直接启动 `xuhua` 进程，对 `/healthz`、`/api/meta` 与首页做冒烟检查。
+GitHub `verify` 会缓存已经校验过的唤醒资源，缓存未命中时先执行 `prepare:assets`，随后再进行纯校验式构建；最后直接启动 `xuhua` 进程，对 `/healthz`、`/api/meta` 与首页做冒烟检查。
 
 ## 反向代理
 

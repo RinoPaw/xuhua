@@ -57,7 +57,7 @@ def test_server_events_encode_to_stable_wire_shapes() -> None:
                 "raw_text": "卞绣",
                 "normalizations": [{"raw": "卞绣", "canonical": "汴绣"}],
                 "locale": "zh-CN",
-                "asr_engine": "chinese",
+                "asr_engine": "xfyun_slm",
             },
         ),
         (
@@ -119,3 +119,8 @@ def test_server_events_encode_to_stable_wire_shapes() -> None:
 
     for event, expected in cases:
         assert encode_voice_event(event) == expected
+
+
+def test_legacy_chinese_engine_label_is_normalized_to_the_single_slm_path() -> None:
+    event = UserTranscriptEvent(1, 1, "hello", "hello", (), "en-US", "chinese")
+    assert encode_voice_event(event)["asr_engine"] == "xfyun_slm"

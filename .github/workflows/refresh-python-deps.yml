@@ -25,19 +25,9 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-
-          pyproject = Path("pyproject.toml")
-          text = pyproject.read_text()
-          text = text.replace('"pytest>=8,<9"', '"pytest>=9,<10"')
-          pyproject.write_text(text)
-
-          verify = Path(".github/workflows/verify.yml")
-          text = verify.read_text()
-          text = text.replace(
-              "      - name: Audit Python dependencies\n        continue-on-error: true\n        run: uv run --with pip-audit==2.10.1 pip-audit --skip-editable\n",
-              "      - name: Audit Python dependencies\n        run: uv run --with pip-audit==2.10.1 pip-audit --skip-editable\n",
-          )
-          verify.write_text(text)
+          path = Path("pyproject.toml")
+          text = path.read_text().replace('"pytest>=8,<9"', '"pytest>=9,<10"')
+          path.write_text(text)
           PY
           uv lock --upgrade-package anyio --upgrade-package pytest
       - name: Verify refreshed environment
@@ -48,9 +38,8 @@ jobs:
           uv run --with pip-audit==2.10.1 pip-audit --skip-editable
       - name: Commit refreshed dependencies
         run: |
-          rm .github/workflows/refresh-python-deps.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add pyproject.toml uv.lock .github/workflows/verify.yml .github/workflows/refresh-python-deps.yml
+          git add pyproject.toml uv.lock
           git commit -m "deps: upgrade vulnerable Python dependencies"
           git push

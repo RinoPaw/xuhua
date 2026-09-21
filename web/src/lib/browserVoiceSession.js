@@ -128,14 +128,23 @@ export class BrowserVoiceSession {
     }
   }
 
-  handleOutputTerminal({ failed } = {}) {
+  handleOutputTerminal({ failed, reason } = {}) {
     this.input.blockFor(450);
     this.dispatchMany([
       { type: "turn.idle" },
       { type: "output.idle" },
     ]);
-    if (failed) this.reportError("speech_output_failed");
-    else this.settleListening();
+
+    // TTS is an output capability, not the realtime session transport. A
+    // provider/audio failure must stop this playback attempt without poisoning
+    // the microphone, ASR, WebSocket, or the next turn. Keep the session in a
+    // listening-capable state and surface the problem as a recoverable error.
+    if (failed) {
+      this.reportOutputError(reason || "speech_output_failed");
+      this.settleListening();
+      return;
+    }
+    this.settleListening();
   }
 
   clearError() {
@@ -146,6 +155,13 @@ export class BrowserVoiceSession {
     const error = value instanceof Error ? value : new Error(String(value || "voice_error"));
     this.onErrorState(error);
     this.dispatchVoice({ type: "fault.raise" });
+    this.getCallbacks()?.onError?.(error);
+    return error;
+  }
+
+  reportOutputError(value) {
+    const error = value instanceof Error ? value : new Error(String(value || "speech_output_failed"));
+    this.onErrorState(error);
     this.getCallbacks()?.onError?.(error);
     return error;
   }

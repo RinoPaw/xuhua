@@ -1,6 +1,5 @@
+import { browserFetch } from "./browserFetch.js";
 import { DEFAULT_LOCALE, getPreferredLocales, normalizeLocaleHint } from "./locale.js";
-
-const browserFetch = (...args) => globalThis.fetch(...args);
 
 function normalizeTurnId(value) {
   const id = String(value ?? "").trim();

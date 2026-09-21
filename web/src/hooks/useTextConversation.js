@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef } from "react";
 
+import { browserFetch } from "../lib/browserFetch.js";
 import TextConversationSession from "../lib/textConversationSession.js";
 
 function noop() {}
-const browserFetch = (...args) => globalThis.fetch(...args);
 
 export function useTextConversation({
   apiBase = "",

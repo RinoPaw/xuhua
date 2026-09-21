@@ -78,6 +78,25 @@ export class VoiceInputController {
     this.blockedUntil = 0;
   }
 
+  finishActiveUtterance({
+    connection,
+    onTranscribing = () => {},
+    onTransportFailure = () => {},
+  } = {}) {
+    if (!this.state.utteranceActive) {
+      this.resetOnset();
+      return true;
+    }
+    if (!connection?.connected || !connection.sendJson({ type: "utterance.end" })) {
+      onTransportFailure();
+      return false;
+    }
+    const wasBargeInCandidate = this.bargeIn.phase === BARGE_IN_PHASE.TENTATIVE;
+    resetVoiceInputPhase(this.state);
+    if (!wasBargeInCandidate) onTranscribing();
+    return true;
+  }
+
   process(samples, inputRate, {
     connection,
     output,

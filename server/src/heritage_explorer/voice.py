@@ -1,7 +1,9 @@
 """Streaming Xunfei ASR transport for browser-captured 16 kHz PCM audio.
 
 叙华只使用讯飞“中英识别大模型”这一条实时识别链路。该模型本身支持
-普通话、英语以及 202 种中文方言免切换识别。
+普通话、英语以及 202 种中文方言免切换识别。``language=zh_cn``、
+``accent=mandarin`` 和 ``domain=slm`` 是该模型的固定协议选择器，并不表示
+应用层把识别锁定为中文；``ltc=1`` 明确保持中英文免切换识别。
 """
 
 from __future__ import annotations
@@ -440,6 +442,7 @@ class XfyunStream:
             "domain": self.domain,
             "language": self.language,
             "accent": self.accent,
+            "ltc": 1,
             "eos": self.eos,
             "result": {"encoding": "utf8", "compress": "raw", "format": "json"},
         }

@@ -1,0 +1,42 @@
+.voice-control-cluster {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.voice-end-button {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #c9c0b1;
+  border-radius: 50%;
+  color: #817b70;
+  background: rgba(247, 242, 232, .72);
+  opacity: .72;
+  transition: opacity .15s, border-color .15s, color .15s, background .15s;
+}
+
+.voice-end-button:hover {
+  opacity: 1;
+  border-color: #aa8b80;
+  color: #8d5a50;
+  background: #f4e9e3;
+}
+
+.voice-end-button svg {
+  width: 14px;
+  height: 14px;
+}
+
+.voice-orb.muted {
+  animation: none;
+  background: #77766f;
+  box-shadow: 0 4px 12px rgba(55, 53, 49, .14);
+}
+
+.voice-orb.muted:hover {
+  background: #64635d;
+}

@@ -2,12 +2,6 @@ import { isVoiceAssistantPending } from "../hooks/voiceState.js";
 import { BrowserVoiceSession } from "./browserVoiceSession.js";
 import { PersonaVoiceGate } from "./personaVoiceGate.js";
 
-function logFinalText(log, speaker, text) {
-  const content = String(text || "").trim();
-  if (!content) return;
-  log.info?.(`[叙华][persona] ${speaker}: ${content}`);
-}
-
 export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
   constructor({ gate = new PersonaVoiceGate(), ...options } = {}) {
     super(options);
@@ -29,7 +23,6 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     }
 
     if (message?.type === "user.transcript") {
-      logFinalText(this.log, "用户", message.text);
       const decision = this.gate.acceptTranscript(message.text);
       const accepted = super.routeServerEvent(message);
       if (decision === "ignore" && accepted) this.cancelSleepingTurn();
@@ -44,11 +37,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
       return true;
     }
 
-    const accepted = super.routeServerEvent(message);
-    if (accepted && message?.type === "assistant.done") {
-      logFinalText(this.log, "叙华", message.text);
-    }
-    return accepted;
+    return super.routeServerEvent(message);
   }
 
   cancelSleepingTurn() {

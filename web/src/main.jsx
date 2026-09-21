@@ -4,6 +4,7 @@ import { App } from "./App.jsx";
 import { PersonaDisplayPage } from "./pages/PersonaDisplayPage.jsx";
 import { isPersonaDisplayPath } from "./lib/displayMode.js";
 import "./styles.css";
+import "./viewportGuard.css";
 
 const page = isPersonaDisplayPath(globalThis.location?.pathname)
   ? <PersonaDisplayPage />

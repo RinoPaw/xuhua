@@ -9,6 +9,10 @@ import { BrowserVoiceSession } from "../lib/browserVoiceSession.js";
 
 export { REALTIME_VOICE_STATUS };
 
+function createDefaultVoiceSession(options) {
+  return new BrowserVoiceSession(options);
+}
+
 export function useVoiceConversation({
   websocketPath = "/api/voice",
   recognitionContext = null,
@@ -18,6 +22,7 @@ export function useVoiceConversation({
   onBargeIn,
   onSources,
   onError,
+  createSession = createDefaultVoiceSession,
 } = {}) {
   const {
     state: voiceMachine,
@@ -65,7 +70,7 @@ export function useVoiceConversation({
 
   const sessionRef = useRef(null);
   if (!sessionRef.current) {
-    sessionRef.current = new BrowserVoiceSession({
+    sessionRef.current = createSession({
       websocketPath,
       getMachine: () => voiceMachineRef.current,
       dispatchVoice: (action) => bindingsRef.current.dispatchVoice(action),

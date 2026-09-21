@@ -1,24 +1,8 @@
-.persona-display {
-  position: fixed;
-  inset: 0;
-  overflow: hidden;
-  background: #17221e;
+.persona-display-workspace {
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.persona-display .human-stage {
-  inset: 0;
-}
-
-.persona-display .human-stage::before {
-  background: none;
-}
-
-.persona-display .human-vignette {
-  box-shadow: none;
-}
-
-.persona-display .human-poster,
-.persona-display .human-video {
-  object-fit: cover;
-  object-position: center top;
+.persona-display-panel {
+  width: 100%;
+  border-right: 0;
 }

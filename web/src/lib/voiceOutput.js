@@ -52,9 +52,9 @@ export class VoiceOutputController {
         this.playing = playing;
         this.onPlayingChange(playing);
       },
-      onTerminal: ({ failed, reason }) => {
+      onTerminal: ({ failed }) => {
         this.clearTurnState();
-        this.onTerminal({ failed, reason });
+        this.onTerminal({ failed });
       },
     });
   }
@@ -110,16 +110,6 @@ export class VoiceOutputController {
     this.textPlan.reset(this.locale);
     this.playing = false;
     return generation;
-  }
-
-  pauseTentative() {
-    if (!this.pipelineActive) return false;
-    return this.scheduler.pauseTentative?.() ?? false;
-  }
-
-  resumeTentative() {
-    if (!this.pipelineActive) return false;
-    return this.scheduler.resumeTentative?.() ?? false;
   }
 
   stop() {

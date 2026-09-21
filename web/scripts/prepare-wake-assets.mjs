@@ -1,14 +1,13 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
-  mkdtempSync,
+  readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { spawnSync } from "node:child_process";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -18,95 +17,154 @@ const runtimeDir = path.join(wakeRoot, "runtime");
 const modelDir = path.join(wakeRoot, "model");
 
 const SHERPA_PACKAGE_VERSION = "1.3.1";
+const SHERPA_SOURCE_COMMIT = "179a9dd8b4bca0eb8b7689b956346e8a3c1bdba4";
 const RUNTIME_BASE = `https://cdn.jsdelivr.net/npm/@siteed/sherpa-onnx.rn@${SHERPA_PACKAGE_VERSION}/wasm`;
-const MODEL_ARCHIVE_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01.tar.bz2";
-const MODEL_FOLDER = "sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01";
+const RUNTIME_SOURCE_BASE = `https://raw.githubusercontent.com/deeeed/audiolab/${SHERPA_SOURCE_COMMIT}/packages/sherpa-onnx.rn/wasm-src`;
+const MODEL_BASE = "https://www.modelscope.cn/models/pkufool/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01/resolve/master";
 
-const runtimeFiles = [
-  "sherpa-onnx-wasm-combined.js",
-  "sherpa-onnx-wasm-combined.wasm",
-  "sherpa-onnx-combined.js",
-  "sherpa-onnx-core.js",
-  "sherpa-onnx-kws.js",
+export const WAKE_ASSETS = [
+  {
+    target: path.join(runtimeDir, "sherpa-onnx-wasm-combined.js"),
+    url: `${RUNTIME_BASE}/sherpa-onnx-wasm-combined.js`,
+    digest: {
+      algorithm: "sha256",
+      value: "c7778951c5ef025d240ecf36d8d642ee2aa089353d4e46187767044547313e57",
+    },
+  },
+  {
+    target: path.join(runtimeDir, "sherpa-onnx-wasm-combined.wasm"),
+    url: `${RUNTIME_BASE}/sherpa-onnx-wasm-combined.wasm`,
+    digest: {
+      algorithm: "sha256",
+      value: "cc726f48a62ceba05541c195b7155482da7232d9300405fb5a4a7ddce6110705",
+    },
+  },
+  {
+    target: path.join(runtimeDir, "sherpa-onnx-combined.js"),
+    url: `${RUNTIME_SOURCE_BASE}/sherpa-onnx-combined.js`,
+    digest: {
+      algorithm: "git-blob-sha1",
+      value: "7d41aa0282ccd1e1b5ba751bb41e9697f06476a5",
+    },
+  },
+  {
+    target: path.join(runtimeDir, "sherpa-onnx-core.js"),
+    url: `${RUNTIME_BASE}/sherpa-onnx-core.js`,
+    digest: {
+      algorithm: "sha256",
+      value: "7913d88d173bc2140d52085cc9d62bf3c8a9b95e53842704329007fa0e37b879",
+    },
+  },
+  {
+    target: path.join(runtimeDir, "sherpa-onnx-kws.js"),
+    url: `${RUNTIME_SOURCE_BASE}/sherpa-onnx-kws.js`,
+    digest: {
+      algorithm: "git-blob-sha1",
+      value: "4ef279b7e8434af10159dcb51f274c87bd5ba6e2",
+    },
+  },
+  {
+    target: path.join(modelDir, "encoder.onnx"),
+    url: `${MODEL_BASE}/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx`,
+    digest: {
+      algorithm: "sha256",
+      value: "dd784973fc9d2fabb3b800d6dcd20fc3b0ca84f8e2415afe54b032878e447f4d",
+    },
+  },
+  {
+    target: path.join(modelDir, "decoder.onnx"),
+    url: `${MODEL_BASE}/decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx`,
+    digest: {
+      algorithm: "sha256",
+      value: "ed83454004d5bd16d831eaf00adcd181ed7734886aab6ef440f3ffa5aa3cfe3b",
+    },
+  },
+  {
+    target: path.join(modelDir, "joiner.onnx"),
+    url: `${MODEL_BASE}/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx`,
+    digest: {
+      algorithm: "sha256",
+      value: "f79760052b87239e325f0567c752ad3130b30d92effb847d4307743c20c59a24",
+    },
+  },
+  {
+    target: path.join(modelDir, "tokens.txt"),
+    url: `${MODEL_BASE}/tokens.txt`,
+    digest: {
+      algorithm: "sha256",
+      value: "cd06ca04c7926f37146b1a2b8a12ac382af0457d2bfacfc5a0949945fe6567b6",
+    },
+  },
 ];
 
-const modelFiles = {
-  "encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx": "encoder.onnx",
-  "decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx": "decoder.onnx",
-  "joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx": "joiner.onnx",
-  "tokens.txt": "tokens.txt",
-};
-
-async function download(url, destination) {
-  const response = await fetch(url, { redirect: "follow" });
-  if (!response.ok) throw new Error(`Failed to download ${url}: HTTP ${response.status}`);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  writeFileSync(destination, bytes);
-}
-
-function tarExecutable() {
-  if (process.platform !== "win32") return "tar";
-  const systemRoot = process.env.SystemRoot || process.env.WINDIR;
-  if (systemRoot) {
-    const systemTar = path.join(systemRoot, "System32", "tar.exe");
-    if (existsSync(systemTar)) return systemTar;
+export function digestBytes(bytes, digest) {
+  const buffer = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  if (digest.algorithm === "sha256") {
+    return createHash("sha256").update(buffer).digest("hex");
   }
-  return "tar.exe";
+  if (digest.algorithm === "git-blob-sha1") {
+    return createHash("sha1")
+      .update(`blob ${buffer.byteLength}\0`)
+      .update(buffer)
+      .digest("hex");
+  }
+  throw new Error(`Unsupported wake asset digest: ${digest.algorithm}`);
 }
 
-function extractTarBz2(archive, destination) {
-  const executable = tarExecutable();
-  const result = spawnSync(executable, ["-xjf", archive, "-C", destination], {
-    encoding: "utf8",
-    stdio: "pipe",
-    windowsHide: true,
-  });
-  if (result.error) {
+export function isAssetValid(asset) {
+  if (!existsSync(asset.target)) return false;
+  return digestBytes(readFileSync(asset.target), asset.digest) === asset.digest.value;
+}
+
+async function downloadVerified(asset) {
+  const response = await fetch(asset.url, { redirect: "follow" });
+  if (!response.ok) {
+    throw new Error(`Failed to download ${asset.url}: HTTP ${response.status}`);
+  }
+  const bytes = Buffer.from(await response.arrayBuffer());
+  const actual = digestBytes(bytes, asset.digest);
+  if (actual !== asset.digest.value) {
     throw new Error(
-      `Failed to start tar (${executable}): ${result.error.code || result.error.message}`,
+      `Integrity check failed for ${path.basename(asset.target)}: expected ${asset.digest.value}, got ${actual}`,
     );
   }
-  if (result.status !== 0) {
-    const detail = String(result.stderr || result.stdout || "").trim();
-    throw new Error(
-      `Failed to extract KWS model with tar (${executable}, exit ${result.status})${detail ? `: ${detail}` : ""}`,
-    );
-  }
-}
 
-async function prepareRuntime() {
-  mkdirSync(runtimeDir, { recursive: true });
-  for (const name of runtimeFiles) {
-    const destination = path.join(runtimeDir, name);
-    if (existsSync(destination)) continue;
-    console.log(`Downloading wake runtime: ${name}`);
-    await download(`${RUNTIME_BASE}/${name}`, destination);
-  }
-}
-
-async function prepareModel() {
-  mkdirSync(modelDir, { recursive: true });
-  const targets = Object.values(modelFiles).map((name) => path.join(modelDir, name));
-  if (targets.every(existsSync)) return;
-
-  const temp = mkdtempSync(path.join(os.tmpdir(), "xuhua-kws-"));
+  mkdirSync(path.dirname(asset.target), { recursive: true });
+  const temporary = `${asset.target}.tmp-${process.pid}-${Date.now()}`;
   try {
-    const archive = path.join(temp, "model.tar.bz2");
-    console.log("Downloading sherpa-onnx Chinese KWS model...");
-    await download(MODEL_ARCHIVE_URL, archive);
-    extractTarBz2(archive, temp);
-
-    const sourceDir = path.join(temp, MODEL_FOLDER);
-    for (const [sourceName, targetName] of Object.entries(modelFiles)) {
-      const source = path.join(sourceDir, sourceName);
-      if (!existsSync(source)) throw new Error(`Missing KWS model file after extraction: ${sourceName}`);
-      copyFileSync(source, path.join(modelDir, targetName));
-    }
+    writeFileSync(temporary, bytes);
+    rmSync(asset.target, { force: true });
+    renameSync(temporary, asset.target);
   } finally {
-    rmSync(temp, { recursive: true, force: true });
+    rmSync(temporary, { force: true });
   }
 }
 
-await prepareRuntime();
-await prepareModel();
-console.log("Local wake-word assets are ready.");
+export async function prepareWakeAssets({ checkOnly = false } = {}) {
+  const missing = [];
+  for (const asset of WAKE_ASSETS) {
+    if (isAssetValid(asset)) continue;
+    if (checkOnly) {
+      missing.push(path.relative(root, asset.target));
+      continue;
+    }
+    console.log(`Preparing wake asset: ${path.basename(asset.target)}`);
+    await downloadVerified(asset);
+  }
+
+  if (missing.length) {
+    throw new Error(
+      `Wake assets are missing or invalid:\n- ${missing.join("\n- ")}\nRun \"npm run prepare:assets\" first.`,
+    );
+  }
+  console.log(checkOnly ? "Wake assets verified." : "Wake assets are ready and verified.");
+}
+
+const invokedAsScript = process.argv[1]
+  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedAsScript) {
+  prepareWakeAssets({ checkOnly: process.argv.includes("--check") }).catch((error) => {
+    console.error(error?.message || error);
+    process.exitCode = 1;
+  });
+}

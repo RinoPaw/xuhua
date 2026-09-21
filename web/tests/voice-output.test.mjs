@@ -74,7 +74,7 @@ test("finish uses fallback when no segment was produced", () => {
   assert.equal("url" in enqueue[2], false);
 });
 
-test("scheduler terminal clears controller turn state", () => {
+test("scheduler terminal preserves failure metadata and clears controller turn state", () => {
   const harness = makeSchedulerHarness();
   const playing = [];
   const terminal = [];
@@ -90,13 +90,18 @@ test("scheduler terminal clears controller turn state", () => {
   harness.options.onPlayingChange(true);
   assert.equal(controller.playing, true);
   assert.equal(controller.traceId, "trace-terminal");
-  harness.options.onTerminal({ failed: false });
+  const terminalResult = {
+    failed: true,
+    reason: "tts_provider_unavailable",
+    generation: 7,
+  };
+  harness.options.onTerminal(terminalResult);
   assert.equal(controller.pipelineActive, false);
   assert.equal(controller.playing, false);
   assert.equal(controller.traceId, "");
   assert.equal(controller.locale, "zh-CN");
   assert.deepEqual(playing, [true]);
-  assert.deepEqual(terminal, [{ failed: false }]);
+  assert.deepEqual(terminal, [terminalResult]);
 });
 
 test("stop clears pipeline state and resets text plan", () => {

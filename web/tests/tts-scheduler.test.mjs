@@ -73,17 +73,27 @@ test("preloads the second segment before the first segment ends", async () => {
   assert.deepEqual(events.filter((event) => event.type === "first_audio_chunk").map((event) => event.segment), [0, 1]);
 });
 
-test("scheduler has no tentative pause path; candidate energy cannot stop playback", () => {
-  const { scheduler, audios, playingChanges } = makeScheduler();
+test("tentative barge-in pauses and resumes the same network audio", () => {
+  const { scheduler, audios, events, playingChanges } = makeScheduler();
   scheduler.begin();
   scheduler.enqueue("播报内容。");
+  audios[0].currentTime = 4.2;
   audios[0].emit("playing");
 
-  assert.equal("pauseTentative" in scheduler, false);
-  assert.equal("resume" in scheduler, false);
-  assert.equal("isPaused" in scheduler, false);
+  assert.equal(scheduler.pauseTentative(), true);
+  assert.equal(scheduler.isTentativePaused, true);
+  assert.equal(scheduler.isPlaying, false);
+  assert.equal(audios[0].pauseCalls, 1);
+  assert.equal(audios[0].currentTime, 4.2);
+
+  assert.equal(scheduler.resumeTentative(), true);
+  assert.equal(audios[0].playCalls, 2);
+  audios[0].emit("playing");
+  assert.equal(scheduler.isTentativePaused, false);
   assert.equal(scheduler.isPlaying, true);
-  assert.deepEqual(playingChanges, [true]);
+  assert.deepEqual(playingChanges, [true, false, true]);
+  assert.equal(events.some((event) => event.type === "playback.pause_tentative"), true);
+  assert.equal(events.some((event) => event.type === "playback.resume_tentative"), true);
 });
 
 test("stop releases current and prefetched audio and ignores late callbacks", () => {
@@ -208,12 +218,11 @@ test("second source may resolve first but playback order remains stable", async 
   assert.equal(scheduler.segmentCount, 0);
 });
 
-test("retries a failed network TTS segment twice, then falls back without failing the voice session", () => {
+test("network TTS fails closed after two retries instead of switching engines", () => {
   const audio = new FakeAudio("/tts/0");
   const events = [];
   const terminals = [];
   const timers = [];
-  let fallback = null;
 
   const scheduler = new TtsScheduler({
     prepareSource: () => "/tts/0",
@@ -225,14 +234,10 @@ test("retries a failed network TTS segment twice, then falls back without failin
       return callback;
     },
     cancelRetry: () => {},
-    fallbackSpeak: (text, callbacks) => {
-      fallback = { text, callbacks };
-      return () => {};
-    },
   });
 
   scheduler.begin();
-  scheduler.enqueue("网络不稳也要继续播报。");
+  scheduler.enqueue("网络不稳时不要偷偷换一个声音。");
   scheduler.complete();
 
   audio.emit("error");
@@ -246,13 +251,9 @@ test("retries a failed network TTS segment twice, then falls back without failin
   assert.match(audio.src, /tts_retry=2/);
 
   audio.emit("error");
-  assert.equal(events.filter((event) => event.type === "request.degraded").length, 1);
-  assert.equal(fallback.text, "网络不稳也要继续播报。");
-  fallback.callbacks.onStart();
-  assert.equal(scheduler.isPlaying, true);
-  fallback.callbacks.onEnd();
-
+  assert.equal(events.filter((event) => event.type === "request.failed").length, 1);
+  assert.equal(events.some((event) => event.type.startsWith("fallback")), false);
   assert.equal(scheduler.isPlaying, false);
   assert.equal(terminals.length, 1);
-  assert.equal(terminals[0].failed, false);
+  assert.equal(terminals[0].failed, true);
 });

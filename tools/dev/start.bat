@@ -7,6 +7,7 @@ for %%I in ("%PROJECT_DIR%\..") do set "PACKAGE_DIR=%%~fI"
 set "PYTHON=%PACKAGE_DIR%\.venv\Scripts\python.exe"
 set "UV_LINK_MODE=copy"
 set "UV_PROJECT_ENVIRONMENT=%PACKAGE_DIR%\.venv"
+set "POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 if not exist ".env" (
     echo [ERROR] .env was not found.
@@ -17,7 +18,10 @@ if not exist ".env" (
 
 set "HOST="
 set "PORT="
-for /f "tokens=1,* delims==" %%A in ('findstr /B /C:"HOST=" /C:"PORT=" ".env"') do set "%%A=%%B"
+for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
+    if /I "%%A"=="HOST" set "HOST=%%B"
+    if /I "%%A"=="PORT" set "PORT=%%B"
+)
 if not defined HOST (
     echo [ERROR] HOST is missing from .env.
     pause
@@ -33,7 +37,7 @@ set "LOCAL_URL=http://%HOST%:%PORT%"
 set "UV_EXE=%PACKAGE_DIR%\runtime\uv\uv.exe"
 if not exist "%UV_EXE%" (
     set "UV_EXE="
-    for /f "delims=" %%I in ('where uv 2^>nul') do if not defined UV_EXE set "UV_EXE=%%I"
+    for %%I in (uv.exe) do set "UV_EXE=%%~$PATH:I"
 )
 
 if not defined UV_EXE (
@@ -53,14 +57,15 @@ if not exist "%PYTHON%" (
     )
 )
 
-where npm >nul 2>nul
-if errorlevel 1 (
+set "NPM_EXE="
+for %%I in (npm.cmd) do set "NPM_EXE=%%~$PATH:I"
+if not defined NPM_EXE (
     echo [ERROR] npm was not found on PATH. Install Node.js and try again.
     pause
     exit /b 1
 )
 
-powershell.exe -NoProfile -Command "if (Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue) { exit 1 }"
+"%POWERSHELL%" -NoProfile -Command "if (Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue) { exit 1 }"
 if errorlevel 1 (
     echo [ERROR] Port %PORT% is already in use. Close the existing service and try again.
     pause
@@ -69,14 +74,14 @@ if errorlevel 1 (
 
 echo [SETUP] Building the web interface...
 pushd "%PROJECT_DIR%\web"
-call npm ci --prefer-offline --no-audit --no-fund
+call "%NPM_EXE%" ci --prefer-offline --no-audit --no-fund
 if errorlevel 1 (
     popd
     echo [ERROR] Web dependency installation failed.
     pause
     exit /b 1
 )
-call npm run build
+call "%NPM_EXE%" run build
 if errorlevel 1 (
     popd
     echo [ERROR] Web build failed.
@@ -108,7 +113,7 @@ if /I "%~1"=="--check" (
 
 echo Starting Xuhua at %LOCAL_URL%...
 echo Close this window to stop the service.
-start "" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%PROJECT_DIR%\tools\open_browser_when_ready.ps1" -Url "%LOCAL_URL%"
+start "" /b "%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%PROJECT_DIR%\tools\open_browser_when_ready.ps1" -Url "%LOCAL_URL%"
 "%UV_EXE%" run --no-sync --python "%PYTHON%" --env-file ".env" xuhua
 
 set "XUHUA_EXIT_CODE=%ERRORLEVEL%"

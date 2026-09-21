@@ -52,9 +52,9 @@ export class VoiceOutputController {
         this.playing = playing;
         this.onPlayingChange(playing);
       },
-      onTerminal: ({ failed }) => {
+      onTerminal: (result = {}) => {
         this.clearTurnState();
-        this.onTerminal({ failed });
+        this.onTerminal(result);
       },
     });
   }

@@ -3,10 +3,11 @@ import { useCallback, useEffect, useRef } from "react";
 import TextConversationSession from "../lib/textConversationSession.js";
 
 function noop() {}
+const browserFetch = (...args) => globalThis.fetch(...args);
 
 export function useTextConversation({
   apiBase = "",
-  fetchFn = globalThis.fetch,
+  fetchFn = browserFetch,
   sessionId = "",
   category = "",
   localeHint = "",

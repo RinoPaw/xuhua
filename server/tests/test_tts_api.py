@@ -40,7 +40,7 @@ class _FakeCommunicate:
         yield {"type": "audio", "data": b"second"}
 
 
-def test_tts_text_is_exchanged_for_a_reusable_short_stream_token(monkeypatch) -> None:
+def test_tts_text_is_exchanged_for_a_same_client_reusable_short_stream_token(monkeypatch) -> None:
     _FakeCommunicate.calls.clear()
     monkeypatch.setattr(api_module.edge_tts, "Communicate", _FakeCommunicate)
     app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
@@ -74,6 +74,37 @@ def test_tts_text_is_exchanged_for_a_reusable_short_stream_token(monkeypatch) ->
         assert retry.content == b"firstsecond"
 
     assert [call["text"] for call in _FakeCommunicate.calls] == ["汴绣是什么？", "汴绣是什么？"]
+
+
+def test_tts_ticket_cannot_be_replayed_by_another_client(monkeypatch) -> None:
+    _FakeCommunicate.calls.clear()
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", _FakeCommunicate)
+    app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
+
+    async def scenario() -> None:
+        owner_transport = httpx.ASGITransport(app=app, client=("203.0.113.10", 51000))
+        other_transport = httpx.ASGITransport(app=app, client=("203.0.113.11", 52000))
+        async with (
+            httpx.AsyncClient(transport=owner_transport, base_url="http://testserver") as owner,
+            httpx.AsyncClient(transport=other_transport, base_url="http://testserver") as other,
+        ):
+            prepared = await owner.post(
+                "/api/tts",
+                json={"text": "汴绣是什么？", "locale": "zh-CN"},
+            )
+            assert prepared.status_code == 200
+            token = prepared.json()["token"]
+
+            stolen = await other.get(f"/api/tts/{token}")
+            assert stolen.status_code == 404
+            assert stolen.json()["detail"] == "tts_ticket_not_found"
+
+            valid = await owner.get(f"/api/tts/{token}")
+            assert valid.status_code == 200
+            assert valid.content == b"firstsecond"
+
+    asyncio.run(scenario())
+    assert [call["text"] for call in _FakeCommunicate.calls] == ["汴绣是什么？"]
 
 
 def test_invalid_tts_token_does_not_spend_synthesis_rate_budget(monkeypatch) -> None:

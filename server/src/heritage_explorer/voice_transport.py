@@ -15,7 +15,7 @@ from .dataset import KnowledgeBase
 from .sessions import SessionStore
 from .voice import VoiceProviderError, XfyunStream
 from .voice_events import ReadyEvent, VoiceServerEvent, encode_voice_event
-from .voice_protocol import VoiceCommand, decode_voice_command
+from .voice_protocol import VoiceCommand, WakeCommand, decode_voice_command
 from .voice_session import VoiceSessionRuntime
 
 
@@ -95,6 +95,9 @@ class VoiceWebSocketChannel:
 
 
 async def dispatch_voice_command(runtime: VoiceSessionRuntime, command: VoiceCommand) -> None:
+    if isinstance(command, WakeCommand):
+        await runtime.acknowledge_address()
+        return
     await runtime.handle_command(command)
 
 

@@ -43,6 +43,13 @@ class InterruptCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class WakeCommand:
+    """Wake the persona and request the fixed acknowledgement only."""
+
+    pass
+
+
+@dataclass(frozen=True, slots=True)
 class TextCommand:
     text: str
 
@@ -72,6 +79,7 @@ VoiceCommand: TypeAlias = (
     | UtteranceCancelCommand
     | BargeInCommand
     | InterruptCommand
+    | WakeCommand
     | TextCommand
     | ContextCommand
 )
@@ -154,6 +162,8 @@ def decode_voice_command(raw: str) -> VoiceCommand | None:
         return BargeInCommand()
     if event_type == "interrupt":
         return InterruptCommand()
+    if event_type == "wake":
+        return WakeCommand()
     if event_type == "text":
         text = str(event.get("text") or "").strip()
         if not text or len(text) > MAX_VOICE_TEXT_CHARS:
@@ -175,5 +185,6 @@ __all__ = [
     "UtteranceEndCommand",
     "UtteranceStartCommand",
     "VoiceCommand",
+    "WakeCommand",
     "decode_voice_command",
 ]

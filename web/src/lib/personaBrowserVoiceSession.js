@@ -3,8 +3,6 @@ import { BrowserVoiceSession } from "./browserVoiceSession.js";
 import { LocalWakeWordDetector } from "./localWakeWordDetector.js";
 import { PersonaVoiceGate } from "./personaVoiceGate.js";
 
-const WAKE_ACKNOWLEDGEMENT_TEXT = "叙华";
-
 export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
   constructor({ gate = null, wakeDetector = null, ...options } = {}) {
     super(options);
@@ -32,6 +30,18 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     return this.startLocalWakeListening();
   }
 
+  sendWake() {
+    if (!this.connection.connected) return false;
+    const sent = this.send({ type: "wake" });
+    if (!sent) return this.handleTransportFailure();
+    this.latency.clear();
+    this.transcript.clear(true);
+    this.input.supersedeUtterance();
+    this.stopSpeech(true, false);
+    this.markThinking();
+    return true;
+  }
+
   async handleLocalWake(keyword = "叙华") {
     if (this.wakeHandoffPending) return false;
     this.wakeHandoffPending = true;
@@ -48,7 +58,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
       }
 
       if (!this.connection.connected) return false;
-      return this.sendText(WAKE_ACKNOWLEDGEMENT_TEXT);
+      return this.sendWake();
     } finally {
       this.wakeHandoffPending = false;
     }

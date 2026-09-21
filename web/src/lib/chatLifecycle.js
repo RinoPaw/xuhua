@@ -4,6 +4,8 @@ const TERMINAL_TURN_EVENTS = new Set([
   "turn.cancelled",
 ]);
 
+const browserFetch = (...args) => globalThis.fetch(...args);
+
 export function isTerminalTurnEvent(type) {
   return TERMINAL_TURN_EVENTS.has(String(type || ""));
 }
@@ -16,7 +18,7 @@ export function nextActiveTurnId(currentTurnId, event) {
   return currentTurnId;
 }
 
-export function cancelTurnBestEffort({ fetchFn = globalThis.fetch, url } = {}) {
+export function cancelTurnBestEffort({ fetchFn = browserFetch, url } = {}) {
   if (typeof fetchFn !== "function" || !url) return false;
   try {
     const request = fetchFn(url, { method: "POST" });

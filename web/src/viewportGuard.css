@@ -1,0 +1,30 @@
+/*
+ * Keep the full-screen workspace anchored to the browser viewport.
+ * Video helper/download extensions may inject wrappers or controls around an
+ * active <video>; those descendants must never be allowed to change the page
+ * width while the digital human switches into speaking mode.
+ */
+.app-shell {
+  position: fixed;
+  inset: 0;
+  width: auto;
+  height: 100dvh;
+  min-width: 0;
+  max-width: none;
+}
+
+.workspace {
+  width: 100%;
+  min-width: 0;
+}
+
+.human-stage {
+  contain: layout paint size;
+  isolation: isolate;
+}
+
+.human-poster,
+.human-video {
+  max-width: 100%;
+  max-height: 100%;
+}

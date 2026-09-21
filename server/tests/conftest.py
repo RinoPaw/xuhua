@@ -8,7 +8,6 @@ TEST_ENV = {
     "PORT": "5050",
     "DEBUG": "0",
     "DATASET_PATH": "data/processed/heritage_items.json",
-    "FRONTEND_DIR": "web/dist/client",
     "AI_API_KEY": "",
     "AI_BASE_URL": "https://api.deepseek.com",
     "AI_MODEL": "deepseek-flash",

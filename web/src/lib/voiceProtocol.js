@@ -1,5 +1,7 @@
 import { DEFAULT_LOCALE, getPreferredLocales, normalizeLocaleHint } from "./locale.js";
 
+const browserFetch = (...args) => globalThis.fetch(...args);
+
 function normalizeTurnId(value) {
   const id = String(value ?? "").trim();
   return id || "";
@@ -94,7 +96,7 @@ export async function requestTtsSource({
   reason,
   locale,
   signal,
-  fetchImpl = globalThis.fetch,
+  fetchImpl = browserFetch,
 }) {
   if (typeof fetchImpl !== "function") throw new Error("tts_fetch_unavailable");
   const endpoint = ttsEndpoint(websocketPath);

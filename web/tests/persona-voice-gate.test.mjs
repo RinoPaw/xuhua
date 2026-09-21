@@ -30,11 +30,13 @@ test("persona gate starts the seven second countdown only after response settles
   const cleared = [];
   const gate = new PersonaVoiceGate({
     setTimeoutFn(callback, delay) {
+      assert.equal(this, globalThis);
       timerCallback = callback;
       timerDelay = delay;
       return 17;
     },
     clearTimeoutFn(timer) {
+      assert.equal(this, globalThis);
       cleared.push(timer);
     },
   });

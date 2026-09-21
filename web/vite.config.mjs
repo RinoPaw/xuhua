@@ -14,7 +14,9 @@ export default defineConfig({
     proxy: {
       "/api": {
         target: "http://127.0.0.1:5050",
-        changeOrigin: true,
+        // Keep the browser-facing Host header so the backend can enforce
+        // same-origin WebSocket handshakes during local development too.
+        changeOrigin: false,
         ws: true,
       },
       "/healthz": { target: "http://127.0.0.1:5050", changeOrigin: true },

@@ -91,9 +91,11 @@ Copy-Item .env.example .env
 | `AI_API_KEY` | 空 | OpenAI-compatible LLM 密钥；空值时使用本地降级回答 |
 | `AI_BASE_URL` | `https://api.deepseek.com` | LLM API 地址 |
 | `AI_MODEL` | `deepseek-flash` | DeepSeek 当前 Flash API 模型名；应用显式使用非思考模式 |
-| `AI_TIMEOUT` | `60` | LLM 请求超时 |
+| `AI_TIMEOUT` | `60` | LLM 单次网络 I/O 超时 |
 | `AI_FIRST_TOKEN_TIMEOUT` | `8` | 首文本等待时间 |
 | `AI_FIRST_TOKEN_MAX_ATTEMPTS` | `2` | 首文本最大尝试次数 |
+| `AI_RESPONSE_TIMEOUT` | `75` | 单轮 LLM 流式回答总时限；已有部分文本时超时会收住并完成当前部分 |
+| `AI_MAX_OUTPUT_CHARS` | `6000` | 单轮 LLM 最多向客户端发送的文本字符数 |
 | `AI_MAX_CONTEXT_CHARS` | `5200` | 发送给 LLM 的资料上下文上限 |
 | `XF_APP_ID` | 空 | 讯飞应用 ID |
 | `XF_API_KEY` | 空 | 讯飞 API Key |
@@ -190,11 +192,11 @@ npm test
 npm run build
 ```
 
-GitHub `verify` 会缓存已经校验过的唤醒资源，缓存未命中时先执行 `prepare:assets`，随后再进行纯校验式构建；最后直接启动 `xuhua` 进程，对 `/healthz`、`/api/meta` 与首页做冒烟检查。
+GitHub `verify` 同时在 `main` push 与面向 `main` 的 pull request 上运行，使用只读仓库权限与固定 SHA 的第三方 Actions，并设置 20 分钟 job 上限。CI 会执行 Python `pip-audit` 与 npm 高危漏洞审计，缓存已经校验过的唤醒资源；最后直接启动 `xuhua` 进程，对 `/healthz`、`/api/meta` 与首页做冒烟检查。
 
 ## 反向代理
 
-仓库保留 `deploy/nginx-xuhua-http.conf`、`deploy/nginx-xuhua-https.conf` 和 `deploy/reload-nginx.sh` 作为 Nginx 反向代理模板。它们针对 `/api/chat`、TTS ticket、TTS synthesis 与 `/api/voice` 提供单 IP 请求速率限制和实时语音连接数限制。
+仓库保留 `deploy/nginx-xuhua-http.conf`、`deploy/nginx-xuhua-https.conf` 和 `deploy/reload-nginx.sh` 作为 Nginx 反向代理模板，当前生产域名为 `xuhuaai.top`。它们针对 `/api/chat`、TTS ticket、TTS synthesis 与 `/api/voice` 提供单 IP 请求速率限制和实时语音连接数限制；HTTPS 配置同时设置 HSTS、CSP、Permissions-Policy 等安全响应头。
 
 当前仓库不再维护 Docker、Compose、自动服务器部署脚本或实验室一键安装器。若后续确定正式上线方式，再为那一条生产路径单独建立部署配置。
 

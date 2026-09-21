@@ -28,12 +28,12 @@ dev = [
 xuhua = "heritage_explorer.api:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
+where = ["server/src"]
 
 [tool.ruff]
 line-length = 100
 target-version = "py312"
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+pythonpath = ["server/src"]
+testpaths = ["server/tests"]

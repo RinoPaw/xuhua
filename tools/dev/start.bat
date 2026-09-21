@@ -1,9 +1,9 @@
 @echo off
 setlocal EnableExtensions
-cd /d "%~dp0"
+for %%I in ("%~dp0..\..") do set "PROJECT_DIR=%%~fI"
+cd /d "%PROJECT_DIR%"
 
-set "PROJECT_DIR=%~dp0"
-for %%I in ("%PROJECT_DIR%..") do set "PACKAGE_DIR=%%~fI"
+for %%I in ("%PROJECT_DIR%\..") do set "PACKAGE_DIR=%%~fI"
 set "PYTHON=%PACKAGE_DIR%\.venv\Scripts\python.exe"
 set "UV_LINK_MODE=copy"
 set "UV_PROJECT_ENVIRONMENT=%PACKAGE_DIR%\.venv"
@@ -68,25 +68,25 @@ if errorlevel 1 (
 )
 
 echo [SETUP] Building the web interface...
-pushd "%PROJECT_DIR%frontend"
+pushd "%PROJECT_DIR%\web"
 call npm ci --prefer-offline --no-audit --no-fund
 if errorlevel 1 (
     popd
-    echo [ERROR] Frontend dependency installation failed.
+    echo [ERROR] Web dependency installation failed.
     pause
     exit /b 1
 )
 call npm run build
 if errorlevel 1 (
     popd
-    echo [ERROR] Frontend build failed.
+    echo [ERROR] Web build failed.
     pause
     exit /b 1
 )
 popd
 
 echo [CHECK] Syncing Xuhua Python dependencies from uv.lock...
-"%UV_EXE%" sync --locked --no-dev --inexact --no-install-project
+"%UV_EXE%" sync --locked --no-dev --inexact
 if errorlevel 1 (
     echo [ERROR] Python dependency sync failed or uv.lock is out of date.
     pause
@@ -94,7 +94,7 @@ if errorlevel 1 (
 )
 
 echo [CHECK] Validating .env...
-"%UV_EXE%" run --no-sync --python "%PYTHON%" --env-file ".env" python -c "import sys; sys.path.insert(0, r'%PROJECT_DIR%src'); import heritage_explorer.config"
+"%UV_EXE%" run --no-sync --python "%PYTHON%" --env-file ".env" python -c "import heritage_explorer.config"
 if errorlevel 1 (
     echo [ERROR] .env is incomplete or contains an invalid value.
     pause
@@ -108,11 +108,10 @@ if /I "%~1"=="--check" (
 
 echo Starting Xuhua at %LOCAL_URL%...
 echo Close this window to stop the service.
-start "" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%PROJECT_DIR%scripts\open_browser_when_ready.ps1" -Url "%LOCAL_URL%"
-"%UV_EXE%" run --no-sync --python "%PYTHON%" --env-file ".env" python "app.py"
+start "" /b powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%PROJECT_DIR%\tools\open_browser_when_ready.ps1" -Url "%LOCAL_URL%"
+"%UV_EXE%" run --no-sync --python "%PYTHON%" --env-file ".env" xuhua
 
 set "XUHUA_EXIT_CODE=%ERRORLEVEL%"
-
 if not "%XUHUA_EXIT_CODE%"=="0" (
     echo.
     echo [ERROR] Xuhua stopped unexpectedly. Exit code: %XUHUA_EXIT_CODE%

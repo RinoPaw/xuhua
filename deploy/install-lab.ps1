@@ -74,11 +74,12 @@ if ($EnvFile) {
     Write-Warning "已生成 .env；如需 AI 与实时语音，请填入对应密钥。"
 }
 
+$StartScript = Join-Path $Project "tools\dev\start.bat"
 Step "安装依赖并构建"
-& (Join-Path $Project "start.bat") --check
+& $StartScript --check
 if ($LASTEXITCODE -ne 0) { throw "叙华运行环境检查失败。" }
 
 Step "安装完成"
 Write-Host "源码：$Project"
-Write-Host "启动：$(Join-Path $Project 'start.bat')"
-if (-not $SkipLaunch) { & (Join-Path $Project "start.bat") }
+Write-Host "启动：$StartScript"
+if (-not $SkipLaunch) { & $StartScript }

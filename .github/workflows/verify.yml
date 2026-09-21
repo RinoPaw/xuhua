@@ -12,7 +12,7 @@ jobs:
       PORT: "5050"
       DEBUG: "0"
       DATASET_PATH: data/processed/heritage_items.json
-      FRONTEND_DIR: frontend/dist/client
+      FRONTEND_DIR: web/dist/client
       AI_API_KEY: ""
       AI_BASE_URL: https://api.deepseek.com
       AI_MODEL: deepseek-flash
@@ -36,20 +36,20 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: web/package-lock.json
       - run: uv lock --check
       - run: uv sync --frozen --group dev
       - run: uv run pytest -q
-      - run: uv run ruff check src scripts tests app.py
-      - run: uv run python -m compileall -q src scripts app.py
+      - run: uv run ruff check server/src tools server/tests
+      - run: uv run python -m compileall -q server/src tools
       - run: npm ci --no-audit --no-fund
-        working-directory: frontend
+        working-directory: web
       - run: npm run lint
-        working-directory: frontend
+        working-directory: web
       - run: npm run build
-        working-directory: frontend
+        working-directory: web
       - run: npm test
-        working-directory: frontend
+        working-directory: web
       - name: Build production Docker image
         run: docker build -t xuhua:verify .
       - name: Smoke production Docker image
@@ -63,7 +63,7 @@ jobs:
             -e PORT=5050 \
             -e DEBUG=0 \
             -e DATASET_PATH=data/processed/heritage_items.json \
-            -e FRONTEND_DIR=frontend/dist/client \
+            -e FRONTEND_DIR=web/dist/client \
             -e AI_API_KEY= \
             -e AI_BASE_URL=https://api.deepseek.com \
             -e AI_MODEL=deepseek-flash \

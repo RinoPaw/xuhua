@@ -1,13 +1,13 @@
-FROM node:22-slim AS frontend-builder
+FROM node:22-slim AS web-builder
 
 ARG NPM_CONFIG_REGISTRY=https://registry.npmjs.org
 
-WORKDIR /app/frontend
+WORKDIR /app/web
 
-COPY frontend/package.json frontend/package-lock.json ./
+COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
-COPY frontend ./
+COPY web ./
 RUN npm run build
 
 
@@ -26,12 +26,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY pyproject.toml uv.lock README.md ./
-COPY src ./src
+COPY server/src ./server/src
 RUN sed -i "s#https://files.pythonhosted.org/packages#${UV_FILES_BASE_URL%/}#g" uv.lock \
     && UV_DEFAULT_INDEX="$UV_DEFAULT_INDEX" uv sync --frozen --no-dev
 
 COPY . .
-COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+COPY --from=web-builder /app/web/dist ./web/dist
 
 RUN groupadd --system app \
     && useradd --system --gid app --home-dir /home/app --create-home app \
@@ -41,4 +41,4 @@ USER app
 
 EXPOSE 5050
 
-CMD ["/app/.venv/bin/python", "app.py"]
+CMD ["/app/.venv/bin/xuhua"]

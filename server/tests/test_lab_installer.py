@@ -1,11 +1,11 @@
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_bootstrap_targets_repository_installer() -> None:
-    text = (ROOT / "bootstrap-xuhua.cmd").read_text("utf-8")
+    text = (ROOT / "deploy" / "bootstrap-xuhua.cmd").read_text("utf-8")
     assert "RinoPaw/xuhua/main/deploy/install-lab.ps1" in text
     assert "xuhua.env" in text
 
@@ -25,9 +25,10 @@ def test_installer_does_not_download_unused_local_models() -> None:
     assert "SkipModels" not in text
 
 
-def test_start_script_syncs_locked_runtime_dependencies() -> None:
-    text = (ROOT / "start.bat").read_text("utf-8")
-    assert "UV_PROJECT_ENVIRONMENT=%PACKAGE_DIR%\\.venv" in text
-    assert "sync --locked --no-dev --inexact --no-install-project" in text
+def test_start_script_uses_project_entrypoint_and_web_workspace() -> None:
+    text = (ROOT / "tools" / "dev" / "start.bat").read_text("utf-8")
+    assert 'pushd "%PROJECT_DIR%\\web"' in text
+    assert "sync --locked --no-dev --inexact" in text
+    assert "--env-file \".env\" xuhua" in text
+    assert "app.py" not in text
     assert "pip install --python" not in text
-    assert ":check_dependencies" not in text

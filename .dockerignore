@@ -14,6 +14,6 @@ tmp
 competition_docs
 data/embeddings
 .superdesign
-frontend/node_modules
-frontend/dist
-tests
+web/node_modules
+web/dist
+server/tests

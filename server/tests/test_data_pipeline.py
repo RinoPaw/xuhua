@@ -5,9 +5,9 @@ import json
 import sys
 from pathlib import Path
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
-if str(SCRIPTS) not in sys.path:
-    sys.path.insert(0, str(SCRIPTS))
+TOOLS = Path(__file__).resolve().parents[2] / "tools"
+if str(TOOLS) not in sys.path:
+    sys.path.insert(0, str(TOOLS))
 
 from build_dataset import CORE_FIELDS, build_dataset  # noqa: E402
 from enrich_dataset import enrich_dataset  # noqa: E402

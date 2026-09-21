@@ -7,7 +7,7 @@ on:
       - .github/workflows/refresh-python-deps.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   refresh:
@@ -21,20 +21,36 @@ jobs:
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
         with:
           version: "0.12.17"
-      - name: Allow current pytest major
-        run: python -c 'from pathlib import Path; p=Path("pyproject.toml"); s=p.read_text(); s=s.replace("pytest>=8,<9", "pytest>=9,<10"); p.write_text(s)'
       - name: Refresh vulnerable Python dependencies
-        run: uv lock --upgrade-package anyio --upgrade-package pytest
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          pyproject = Path("pyproject.toml")
+          text = pyproject.read_text()
+          text = text.replace('"pytest>=8,<9"', '"pytest>=9,<10"')
+          pyproject.write_text(text)
+
+          verify = Path(".github/workflows/verify.yml")
+          text = verify.read_text()
+          text = text.replace(
+              "      - name: Audit Python dependencies\n        continue-on-error: true\n        run: uv run --with pip-audit==2.10.1 pip-audit --skip-editable\n",
+              "      - name: Audit Python dependencies\n        run: uv run --with pip-audit==2.10.1 pip-audit --skip-editable\n",
+          )
+          verify.write_text(text)
+          PY
+          uv lock --upgrade-package anyio --upgrade-package pytest
       - name: Verify refreshed environment
         run: |
           uv sync --frozen --group dev
           uv run pytest -q
           uv run ruff check server/src tools server/tests
           uv run --with pip-audit==2.10.1 pip-audit --skip-editable
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: refreshed-python-deps
-          path: |
-            pyproject.toml
-            uv.lock
-          if-no-files-found: error
+      - name: Commit refreshed dependencies
+        run: |
+          rm .github/workflows/refresh-python-deps.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml uv.lock .github/workflows/verify.yml .github/workflows/refresh-python-deps.yml
+          git commit -m "deps: upgrade vulnerable Python dependencies"
+          git push

@@ -36,21 +36,49 @@ test("prewarm resolves one TTS ticket and keeps final audio behind a Blob URL", 
 
   assert.equal(await cache.prewarm({
     websocketPath: "/api/voice",
-    text: "我在。",
+    text: "收到。",
     locale: "zh-CN",
   }), "blob:ack");
-  assert.equal(cache.get("我在。", "zh-CN"), "blob:ack");
+  assert.equal(cache.get("收到。", "zh-CN"), "blob:ack");
   assert.deepEqual(calls.map((call) => call[1]), ["POST", "GET"]);
 
   assert.equal(await cache.prewarm({
     websocketPath: "/api/voice",
-    text: "我在。",
+    text: "收到。",
     locale: "zh-CN",
   }), "blob:ack");
   assert.equal(calls.length, 2);
 
   cache.dispose();
   assert.deepEqual(revoked, ["blob:ack"]);
+});
+
+test("the fixed acknowledgement loads once without requesting a TTS ticket", async () => {
+  const calls = [];
+  const cache = new TtsClipCache({
+    fetchImpl: async (url, options = {}) => {
+      calls.push([url, options.method || "GET"]);
+      return {
+        ok: true,
+        async blob() { return { size: 7632 }; },
+      };
+    },
+    createObjectURL: () => "blob:fixed-ack",
+  });
+
+  const first = cache.sourceFor("我在。", "zh-CN");
+  const second = cache.prewarm({ text: "我在。", locale: "zh-CN" });
+  assert.equal(await first, "blob:fixed-ack");
+  assert.equal(await second, "blob:fixed-ack");
+  assert.deepEqual(calls, [["/assets/audio/ack-wozai-zh-cn.mp3", "GET"]]);
+});
+
+test("a missing fixed acknowledgement allows the normal TTS path", async () => {
+  const cache = new TtsClipCache({
+    fetchImpl: async () => ({ ok: false, status: 404 }),
+  });
+
+  assert.equal(await cache.sourceFor("我在。", "zh-CN"), "");
 });
 
 test("sourceFor waits for an in-flight prewarm instead of starting duplicate synthesis", async () => {
@@ -76,10 +104,10 @@ test("sourceFor waits for an in-flight prewarm instead of starting duplicate syn
 
   const prewarm = cache.prewarm({
     websocketPath: "/api/voice",
-    text: "我在。",
+    text: "收到。",
     locale: "zh-CN",
   });
-  const lookup = cache.sourceFor("我在。", "zh-CN");
+  const lookup = cache.sourceFor("收到。", "zh-CN");
   audioGate.resolve();
 
   assert.equal(await prewarm, "blob:pending-ack");

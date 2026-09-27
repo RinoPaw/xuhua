@@ -1,6 +1,10 @@
 import { browserFetch } from "./browserFetch.js";
 import { requestTtsSource, resolveSpeechLocale } from "./voiceProtocol.js";
 
+const FIXED_CLIPS = new Map([
+  ["zh-CN\u0000我在。", "/assets/audio/ack-wozai-zh-cn.mp3"],
+]);
+
 function clipKey(text, locale) {
   return `${resolveSpeechLocale(locale)}\u0000${String(text || "").trim()}`;
 }
@@ -45,7 +49,8 @@ export class TtsClipCache {
     const key = clipKey(text, locale);
     const cached = this.urls.get(key);
     if (cached) return cached;
-    const pending = this.pending.get(key)?.promise;
+    const pending = this.pending.get(key)?.promise
+      || (FIXED_CLIPS.has(key) ? this.prewarm({ text, locale }) : null);
     if (!pending) return "";
     try {
       await pending;
@@ -67,7 +72,7 @@ export class TtsClipCache {
 
     const controller = new AbortController();
     const promise = (async () => {
-      const source = await requestTtsSource({
+      const source = FIXED_CLIPS.get(key) || await requestTtsSource({
         websocketPath,
         text: content,
         traceId: "voice-prewarm",

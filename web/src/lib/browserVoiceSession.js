@@ -89,8 +89,7 @@ export class BrowserVoiceSession {
   }
 
   prewarmAcknowledgement() {
-    const locale = compactRecognitionContext(this.getRecognitionContext()).locale_hint;
-    const pending = this.output?.prewarm?.(ACKNOWLEDGEMENT_TEXT, locale);
+    const pending = this.output?.prewarm?.(ACKNOWLEDGEMENT_TEXT, "zh-CN");
     if (pending?.catch) void pending.catch(() => {});
   }
 

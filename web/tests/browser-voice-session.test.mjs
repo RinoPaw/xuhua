@@ -186,6 +186,18 @@ test("browser voice session owns startup, context sync, and transport state", as
   );
 });
 
+test("the Chinese acknowledgement prewarms its fixed clip with an English browser hint", () => {
+  const harness = createHarness();
+  harness.session.getRecognitionContext = () => ({ localeHint: "en-US" });
+
+  harness.session.prewarmAcknowledgement();
+
+  assert.deepEqual(
+    harness.calls.find((entry) => entry[0] === "output.prewarm"),
+    ["output.prewarm", "我在。", "zh-CN"],
+  );
+});
+
 test("voice startup fails if the initial context frame cannot be sent", async () => {
   const harness = createHarness();
   harness.connection.sendJson = () => false;

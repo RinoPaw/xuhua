@@ -34,3 +34,25 @@ test("display starts the working voice transport immediately", async () => {
   assert.equal(session.microphoneEnabled, true);
   assert.equal(sent[0].type, "context");
 });
+
+test("typed persona questions wake the gate after a successful send", () => {
+  const sent = [];
+  const wakes = [];
+  const session = Object.create(PersonaBrowserVoiceSession.prototype);
+  session.connection = { connected: true };
+  session.send = (payload) => { sent.push(payload); return true; };
+  session.latency = { clear() {} };
+  session.transcript = { clear() {} };
+  session.input = { supersedeUtterance() {} };
+  session.stopSpeech = () => true;
+  session.markThinking = () => {};
+  session.gate = { wake(trigger) { wakes.push(trigger); } };
+
+  assert.equal(session.sendText("皮影戏是什么？"), true);
+  assert.deepEqual(sent, [{ type: "text", text: "皮影戏是什么？" }]);
+  assert.deepEqual(wakes, ["文字提问"]);
+
+  session.connection.connected = false;
+  assert.equal(session.sendText("再次提问"), false);
+  assert.deepEqual(wakes, ["文字提问"]);
+});

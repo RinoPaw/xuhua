@@ -24,6 +24,10 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
   or visual placeholders. The digital human itself remains a real video surface.
 - Treat `.superdesign/references/xuhua-high-fidelity-direction.png` as historical exploration, not a
   license to restore the superseded dark-wood/high-decoration treatment.
+- The standalone persona page is commonly shown at 9:16. Keep the digital human as the nearly
+  full-screen main visual; its dialogue uses two small floating captions near the lower edge, and
+  its text and voice buttons stay in the bottom corners. Do not use a large conversation panel that
+  covers about half the person.
 
 ## Supported voice path
 

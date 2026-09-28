@@ -56,6 +56,14 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     return true;
   }
 
+  sendText(value) {
+    const text = String(value || "").trim();
+    if (!text || !this.connection.connected) return false;
+    const sent = super.sendText(text);
+    if (sent) this.gate.wake("文字提问");
+    return sent;
+  }
+
   handleOutputTerminal(result = {}) {
     super.handleOutputTerminal(result);
     this.gate.responseSettled();

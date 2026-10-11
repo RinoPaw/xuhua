@@ -48,6 +48,9 @@ class VoiceConnectionScope:
         self._answer = TaskSlot()
         self._answer_turn_id: str | None = None
         self._answer_lease: AdmissionLease | None = None
+        # A task can release its turn identity before the admission slot has
+        # finished releasing. Closing/replacing the connection must join it.
+        self._answer_release: asyncio.Task[None] | None = None
         self._asr_start = TaskSlot()
         self._asr_stream: Any | None = None
         # Own every stream until its finalizer finishes, even after detach_asr.
@@ -111,21 +114,38 @@ class VoiceConnectionScope:
         return True
 
     async def _release_answer_lease(self) -> None:
-        lease, self._answer_lease = self._answer_lease, None
-        turn_id, self._answer_lease_turn_id = self._answer_lease_turn_id, None
-        started_at, self._answer_started_at = self._answer_started_at, None
-        if lease is not None:
-            try:
-                await lease.release()
-            finally:
-                LOGGER.info(
-                    "voice.chat.release connection=%s turn=%s held_ms=%.1f",
-                    self.connection_id,
-                    turn_id or "-",
-                    max(0.0, (self._clock() - started_at) * 1000)
-                    if started_at is not None
-                    else 0.0,
-                )
+        release_task = self._answer_release
+        if release_task is None:
+            lease, self._answer_lease = self._answer_lease, None
+            turn_id, self._answer_lease_turn_id = self._answer_lease_turn_id, None
+            started_at, self._answer_started_at = self._answer_started_at, None
+            if lease is None:
+                return
+
+            async def release_owned_lease() -> None:
+                try:
+                    await lease.release()
+                finally:
+                    LOGGER.info(
+                        "voice.chat.release connection=%s turn=%s held_ms=%.1f",
+                        self.connection_id,
+                        turn_id or "-",
+                        max(0.0, (self._clock() - started_at) * 1000)
+                        if started_at is not None
+                        else 0.0,
+                    )
+
+            # Do not attach lease release to the answer task: that task may be
+            # cancelled while its finally block is already releasing capacity.
+            release_task = asyncio.create_task(
+                release_owned_lease(), name=f"voice-chat-release-{turn_id or 'unknown'}"
+            )
+            self._answer_release = release_task
+        try:
+            await asyncio.shield(release_task)
+        finally:
+            if release_task.done() and self._answer_release is release_task:
+                self._answer_release = None
 
     async def finish_answer(self, task, turn_id: str) -> None:
         if self.clear_answer_if(task, turn_id):

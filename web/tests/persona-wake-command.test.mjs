@@ -53,8 +53,11 @@ function makeSession({ gate = new PersonaVoiceGate({ log: { info() {} } }) } = {
     connection,
     input: {
       reset() {},
+      resetOnset() {},
+      blockFor() {},
       clearBargeInCandidate() {},
       supersedeUtterance() {},
+      finishActiveUtterance() { return true; },
       state: { utteranceActive: false },
     },
     turns: { ignoreActive() {}, reset() {} },

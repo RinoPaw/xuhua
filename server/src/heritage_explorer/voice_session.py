@@ -349,7 +349,7 @@ class VoiceSessionRuntime:
                     await self.send(
                         AssistantDeltaEvent(
                             session_id=event.session_id,
-                            turn_id=event.turn_id,
+                            turn_id=turn_id,
                             text=delta,
                             locale=event_locale,
                         )
@@ -363,7 +363,7 @@ class VoiceSessionRuntime:
                     await self.send(
                         SourcesEvent(
                             session_id=event.session_id,
-                            turn_id=event.turn_id,
+                            turn_id=turn_id,
                             items=sources,
                         )
                     )
@@ -373,7 +373,7 @@ class VoiceSessionRuntime:
                     await self.send(
                         AssistantDoneEvent(
                             session_id=event.session_id,
-                            turn_id=event.turn_id,
+                            turn_id=turn_id,
                             text=str(event.payload.get("answer") or ""),
                             locale=event_locale,
                         )
@@ -398,7 +398,7 @@ class VoiceSessionRuntime:
                     await self.send(
                         AssistantCancelledEvent(
                             session_id=event.session_id,
-                            turn_id=event.turn_id,
+                            turn_id=turn_id,
                             reason=str(event.payload.get("reason") or "cancelled"),
                         )
                     )
@@ -435,6 +435,8 @@ class VoiceSessionRuntime:
         question: str,
         reason: str,
         locale_hint: str = "",
+        *,
+        requested_turn_id: str = "",
     ) -> None:
         await self.stop_answer(reason)
         try:
@@ -447,11 +449,12 @@ class VoiceSessionRuntime:
                 VoiceErrorEvent(
                     "回答请求过于频繁，请稍后再试",
                     code=f"chat_{exc.reason}",
+                    turn_id=requested_turn_id,
                 )
             )
             return
 
-        turn_id = uuid.uuid4().hex
+        turn_id = requested_turn_id or uuid.uuid4().hex
         try:
             self.lifecycle.start_answer(
                 turn_id,
@@ -838,7 +841,9 @@ class VoiceSessionRuntime:
             self.batch.clear()
             await self.lifecycle.cancel_finalizers()
             await self.lifecycle.cancel_asr()
-            await self.start_answer(command.text, "text_input")
+            await self.start_answer(
+                command.text, "text_input", requested_turn_id=command.turn_id
+            )
 
     def handle_context(self, command: ContextCommand) -> None:
         self.update_context(command)

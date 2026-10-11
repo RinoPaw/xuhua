@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
+import re
 from typing import Any, TypeAlias
 
 
@@ -52,6 +53,7 @@ class WakeCommand:
 @dataclass(frozen=True, slots=True)
 class TextCommand:
     text: str
+    turn_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,7 +170,12 @@ def decode_voice_command(raw: str) -> VoiceCommand | None:
         text = str(event.get("text") or "").strip()
         if not text or len(text) > MAX_VOICE_TEXT_CHARS:
             return None
-        return TextCommand(text)
+        turn_id = event.get("turn_id", "")
+        if not isinstance(turn_id, str) or (
+            turn_id and re.fullmatch(r"[0-9a-f]{32}", turn_id) is None
+        ):
+            return None
+        return TextCommand(text, turn_id=turn_id)
     if event_type == "context":
         return _context_command(event)
     return None

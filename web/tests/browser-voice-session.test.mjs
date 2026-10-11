@@ -279,7 +279,11 @@ test("browser voice session supersedes microphone input before a typed turn", ()
     harness.calls.some((entry) => entry[0] === "transcript.clear" && entry[1] === true),
     true,
   );
-  assert.deepEqual(harness.sent, [{ type: "text", text: "汴绣是什么" }]);
+  assert.deepEqual(harness.sent.map(({ type, text }) => ({ type, text })), [
+    { type: "text", text: "汴绣是什么" },
+  ]);
+  assert.match(harness.sent[0].turn_id, /^[0-9a-f]{32}$/u);
+  assert.equal(harness.turns.current, harness.sent[0].turn_id);
   assert.equal(harness.calls.some((entry) => entry[0] === "callback.bargeIn"), true);
   assert.equal(harness.machine.turn, "thinking");
 });
@@ -424,4 +428,63 @@ test("voice diagnostic console records IDs and lengths, never spoken text", () =
   for (const line of diagnosticLines) {
     assert.doesNotMatch(line, /个人敏感内容|不要记录回答正文/);
   }
+});
+
+
+
+test("a typed turn claims its identity before any server status is received", () => {
+  const h = createHarness();
+  h.connection.connected = true;
+  h.output.pipelineActive = true;
+  h.turns.current = "old-turn";
+
+  assert.equal(h.session.sendText("新问题"), true);
+  const requestedId = h.sent.at(-1).turn_id;
+  assert.match(requestedId, /^[0-9a-f]{32}$/u);
+  assert.equal(h.turns.current, requestedId);
+  assert.equal(h.turns.ignoredTurns.has("old-turn"), true);
+  const callsBeforeLateEvents = h.calls.length;
+
+  assert.equal(h.session.routeServerEvent({
+    type: "status", status: "thinking", turn_id: "old-turn",
+  }), false);
+  assert.equal(h.session.routeServerEvent({
+    type: "assistant.delta", turn_id: "old-turn", text: "旧回答",
+  }), false);
+  assert.equal(h.session.routeServerEvent({
+    type: "assistant.done", turn_id: "old-turn", text: "旧回答",
+  }), false);
+  assert.equal(h.session.routeServerEvent({
+    type: "error", turn_id: "old-turn", message: "旧轮次失败",
+  }), false);
+  assert.equal(h.calls.length, callsBeforeLateEvents);
+  assert.equal(h.turns.current, requestedId);
+
+  assert.equal(h.session.routeServerEvent({
+    type: "status", status: "thinking", turn_id: requestedId,
+  }), true);
+  assert.equal(h.session.routeServerEvent({
+    type: "assistant.delta", turn_id: requestedId, text: "新回答",
+  }), true);
+  assert.equal(h.calls.some(([method, text]) => method === "output.append" && text === "新回答"), true);
+});
+
+test("consecutive typed turns reject a delayed first response without a status handshake", () => {
+  const h = createHarness();
+  h.connection.connected = true;
+  assert.equal(h.session.sendText("第一问"), true);
+  const first = h.sent.at(-1).turn_id;
+  assert.equal(h.session.sendText("第二问"), true);
+  const second = h.sent.at(-1).turn_id;
+  assert.notEqual(first, second);
+  assert.equal(h.turns.current, second);
+
+  assert.equal(h.session.routeServerEvent({
+    type: "assistant.done", turn_id: first, text: "第一问的迟到回答",
+  }), false);
+  assert.equal(h.session.routeServerEvent({
+    type: "assistant.done", turn_id: second, text: "第二问的回答",
+  }), true);
+  assert.equal(h.calls.some(([kind, text]) => kind === "output.finish" && text === "第二问的回答"), true);
+  assert.equal(h.calls.some(([kind, text]) => kind === "output.finish" && text === "第一问的迟到回答"), false);
 });

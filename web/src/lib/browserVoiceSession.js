@@ -19,6 +19,19 @@ const ACKNOWLEDGEMENT_TEXT = "我在。";
 
 function noop() {}
 
+function makeClientTurnId() {
+  const bytes = new Uint8Array(16);
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    // Only a correlation identifier, never an authorization token.
+    for (let index = 0; index < bytes.length; index += 1) {
+      bytes[index] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 function logFinalVoiceText(log, speaker, message) {
   const content = String(message?.text || "").trim();
   if (!content) return;
@@ -437,12 +450,16 @@ export class BrowserVoiceSession {
   sendText(value) {
     const text = String(value || "").trim();
     if (!text || !this.connection.connected) return false;
-    const sent = this.send({ type: "text", text });
+    // Reserve the turn identity before the server starts generating. Delayed
+    // packets from the previous turn cannot claim the otherwise empty slot.
+    const turnId = makeClientTurnId();
+    const sent = this.send({ type: "text", text, turn_id: turnId });
     if (!sent) return this.handleTransportFailure();
     this.latency.clear();
     this.transcript.clear(true);
     this.input.supersedeUtterance();
     this.stopSpeech(true, false);
+    this.turns.setActive(turnId);
     this.markThinking();
     return true;
   }

@@ -84,3 +84,33 @@ def test_cancelled_voice_turn_is_forwarded_to_browser(monkeypatch) -> None:
     assert cancelled["session_id"] == "voice-session"
     assert cancelled["reason"] == "superseded"
     assert cancelled["turn_id"]
+
+
+
+def test_text_turn_echoes_client_identity_on_thinking_and_terminal_events(monkeypatch) -> None:
+    monkeypatch.setattr(api_module, "XF_APP_ID", "test-app")
+    monkeypatch.setattr(api_module, "XF_API_KEY", "test-key")
+    monkeypatch.setattr(api_module, "XF_API_SECRET", "test-secret")
+    monkeypatch.setattr(api_module, "XF_ASR_HOST", "iat.xf-yun.com")
+
+    app = create_app(assistant=CancelledAssistant())  # type: ignore[arg-type]
+    requested = "a" * 32
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/voice") as websocket:
+            websocket.receive_json()
+            websocket.send_json({
+                "type": "text",
+                "text": "新的问题",
+                "turn_id": requested,
+            })
+            messages = receive_until(
+                websocket, lambda event: event.get("type") == "assistant.cancelled"
+            )
+
+    assert any(
+        event.get("type") == "status"
+        and event.get("status") == "thinking"
+        and event.get("turn_id") == requested
+        for event in messages
+    )
+    assert messages[-1]["turn_id"] == requested

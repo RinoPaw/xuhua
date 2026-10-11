@@ -90,3 +90,20 @@ def test_invalid_and_unknown_frames_are_ignored() -> None:
     assert decode_voice_command("[]") is None
     assert decode_voice_command('{"type":"text","text":""}') is None
     assert decode_voice_command('{"type":"future.command"}') is None
+
+
+
+def test_client_turn_id_is_validated_and_optional_for_legacy_text_commands() -> None:
+    value = "a" * 32
+    assert decode_voice_command(
+        json.dumps({"type": "text", "text": "新问题", "turn_id": value})
+    ) == TextCommand("新问题", turn_id=value)
+    assert decode_voice_command(
+        json.dumps({"type": "text", "text": "新问题", "turn_id": "bad"})
+    ) is None
+    assert decode_voice_command(
+        json.dumps({"type": "text", "text": "新问题", "turn_id": 33})
+    ) is None
+    assert decode_voice_command('{"type":"text","text":"旧客户端"}') == TextCommand(
+        "旧客户端"
+    )

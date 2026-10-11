@@ -176,11 +176,14 @@ test("typed persona questions wake the gate after a successful send", () => {
   session.transcript = { clear() {} };
   session.input = { supersedeUtterance() {} };
   session.stopSpeech = () => true;
+  session.turns = { setActive() {} };
   session.markThinking = () => {};
   session.gate = { wake(trigger) { wakes.push(trigger); } };
 
   assert.equal(session.sendText("皮影戏是什么？"), true);
-  assert.deepEqual(sent, [{ type: "text", text: "皮影戏是什么？" }]);
+  assert.equal(sent[0].type, "text");
+  assert.equal(sent[0].text, "皮影戏是什么？");
+  assert.match(sent[0].turn_id, /^[0-9a-f]{32}$/u);
   assert.deepEqual(wakes, ["文字提问"]);
 
   session.connection.connected = false;

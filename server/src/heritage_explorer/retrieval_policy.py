@@ -10,7 +10,9 @@ from .dataset import KnowledgeBase, normalize_text
 from .language import DEFAULT_LOCALE
 from .search import normalize_search_query, tokenize
 
-ITEM_COUNT_WORDS = {
+ITEM_COUNT_DIGITS = {
+    "零": 0,
+    "〇": 0,
     "一": 1,
     "两": 2,
     "二": 2,
@@ -21,8 +23,14 @@ ITEM_COUNT_WORDS = {
     "七": 7,
     "八": 8,
     "九": 9,
-    "十": 10,
 }
+ITEM_COUNT_UNITS = {"十": 10, "百": 100, "千": 1000}
+ITEM_COUNT_RE = re.compile(
+    r"(?<![\d零〇一二两三四五六七八九十百千])"
+    r"(\d+|[零〇一二两三四五六七八九十百千]+)\s*(?:个|项|种|类)"
+)
+
+
 CATALOGUE_BROWSE_ACTIONS = (
     "推荐",
     "有哪些",
@@ -111,18 +119,41 @@ REGION_SUFFIX_RE = re.compile(
 )
 
 
+def parse_item_count(token: str) -> int | None:
+    """Parse a complete Arabic or conventional Chinese number without truncation."""
+
+    if token.isdecimal():
+        return int(token)
+
+    total = 0
+    digit: int | None = None
+    previous_unit = 10000
+    for character in token:
+        if character in ITEM_COUNT_DIGITS:
+            value = ITEM_COUNT_DIGITS[character]
+            # A zero can bridge hundreds and ones, but digits cannot simply concatenate.
+            if digit is not None and digit != 0:
+                return None
+            digit = value
+            continue
+        unit = ITEM_COUNT_UNITS.get(character)
+        if unit is None or unit >= previous_unit:
+            return None
+        total += (digit if digit is not None else 1) * unit
+        digit = None
+        previous_unit = unit
+    return total + (digit or 0)
+
+
 def requested_item_count(question: str) -> int | None:
-    match = re.search(r"(\d{1,2}|[一二两三四五六七八九十])\s*(?:个|项|种|类)", question)
+    match = ITEM_COUNT_RE.search(question)
     if not match:
         match = re.search(
-            r"\b(\d{1,2})\s*(?:projects?|items?|types?|traditions?|examples?)\b",
+            r"\b(\d+)\s*(?:projects?|items?|types?|traditions?|examples?)\b",
             question,
             flags=re.IGNORECASE,
         )
-    if not match:
-        return None
-    token = match.group(1)
-    return int(token) if token.isdigit() else ITEM_COUNT_WORDS[token]
+    return parse_item_count(match.group(1)) if match else None
 
 
 @lru_cache(maxsize=8)

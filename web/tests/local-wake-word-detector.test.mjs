@@ -61,3 +61,39 @@ test("local wake detector triggers once for 叙华", async () => {
   detector.stop();
   assert.equal(calls.some((entry) => entry[0] === "media.stop"), true);
 });
+
+
+// Stopping while the worklet is being attached must not resurrect capture.
+test("cancelled local wake startup releases the microphone", async () => {
+  let completeProcessor;
+  const calls = [];
+  const media = {
+    async requestStream() { calls.push("request"); },
+    async attachProcessor() {
+      await new Promise((resolve) => { completeProcessor = resolve; });
+      calls.push("attach");
+    },
+    stop() { calls.push("stop"); },
+  };
+  const detector = new LocalWakeWordDetector({
+    runtimeLoader: async () => ({
+      KWS: {
+        async loadModel() { return {}; },
+        createKeywordSpotter() {
+          return { handle: 1, createStream: () => ({ handle: 1 }), free() {} };
+        },
+      },
+    }),
+    media,
+    log: { info() {} },
+  });
+  const pending = detector.start(() => {});
+  for (let i = 0; i < 10 && !completeProcessor; i += 1) await Promise.resolve();
+  assert.equal(typeof completeProcessor, "function");
+  detector.stop();
+  completeProcessor();
+  assert.equal(await pending, false);
+  assert.equal(detector.active, false);
+  assert.equal(calls.at(-1), "attach");
+  detector.dispose();
+});

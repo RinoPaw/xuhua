@@ -24,6 +24,7 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
   });
   const [composerOpen, setComposerOpen] = useState(false);
   const [draft, setDraft] = useState("");
+  const [voiceAvailable, setVoiceAvailable] = useState(null);
   const personaSessionRef = useRef(null);
   const realtimeRef = useRef(null);
   const inputRef = useRef(null);
@@ -88,8 +89,29 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
   realtimeRef.current = realtime;
 
   useEffect(() => {
-    void realtime.start();
-  }, [realtime.start]);
+    const controller = new AbortController();
+    void fetch("/api/meta", { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("voice_metadata_unavailable");
+        return response.json();
+      })
+      .then((meta) => {
+        if (controller.signal.aborted) return;
+        const available = meta?.capabilities?.realtime_voice === true;
+        setVoiceAvailable(available);
+        if (available) void personaSessionRef.current?.armWake();
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          setVoiceAvailable(false);
+          console.warn("[叙华][persona] voice capability unavailable", error);
+        }
+      });
+    return () => {
+      controller.abort();
+      personaSessionRef.current?.stop();
+    };
+  }, []);
 
   useEffect(() => {
     if (composerOpen) inputRef.current?.focus();
@@ -106,6 +128,7 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
 
   const handleVoice = () => {
     dispatch({ type: "clear.error" });
+    if (voiceAvailable === false) return;
     if (realtime.isConnected) {
       void realtime.toggleMicrophone();
       return;
@@ -181,10 +204,10 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
             className={`persona-action persona-voice-action ${voiceActive ? "is-active" : ""}`}
             type="button"
             onClick={handleVoice}
-            disabled={connecting}
+            disabled={connecting || voiceAvailable === false}
             aria-label={realtime.isConnected
               ? (voiceActive ? "关闭麦克风" : "开启麦克风")
-              : "开启语音对话"}
+              : voiceAvailable === false ? "语音服务暂不可用" : "开启语音对话"}
             aria-pressed={realtime.isConnected ? voiceActive : undefined}
           >{connecting ? <SpinnerGap className="spin" /> : realtime.isConnected && !voiceActive
             ? <MicrophoneSlash /> : <Microphone />}</button>

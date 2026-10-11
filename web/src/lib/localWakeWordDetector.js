@@ -117,6 +117,8 @@ export class LocalWakeWordDetector {
     this.resampler = null;
     this.inputRate = 0;
     this.initializing = null;
+    this.starting = null;
+    this.startGeneration = 0;
     this.active = false;
     this.triggered = false;
     this.onWake = null;
@@ -189,19 +191,43 @@ export class LocalWakeWordDetector {
   async start(onWake) {
     this.onWake = onWake || null;
     if (this.active) return true;
-    await this.initialize();
-    this.triggered = false;
-    this.resampler = null;
-    this.inputRate = 0;
-    await this.media.requestStream();
-    await this.media.attachProcessor((samples, inputRate) => this.process(samples, inputRate));
-    this.active = true;
-    this.log.info?.("[叙华][wake] listening locally");
-    return true;
+    // Serialize starts so an earlier cancelled getUserMedia cannot attach
+    // a second AudioWorklet or resurrect local capture after stop().
+    if (this.starting) {
+      try { await this.starting; } catch { /* retry on the next start */ }
+      if (this.active) return true;
+    }
+    const generation = ++this.startGeneration;
+    const attempt = (async () => {
+      await this.initialize();
+      if (generation !== this.startGeneration) return false;
+      this.triggered = false;
+      this.resampler = null;
+      this.inputRate = 0;
+      try {
+        await this.media.requestStream();
+        if (generation !== this.startGeneration) return false;
+        await this.media.attachProcessor((samples, inputRate) => this.process(samples, inputRate));
+        if (generation !== this.startGeneration) return false;
+        this.active = true;
+        this.log.info?.("[叙华][wake] listening locally");
+        return true;
+      } catch (error) {
+        if (generation === this.startGeneration) this.media.stop();
+        throw error;
+      }
+    })();
+    this.starting = attempt;
+    try {
+      return await attempt;
+    } finally {
+      if (this.starting === attempt) this.starting = null;
+    }
   }
 
   stop() {
     const wasActive = this.active;
+    this.startGeneration += 1;
     this.active = false;
     this.triggered = false;
     this.onWake = null;

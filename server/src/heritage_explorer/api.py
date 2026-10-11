@@ -12,6 +12,7 @@ from typing import Any
 import edge_tts
 from fastapi import FastAPI, HTTPException, Path as ApiPath, Query, Request, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from . import __version__
@@ -195,15 +196,15 @@ def create_app(
     async def synthesize_speech(
         request: Request,
         token: str = ApiPath(..., min_length=16, max_length=128),
+        progressive: bool = Query(default=False, alias="stream"),
     ) -> Response:
-        """Synthesize one complete audio clip before committing HTTP headers.
+        """Stream early audio when requested, retaining buffered retries.
 
-        Edge TTS can fail before or during its async stream. Returning a
-        StreamingResponse committed a misleading 200 response before those
-        failures were known, which surfaced in Chromium as
-        ERR_INCOMPLETE_CHUNKED_ENCODING. Buffering each already-short speech
-        segment keeps one canonical TTS path while making provider failure an
-        ordinary HTTP error that the browser can retry safely.
+        The first audio chunk must be obtained before committing response
+        headers, so startup/provider errors remain ordinary HTTP failures.
+        Subsequent streaming failures abort playback rather than silently
+        returning a successful truncated answer. A retry always uses the
+        original fully buffered response to avoid repeated partial playback.
         """
 
         client_id = client_key_from_scope(request.scope)
@@ -233,8 +234,8 @@ def create_app(
             language_profile.code,
         )
 
-        audio = bytearray()
         first_chunk_logged = False
+        bytes_sent = 0
         try:
             communicate = edge_tts.Communicate(
                 ticket.text,
@@ -242,18 +243,113 @@ def create_app(
                 rate="-2%",
                 pitch="+0Hz",
             )
-            async for chunk in communicate.stream():
-                if chunk.get("type") != "audio" or not chunk.get("data"):
-                    continue
-                if not first_chunk_logged:
-                    first_chunk_logged = True
-                    LOGGER.info(
-                        "[trace=%s segment=%s] tts.first_audio_chunk +%.3fs",
+            upstream = communicate.stream()
+        except Exception as exc:
+            await lease.release()
+            LOGGER.warning(
+                "[trace=%s segment=%s] tts.provider.failed locale=%s reason=%s",
+                ticket.trace_id or "-",
+                ticket.segment,
+                language_profile.code,
+                type(exc).__name__,
+            )
+            raise HTTPException(status_code=502, detail="tts_provider_unavailable") from None
+
+        async def audio_chunks() -> AsyncIterator[bytes]:
+            nonlocal first_chunk_logged, bytes_sent
+            try:
+                async for chunk in upstream:
+                    if chunk.get("type") != "audio" or not chunk.get("data"):
+                        continue
+                    data = chunk["data"]
+                    if not first_chunk_logged:
+                        first_chunk_logged = True
+                        LOGGER.info(
+                            "[trace=%s segment=%s] tts.first_audio_chunk +%.3fs",
+                            ticket.trace_id or "-",
+                            ticket.segment,
+                            time.perf_counter() - started,
+                        )
+                    bytes_sent += len(data)
+                    yield data
+                LOGGER.info(
+                    "[trace=%s segment=%s] tts.complete +%.3fs bytes=%s",
+                    ticket.trace_id or "-",
+                    ticket.segment,
+                    time.perf_counter() - started,
+                    bytes_sent,
+                )
+            finally:
+                close = getattr(upstream, "aclose", None)
+                if close is not None:
+                    await close()
+
+        audio = audio_chunks()
+        streaming = progressive and "tts_retry" not in request.query_params
+        if streaming:
+            # The network/browser can start consuming this MP3 before Edge
+            # finishes its remaining chunks.
+            try:
+                first = await anext(audio, None)
+            except asyncio.CancelledError:
+                await audio.aclose()
+                await lease.release()
+                raise
+            except Exception as exc:
+                await audio.aclose()
+                await lease.release()
+                LOGGER.warning(
+                    "[trace=%s segment=%s] tts.provider.failed locale=%s reason=%s",
+                    ticket.trace_id or "-",
+                    ticket.segment,
+                    language_profile.code,
+                    type(exc).__name__,
+                )
+                raise HTTPException(status_code=502, detail="tts_provider_unavailable") from None
+            if not first:
+                await audio.aclose()
+                await lease.release()
+                raise HTTPException(status_code=502, detail="tts_provider_no_audio")
+
+            async def progressive_audio() -> AsyncIterator[bytes]:
+                try:
+                    yield first
+                    async for data in audio:
+                        yield data
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    LOGGER.warning(
+                        "[trace=%s segment=%s] tts.provider.interrupted locale=%s reason=%s",
                         ticket.trace_id or "-",
                         ticket.segment,
-                        time.perf_counter() - started,
+                        language_profile.code,
+                        type(exc).__name__,
                     )
-                audio.extend(chunk["data"])
+                    # Never turn a partially spoken response into a successful
+                    # short response. Abort the HTTP stream and let HTMLAudio
+                    # report an error (without replaying already heard audio).
+                    raise RuntimeError("tts_stream_interrupted") from None
+                finally:
+                    await audio.aclose()
+                    await lease.release()
+
+            return StreamingResponse(
+                progressive_audio(),
+                media_type="audio/mpeg",
+                headers={
+                    "Cache-Control": "no-store",
+                    "Accept-Ranges": "none",
+                    "X-Speech-Locale": language_profile.code,
+                },
+            )
+
+        # Buffered fallback provides a reliable replayable MP3 for legacy
+        # callers and for attempts with a tts_retry query parameter.
+        payload = bytearray()
+        try:
+            async for data in audio:
+                payload.extend(data)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -266,27 +362,14 @@ def create_app(
             )
             raise HTTPException(status_code=502, detail="tts_provider_unavailable") from None
         finally:
+            await audio.aclose()
             await lease.release()
 
-        if not audio:
-            LOGGER.warning(
-                "[trace=%s segment=%s] tts.provider.empty locale=%s",
-                ticket.trace_id or "-",
-                ticket.segment,
-                language_profile.code,
-            )
+        if not payload:
             raise HTTPException(status_code=502, detail="tts_provider_no_audio")
 
-        payload = bytes(audio)
-        LOGGER.info(
-            "[trace=%s segment=%s] tts.complete +%.3fs bytes=%s",
-            ticket.trace_id or "-",
-            ticket.segment,
-            time.perf_counter() - started,
-            len(payload),
-        )
         return Response(
-            content=payload,
+            content=bytes(payload),
             media_type="audio/mpeg",
             headers={
                 "Cache-Control": "no-store",

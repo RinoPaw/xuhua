@@ -257,3 +257,116 @@ test("network TTS fails closed after two retries instead of switching engines", 
   assert.equal(terminals.length, 1);
   assert.equal(terminals[0].failed, true);
 });
+
+
+test("old audio ending cannot advance a new generation during synchronous replacement", () => {
+  const audios = [];
+  const emitted = [];
+  let scheduler;
+  let replacementGeneration = 0;
+  scheduler = new TtsScheduler({
+    prepareSource: ({ text }) => `/tts/${text}`,
+    createAudio: (url) => {
+      const audio = new FakeAudio(url);
+      audios.push(audio);
+      return audio;
+    },
+    onEvent: (event) => emitted.push(event),
+    onPlayingChange: (playing) => {
+      if (!playing && !replacementGeneration) {
+        replacementGeneration = scheduler.begin();
+        scheduler.enqueue("新的第一段");
+      }
+    },
+  });
+  scheduler.begin();
+  scheduler.enqueue("旧第一段");
+  scheduler.enqueue("旧第二段");
+  const old = audios[0];
+  old.emit("playing");
+  old.emit("ended");
+
+  assert.equal(replacementGeneration > 0, true);
+  assert.equal(audios.length, 3);
+  assert.equal(audios[1].playCalls, 0);
+  assert.equal(audios[2].playCalls, 1);
+  assert.equal(scheduler.segmentCount, 1);
+  assert.equal(emitted.filter((event) => event.type === "segment.complete").length, 0);
+});
+
+test("cancel from request-start callback avoids a needless TTS ticket", () => {
+  let scheduler;
+  let prepared = 0;
+  scheduler = new TtsScheduler({
+    prepareSource: () => { prepared += 1; return "/tts/old"; },
+    onEvent: (event) => {
+      if (event.type === "request.start") scheduler.stop();
+    },
+  });
+  scheduler.begin();
+  assert.equal(scheduler.enqueue("在请求前就取消"), false);
+  assert.equal(prepared, 0);
+});
+
+test("retry observation cancellation does not schedule an obsolete timer", () => {
+  const retries = [];
+  let scheduler;
+  scheduler = new TtsScheduler({
+    prepareSource: () => "/tts/error",
+    createAudio: (url) => new FakeAudio(url),
+    scheduleRetry: (callback) => { retries.push(callback); return callback; },
+    onEvent: (event) => {
+      if (event.type === "request.retry") scheduler.stop();
+    },
+  });
+  scheduler.begin();
+  scheduler.enqueue("被取消的重试");
+  const audio = scheduler.entries.get(0).audio;
+  audio.emit("error");
+  assert.equal(retries.length, 0);
+  assert.equal(scheduler.segmentCount, 0);
+});
+
+test("playing callback replacement cannot publish a stale playing event", () => {
+  let scheduler;
+  const emitted = [];
+  const audio = new FakeAudio("/tts/old");
+  scheduler = new TtsScheduler({
+    prepareSource: () => "/tts/old",
+    createAudio: () => audio,
+    onEvent: (event) => emitted.push(event),
+    onPlayingChange: (playing) => {
+      if (playing) scheduler.begin();
+    },
+  });
+  scheduler.begin();
+  scheduler.enqueue("旧段");
+  audio.emit("playing");
+  assert.equal(scheduler.segmentCount, 0);
+  assert.equal(emitted.filter((e) => e.type === "playing").length, 0);
+});
+
+test("scheduler attaches immutable trace IDs to deferred source preparations", async () => {
+  const preparations = [];
+  let resolveOld;
+  const scheduler = new TtsScheduler({
+    prepareSource: (meta) => {
+      preparations.push(meta);
+      return new Promise((resolve) => {
+        if (meta.traceId === "old") resolveOld = resolve;
+      });
+    },
+  });
+  scheduler.begin();
+  scheduler.enqueue("旧段", { traceId: "old" });
+  const originalSignal = preparations[0].signal;
+  scheduler.begin();
+  scheduler.enqueue("新段", { traceId: "new" });
+  assert.equal(originalSignal.aborted, true);
+  assert.equal(preparations[0].traceId, "old");
+  assert.equal(preparations[1].traceId, "new");
+  resolveOld("/tts/obsolete");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(scheduler.entries.get(0).traceId, "new");
+  scheduler.stop();
+});

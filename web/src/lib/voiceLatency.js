@@ -11,6 +11,18 @@ function format(value) {
   return value === null ? "-" : `${value.toFixed(1)}ms`;
 }
 
+// Never place provider exception messages, transcript contents, or arbitrary
+// server strings into diagnostics; only operational result codes are useful.
+function resultCode(value) {
+  const code = String(value || "").trim();
+  return /^[a-z][a-z0-9_]{0,63}$/u.test(code) ? code : "unknown";
+}
+
+const TERMINAL_OUTCOMES = new Set([
+  "completed", "failed", "cancelled", "interrupted", "disconnected",
+  "superseded", "rejected",
+]);
+
 export class VoiceLatencyTrace {
   constructor({ now = defaultNow, log = console } = {}) {
     this.now = now;
@@ -29,6 +41,7 @@ export class VoiceLatencyTrace {
       playing: null,
     };
     this.reported = false;
+    this.finished = false;
     this.context = {
       connectionId: "",
       utteranceId: null,
@@ -39,6 +52,7 @@ export class VoiceLatencyTrace {
   markSpeechEnd(lastVoiceAt) {
     const speechEnd = Number(lastVoiceAt);
     if (!(speechEnd > 0)) return false;
+    this.finish("superseded");
     this.clear();
     this.marks.speechEnd = speechEnd;
     this.marks.utteranceEnd = this.now();
@@ -80,7 +94,7 @@ export class VoiceLatencyTrace {
   }
 
   markPlaying(traceId = "-") {
-    if (this.marks.speechEnd === null || this.reported) return null;
+    if (this.marks.speechEnd === null || this.reported || this.finished) return null;
     if (this.marks.playing === null) this.marks.playing = this.now();
     const metrics = {
       totalMs: elapsed(this.marks.speechEnd, this.marks.playing),
@@ -101,5 +115,27 @@ export class VoiceLatencyTrace {
       + `tts_first_audio=${format(metrics.ttsFirstAudioMs)} audio_start=${format(metrics.audioStartMs)}`,
     );
     return metrics;
+  }
+
+  /** Exactly one privacy-safe terminal record per speech attempt.
+
+      This deliberately logs failed, rejected and interrupted attempts as well
+      as successful ones, so latency analyses are not success-only samples. */
+  finish(outcome, { reason = "" } = {}) {
+    if (this.marks.speechEnd === null || this.finished) return false;
+    this.finished = true;
+    const result = TERMINAL_OUTCOMES.has(outcome) ? outcome : "failed";
+    const terminalMs = elapsed(this.marks.speechEnd, this.now());
+    this.log.info?.(
+      `[叙华][voice.outcome connection=${this.context.connectionId || "-"} `
+      + `utterance=${this.context.utteranceId ?? "-"} turn=${this.context.turnId || "-"}] `
+      + `result=${result} reason=${resultCode(reason)} `
+      + `elapsed=${format(terminalMs)} `
+      + `transcribed=${this.marks.transcript !== null} `
+      + `first_delta=${this.marks.firstDelta !== null} `
+      + `first_audio=${this.marks.firstAudio !== null} `
+      + `playing=${this.marks.playing !== null}`,
+    );
+    return true;
   }
 }

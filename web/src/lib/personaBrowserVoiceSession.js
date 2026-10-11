@@ -87,6 +87,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
   async start() {
     this.autoWakeEnabled = true;
     this.wakeGeneration += 1;
+    this.armingWake = null;
     this.wakeDetector.stop();
     this.gate.wake("手动开启");
     const started = await super.start();
@@ -192,6 +193,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
   stop() {
     this.autoWakeEnabled = false;
     this.wakeGeneration += 1;
+    this.armingWake = null;
     this.wakeDetector.stop();
     return super.stop();
   }
@@ -200,6 +202,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.disposed = true;
     this.autoWakeEnabled = false;
     this.wakeGeneration += 1;
+    this.armingWake = null;
     this.wakeDetector.dispose();
     super.destroy();
     this.gate.dispose();

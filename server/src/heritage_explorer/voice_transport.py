@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 import uuid
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -20,6 +22,7 @@ from .voice_protocol import VoiceCommand, WakeCommand, decode_voice_command
 from .voice_session import VoiceSessionRuntime
 
 
+LOGGER = logging.getLogger(__name__)
 MAX_VOICE_FRAME_BYTES = 64 * 1024
 _ORIGIN_DEFAULT_PORTS = {"http": 80, "https": 443}
 
@@ -122,6 +125,9 @@ async def run_voice_transport(
 ) -> None:
     """Receive bounded frames, decode commands, and delegate state to the runtime."""
 
+    started_at = time.perf_counter()
+    reason = "client_disconnect"
+    LOGGER.info("voice.connection.open connection=%s", channel.connection_id)
     try:
         await channel.emit(ReadyEvent())
         while True:
@@ -129,6 +135,7 @@ async def run_voice_transport(
             if message.get("type") == "websocket.disconnect":
                 break
             if _frame_too_large(message):
+                reason = "frame_too_large"
                 await websocket.close(code=1009, reason="voice_frame_too_large")
                 break
 
@@ -137,6 +144,7 @@ async def run_voice_transport(
                 try:
                     await runtime.handle_audio(data)
                 except VoiceProviderError as exc:
+                    reason = str(exc)
                     await websocket.close(code=1013, reason=str(exc)[:123])
                     break
                 continue
@@ -149,12 +157,21 @@ async def run_voice_transport(
                 try:
                     await dispatch_voice_command(runtime, command)
                 except VoiceProviderError as exc:
+                    reason = str(exc)
                     await websocket.close(code=1013, reason=str(exc)[:123])
                     break
     except WebSocketDisconnect:
         pass
     finally:
-        await runtime.close()
+        try:
+            await runtime.close()
+        finally:
+            LOGGER.info(
+                "voice.connection.close connection=%s reason=%s duration_ms=%.1f",
+                channel.connection_id,
+                reason,
+                (time.perf_counter() - started_at) * 1000,
+            )
 
 
 def register_voice_route(

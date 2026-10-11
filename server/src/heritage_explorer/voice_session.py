@@ -190,7 +190,7 @@ class VoiceSessionRuntime:
 
         self.context = VoiceContextState()
         self.batch = VoiceBatchState()
-        self.lifecycle = VoiceConnectionScope()
+        self.lifecycle = VoiceConnectionScope(connection_id=connection_id)
         self.utterance_sequence = 0
         self.batch_lock = asyncio.Lock()
 
@@ -314,6 +314,9 @@ class VoiceSessionRuntime:
             turn_id,
             len(question),
         )
+        started_at = time.perf_counter()
+        first_delta_logged = False
+        outcome = "interrupted"
         await self.send(
             VoiceStatusEvent(
                 "thinking",
@@ -333,12 +336,21 @@ class VoiceSessionRuntime:
                     return
                 self.context.session_id = event.session_id
                 if event.type == "response.text.delta":
+                    delta = str(event.payload.get("delta") or "")
+                    if delta and not first_delta_logged:
+                        first_delta_logged = True
+                        LOGGER.info(
+                            "voice.llm.first_delta connection=%s turn=%s elapsed_ms=%.1f",
+                            self.connection_id,
+                            turn_id,
+                            (time.perf_counter() - started_at) * 1000,
+                        )
                     event_locale = str(event.payload.get("locale") or answer_locale)
                     await self.send(
                         AssistantDeltaEvent(
                             session_id=event.session_id,
                             turn_id=event.turn_id,
-                            text=str(event.payload.get("delta") or ""),
+                            text=delta,
                             locale=event_locale,
                         )
                     )
@@ -356,6 +368,7 @@ class VoiceSessionRuntime:
                         )
                     )
                 elif event.type == "turn.completed":
+                    outcome = "completed"
                     event_locale = str(event.payload.get("locale") or answer_locale)
                     await self.send(
                         AssistantDoneEvent(
@@ -366,6 +379,7 @@ class VoiceSessionRuntime:
                         )
                     )
                 elif event.type == "turn.failed":
+                    outcome = "failed"
                     code = str(event.payload.get("code") or "llm_unavailable")
                     message = (
                         "回答生成等待过久，请再试一次"
@@ -380,6 +394,7 @@ class VoiceSessionRuntime:
                         )
                     )
                 elif event.type == "turn.cancelled":
+                    outcome = "cancelled"
                     await self.send(
                         AssistantCancelledEvent(
                             session_id=event.session_id,
@@ -388,8 +403,10 @@ class VoiceSessionRuntime:
                         )
                     )
         except asyncio.CancelledError:
+            outcome = "cancelled"
             raise
         except Exception:
+            outcome = "failed"
             LOGGER.exception(
                 "voice.answer.failed connection=%s turn=%s",
                 self.connection_id,
@@ -402,6 +419,15 @@ class VoiceSessionRuntime:
                 )
             )
         finally:
+            LOGGER.info(
+                "voice.llm.finish connection=%s turn=%s outcome=%s "
+                "elapsed_ms=%.1f first_delta=%s",
+                self.connection_id,
+                turn_id,
+                outcome,
+                (time.perf_counter() - started_at) * 1000,
+                first_delta_logged,
+            )
             await self.lifecycle.finish_answer(asyncio.current_task(), turn_id)
 
     async def start_answer(
@@ -553,6 +579,8 @@ class VoiceSessionRuntime:
         utterance_id: int,
         generation: int,
     ) -> None:
+        final_started_at = time.perf_counter()
+        final_status = "cancelled"
         try:
             await self.send(
                 VoiceStatusEvent(
@@ -562,6 +590,7 @@ class VoiceSessionRuntime:
             )
             await start_task
             transcript = await stream.finish()
+            final_status = "completed"
             LOGGER.info(
                 "voice.asr.finished connection=%s utterance=%s chars=%s",
                 self.connection_id,
@@ -583,6 +612,7 @@ class VoiceSessionRuntime:
         except asyncio.CancelledError:
             raise
         except VoiceProviderError:
+            final_status = "failed"
             LOGGER.warning(
                 "voice.asr.failed connection=%s utterance=%s",
                 self.connection_id,
@@ -595,6 +625,14 @@ class VoiceSessionRuntime:
                 self.batch.languages[utterance_id] = ""
                 self.batch.failures.add(utterance_id)
         finally:
+            LOGGER.info(
+                "voice.asr.finalize connection=%s utterance=%s status=%s "
+                "finalize_ms=%.1f",
+                self.connection_id,
+                utterance_id,
+                final_status,
+                (time.perf_counter() - final_started_at) * 1000,
+            )
             try:
                 await self.lifecycle.release_asr(stream, label="voice.asr.finalizer")
             finally:
@@ -742,6 +780,7 @@ class VoiceSessionRuntime:
                 self.start_asr(stream, utterance_id),
                 name=f"voice-asr-start-{utterance_id}",
                 lease=asr_lease,
+                utterance_id=utterance_id,
             )
         except BaseException:
             await close_resource(stream, label="voice.asr.unowned")

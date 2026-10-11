@@ -181,3 +181,48 @@ def test_asr_close_failure_still_returns_admission_slot() -> None:
         await replacement.release()
 
     asyncio.run(scenario())
+
+
+
+def test_voice_lifecycle_logs_each_budget_release_once(caplog) -> None:
+    import logging
+
+    async def scenario() -> None:
+        tick = [1.0]
+        controller = AdmissionController({
+            "chat": AdmissionPolicy(1, 10, 10),
+            "asr": AdmissionPolicy(1, 10, 10),
+        })
+        scope = VoiceConnectionScope(connection_id="trace-conn", clock=lambda: tick[0])
+
+        async def blocked() -> None:
+            await asyncio.Future()
+
+        chat_lease = await controller.acquire("chat", "client")
+        scope.start_answer("trace-turn", blocked(), lease=chat_lease)
+        tick[0] += 0.025
+        await scope.cancel_answer()
+        again = await controller.acquire("chat", "other")
+        await again.release()
+
+        asr_lease = await controller.acquire("asr", "client")
+        stream = RecordingStream()
+        scope.start_asr(stream, blocked(), lease=asr_lease, utterance_id=7)
+        tick[0] += 0.050
+        await scope.cancel_asr()
+        await scope.release_asr(stream, label="voice.asr.duplicate")
+        again = await controller.acquire("asr", "other")
+        await again.release()
+        assert stream.closed
+
+    with caplog.at_level(logging.INFO, logger="heritage_explorer.voice_lifecycle"):
+        asyncio.run(scenario())
+
+    lines = [record.message for record in caplog.records]
+    chat = [line for line in lines if line.startswith("voice.chat.release")]
+    asr = [line for line in lines if line.startswith("voice.asr.release")]
+    assert len(chat) == 1
+    assert "connection=trace-conn turn=trace-turn held_ms=25.0" in chat[0]
+    assert len(asr) == 1
+    assert "connection=trace-conn utterance=7" in asr[0]
+    assert "held_ms=50.0 remaining=0" in asr[0]

@@ -359,3 +359,90 @@ def test_tts_disconnected_progressive_consumer_releases_capacity(monkeypatch) ->
         assert admission._active["tts"] == 0
 
     asyncio.run(scenario())
+
+
+def test_tts_outcome_logs_include_completed_failed_and_cancelled_without_text(
+    monkeypatch, caplog
+) -> None:
+    """Every TTS stream gets a terminal diagnostic, including early disconnects."""
+
+    class ControlledCommunicate:
+        def __init__(self, text: str, **_kwargs: str) -> None:
+            self.text = text
+
+        async def stream(self):
+            yield {"type": "audio", "data": b"chunk"}
+            if self.text == "failed-secret-text":
+                raise RuntimeError("provider token=DO_NOT_LOG")
+            if self.text == "cancel-secret-text":
+                await asyncio.Event().wait()
+
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", ControlledCommunicate)
+    app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
+    prepare, synthesize = _direct_tts_routes(app)
+
+    async def scenario() -> None:
+        for text, outcome in (
+            ("complete-secret-text", "completed"),
+            ("failed-secret-text", "failed"),
+            ("cancel-secret-text", "cancelled"),
+        ):
+            scope = _tts_scope()
+            ticket = await prepare(
+                TtsRequest(text=text, trace_id=f"trace-{outcome}"),
+                Request(scope),
+                Response(),
+            )
+            response = await synthesize(Request(scope), ticket["token"], progressive=True)
+            assert await anext(response.body_iterator) == b"chunk"
+            if outcome == "completed":
+                with pytest.raises(StopAsyncIteration):
+                    await anext(response.body_iterator)
+            elif outcome == "failed":
+                with pytest.raises(RuntimeError, match="tts_stream_interrupted"):
+                    await anext(response.body_iterator)
+            else:
+                await response.body_iterator.aclose()
+
+    import logging
+    with caplog.at_level(logging.INFO, logger="heritage_explorer.api"):
+        asyncio.run(scenario())
+
+    outcomes = [record.message for record in caplog.records if "tts.finish outcome=" in record.message]
+    assert len(outcomes) == 3
+    for outcome, line in zip(("completed", "failed", "cancelled"), outcomes):
+        assert f"tts.finish outcome={outcome}" in line
+        assert "bytes=5 first_chunk=True" in line
+        assert f"trace-{outcome}" in line
+        assert "secret-text" not in line
+        assert "DO_NOT_LOG" not in line
+
+
+def test_tts_lease_is_released_even_if_upstream_close_raises(monkeypatch) -> None:
+    class FailedClose:
+        def __init__(self, _text: str, **_kwargs: str) -> None:
+            pass
+
+        async def stream(self):
+            try:
+                yield {"type": "audio", "data": b"chunk"}
+                await asyncio.Event().wait()
+            finally:
+                raise RuntimeError("simulated provider cleanup failure")
+
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", FailedClose)
+    admission = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})
+    app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
+    prepare, synthesize = _direct_tts_routes(app)
+
+    async def scenario() -> None:
+        scope = _tts_scope()
+        ticket = await prepare(TtsRequest(text="测试清理"), Request(scope), Response())
+        response = await synthesize(Request(scope), ticket["token"], progressive=True)
+        assert await anext(response.body_iterator) == b"chunk"
+        assert admission._active["tts"] == 1
+        with pytest.raises(RuntimeError, match="simulated provider cleanup failure"):
+            await response.body_iterator.aclose()
+        assert admission._active["tts"] == 0
+
+    asyncio.run(scenario())

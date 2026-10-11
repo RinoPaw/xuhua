@@ -568,3 +568,46 @@ test("resuming microphone after idle input keeps the listening state", async () 
   assert.equal(h.machine.fault, false);
   assert.equal(h.session.microphoneEnabled, true);
 });
+
+
+test("cancelled and failed speech attempts are visible in diagnostics without spoken text", () => {
+  const h = createHarness();
+  const lines = [];
+  let now = 1000;
+  h.session.latency.now = () => now;
+  h.session.log.info = (message) => lines.push(message);
+
+  h.session.latency.markSpeechEnd(900);
+  now = 1050;
+  h.session.routeServerEvent({
+    type: "user.transcript", utterance_id: 1,
+    connection_id: "conn-private", text: "不要记录的问题",
+  });
+  h.session.handleOutputTerminal({ failed: true, reason: "tts_provider_unavailable" });
+  assert.equal(lines.filter((line) => line.includes("voice.outcome")).length, 1);
+  assert.match(lines.find((line) => line.includes("voice.outcome")), /result=failed reason=tts_provider_unavailable/);
+  assert.equal(lines.some((line) => line.includes("不要记录的问题")), false);
+
+  now = 2000;
+  h.session.latency.markSpeechEnd(1900);
+  h.session.latency.markTranscript({ utterance_id: 2 });
+  h.session.stopSpeech(true, false);
+  assert.equal(lines.filter((line) => line.includes("voice.outcome")).length, 2);
+  assert.match(lines.at(-1), /result=interrupted/);
+});
+
+test("receiving a new final ASR transcript does not prematurely end its own latency trace", () => {
+  const h = createHarness();
+  h.output.pipelineActive = true; // The older TTS is still shutting down.
+  let now = 1000;
+  h.session.latency.now = () => now;
+  assert.equal(h.session.latency.markSpeechEnd(900), true);
+  assert.equal(h.session.routeServerEvent({
+    type: "user.transcript", connection_id: "new-conn",
+    utterance_id: 4, text: "新问题",
+  }), true);
+  assert.equal(h.session.latency.finished, false);
+  assert.equal(h.session.latency.context.utteranceId, 4);
+  h.session.handleOutputTerminal({ failed: false });
+  assert.equal(h.session.latency.finished, true);
+});

@@ -116,3 +116,76 @@ test("terminal-only assistant responses still preserve the server turn ID", () =
   assert.match(logs[0], /connection=conn-done utterance=12 turn=turn-done/);
   assert.match(logs[0], /agent_first_delta=-/);
 });
+
+
+test("failed voice requests produce terminal diagnostics even without first audio", () => {
+  let now = 1000;
+  const lines = [];
+  const trace = new VoiceLatencyTrace({
+    now: () => now,
+    log: { info: (message) => lines.push(message) },
+  });
+  trace.markSpeechEnd(900);
+  now = 1050;
+  trace.markTranscript({
+    connection_id: "conn-safe", utterance_id: 8, text: "敏感问题",
+  });
+  now = 1150;
+  trace.markFirstDelta({ turn_id: "turn-safe", text: "敏感回答" });
+  now = 1250;
+  assert.equal(trace.finish("failed", {
+    reason: "https://internal.test/api?token=SECRET_KEY",
+  }), true);
+  assert.equal(trace.finish("cancelled"), false);
+  assert.equal(trace.markPlaying("late-audio"), null);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /voice.outcome connection=conn-safe utterance=8 turn=turn-safe/);
+  assert.match(lines[0], /result=failed reason=unknown elapsed=350.0ms/);
+  assert.match(lines[0], /transcribed=true first_delta=true first_audio=false playing=false/);
+  assert.doesNotMatch(lines[0], /敏感问题|敏感回答|SECRET_KEY|https:/);
+});
+
+test("cancelled, disconnected and rejected utterances retain one outcome each", () => {
+  let now = 500;
+  const lines = [];
+  const trace = new VoiceLatencyTrace({
+    now: () => now, log: { info: (line) => lines.push(line) },
+  });
+  assert.equal(trace.markSpeechEnd(420), true);
+  now = 600;
+  assert.equal(trace.finish("cancelled"), true);
+  assert.equal(trace.finish("failed"), false);
+  assert.equal(trace.markSpeechEnd(640), true);
+  now = 710;
+  assert.equal(trace.finish("disconnected"), true);
+  assert.equal(trace.markSpeechEnd(760), true);
+  now = 880;
+  assert.equal(trace.finish("rejected"), true);
+  assert.deepEqual(lines.map((line) => /result=([a-z]+)/u.exec(line)?.[1]), [
+    "cancelled", "disconnected", "rejected",
+  ]);
+});
+
+test("overlapping voice requests terminate the old trace before recording the next", () => {
+  let now = 1000;
+  const lines = [];
+  const trace = new VoiceLatencyTrace({
+    now: () => now, log: { info: (line) => lines.push(line) },
+  });
+  trace.markSpeechEnd(950);
+  now = 1020;
+  trace.markTranscript({ connection_id: "before", utterance_id: 1 });
+  now = 1100;
+  trace.markSpeechEnd(1080);
+  assert.match(lines[0], /result=superseded/);
+  assert.match(lines[0], /connection=before utterance=1/);
+  assert.equal(trace.context.utteranceId, null);
+  now = 1190;
+  trace.markTranscript({ connection_id: "after", utterance_id: 2 });
+  trace.markPlaying("trace-after");
+  now = 1250;
+  trace.finish("completed");
+  assert.equal(lines.filter((line) => line.includes("voice.outcome")).length, 2);
+  assert.match(lines.at(-1), /connection=after utterance=2/);
+  assert.match(lines.at(-1), /result=completed/);
+});

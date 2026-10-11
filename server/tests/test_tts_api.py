@@ -446,3 +446,41 @@ def test_tts_lease_is_released_even_if_upstream_close_raises(monkeypatch) -> Non
         assert admission._active["tts"] == 0
 
     asyncio.run(scenario())
+
+
+def test_tts_empty_provider_response_is_logged_as_failure(monkeypatch, caplog) -> None:
+    class EmptyAudio:
+        def __init__(self, _text: str, **_kwargs: str) -> None:
+            pass
+
+        async def stream(self):
+            yield {"type": "WordBoundary", "text": "not audio"}
+
+    import logging
+
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", EmptyAudio)
+    app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
+    prepare, synthesize = _direct_tts_routes(app)
+
+    async def scenario() -> None:
+        scope = _tts_scope()
+        ticket = await prepare(
+            TtsRequest(text="do-not-log-content", trace_id="trace-empty"),
+            Request(scope),
+            Response(),
+        )
+        with pytest.raises(HTTPException) as failure:
+            await synthesize(Request(scope), ticket["token"], progressive=True)
+        assert failure.value.status_code == 502
+        assert failure.value.detail == "tts_provider_no_audio"
+
+    with caplog.at_level(logging.INFO, logger="heritage_explorer.api"):
+        asyncio.run(scenario())
+    assert any(
+        "trace-empty" in record.getMessage()
+        and "tts.finish outcome=failed" in record.getMessage()
+        and "bytes=0 first_chunk=False" in record.getMessage()
+        for record in caplog.records
+    )
+    assert not any("tts.complete" in record.getMessage() for record in caplog.records)
+    assert not any("do-not-log-content" in record.getMessage() for record in caplog.records)

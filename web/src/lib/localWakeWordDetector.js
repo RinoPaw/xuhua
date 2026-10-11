@@ -119,17 +119,20 @@ export class LocalWakeWordDetector {
     this.initializing = null;
     this.starting = null;
     this.startGeneration = 0;
+    this.disposed = false;
     this.active = false;
     this.triggered = false;
     this.onWake = null;
   }
 
   async initialize() {
+    if (this.disposed) return false;
     if (this.spotter && this.stream) return true;
     if (this.initializing) return this.initializing;
     this.initializing = (async () => {
       this.log.info?.("[叙华][wake] loading local KWS");
       const sherpa = await this.runtimeLoader();
+      if (this.disposed) return false;
       const loadedModel = await sherpa.KWS.loadModel({
         modelDir: SHERPA_MODEL_DIR,
         encoder: `${this.modelBase}/encoder.onnx`,
@@ -138,7 +141,11 @@ export class LocalWakeWordDetector {
         tokens: `${this.modelBase}/tokens.txt`,
         debug: false,
       });
-      this.spotter = sherpa.KWS.createKeywordSpotter(loadedModel, {
+      if (this.disposed) {
+        loadedModel?.free?.();
+        return false;
+      }
+      const spotter = sherpa.KWS.createKeywordSpotter(loadedModel, {
         keywords: WAKE_KEYWORDS,
         sampleRate: TARGET_SAMPLE_RATE,
         numThreads: 1,
@@ -148,9 +155,26 @@ export class LocalWakeWordDetector {
         keywordsThreshold: 0.25,
         debug: false,
       });
-      if (!this.spotter?.handle) throw new Error("wake_spotter_create_failed");
-      this.stream = this.spotter.createStream();
-      if (!this.stream?.handle) throw new Error("wake_stream_create_failed");
+      if (!spotter?.handle) {
+        spotter?.free?.();
+        throw new Error("wake_spotter_create_failed");
+      }
+      let stream;
+      try {
+        stream = spotter.createStream();
+        if (!stream?.handle) throw new Error("wake_stream_create_failed");
+        if (this.disposed) {
+          stream.free?.();
+          spotter.free?.();
+          return false;
+        }
+      } catch (error) {
+        stream?.free?.();
+        spotter.free?.();
+        throw error;
+      }
+      this.spotter = spotter;
+      this.stream = stream;
       this.log.info?.("[叙华][wake] local KWS ready");
       return true;
     })().finally(() => {
@@ -189,18 +213,22 @@ export class LocalWakeWordDetector {
   }
 
   async start(onWake) {
+    if (this.disposed) return false;
+    const requestedGeneration = this.startGeneration;
     this.onWake = onWake || null;
     if (this.active) return true;
     // Serialize starts so an earlier cancelled getUserMedia cannot attach
     // a second AudioWorklet or resurrect local capture after stop().
     if (this.starting) {
       try { await this.starting; } catch { /* retry on the next start */ }
+      // stop()/dispose() during the wait must invalidate queued starts too.
+      if (this.disposed || requestedGeneration !== this.startGeneration) return false;
       if (this.active) return true;
     }
     const generation = ++this.startGeneration;
     const attempt = (async () => {
-      await this.initialize();
-      if (generation !== this.startGeneration) return false;
+      const initialized = await this.initialize();
+      if (!initialized || this.disposed || generation !== this.startGeneration) return false;
       this.triggered = false;
       this.resampler = null;
       this.inputRate = 0;
@@ -240,6 +268,7 @@ export class LocalWakeWordDetector {
   }
 
   dispose() {
+    this.disposed = true;
     this.stop();
     try { this.stream?.free?.(); } catch { /* noop */ }
     try { this.spotter?.free?.(); } catch { /* noop */ }

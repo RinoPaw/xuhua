@@ -26,6 +26,7 @@ from .voice_events import (
     AssistantCancelledEvent,
     AssistantDeltaEvent,
     AssistantDoneEvent,
+    InterruptAckEvent,
     SourcesEvent,
     UserPartialEvent,
     UserTranscriptEvent,
@@ -819,20 +820,52 @@ class VoiceSessionRuntime:
             await self.lifecycle.cancel_asr()
             await self.send(UtteranceRejectedEvent(self.utterance_sequence))
 
-    async def handle_barge_in(self) -> None:
+    async def confirm_interruption(
+        self, *, request_id: str, reason: str, cancel_asr: bool
+    ) -> None:
+        """Acknowledge only after the answer (and optional ASR) is cancelled."""
+
+        turn_id = self.lifecycle.active_turn_id or ""
+        task = self.lifecycle.answer_task
+        cancelled = task is not None and not task.done()
+        await self.stop_answer(reason)
+        if cancel_asr:
+            self.batch.clear()
+            await self.lifecycle.cancel_finalizers()
+            await self.lifecycle.cancel_asr()
+        await self.send(
+            InterruptAckEvent(
+                request_id=request_id,
+                reason=reason,
+                turn_id=turn_id,
+                utterance_id=self.utterance_sequence,
+                cancelled=cancelled,
+            )
+        )
+        LOGGER.info(
+            "voice.interrupt.ack connection=%s request=%s reason=%s "
+            "turn=%s utterance=%s cancelled=%s",
+            self.connection_id, request_id or "-", reason, turn_id or "-",
+            self.utterance_sequence, cancelled,
+        )
+
+    async def handle_barge_in(self, command: BargeInCommand) -> None:
         async with self.batch_lock:
             LOGGER.info(
                 "voice.barge_in connection=%s utterance=%s",
                 self.connection_id,
                 self.utterance_sequence,
             )
-            await self.stop_answer("barge_in")
-        await self.send(
-            VoiceStatusEvent(
-                "user_speaking",
-                utterance_id=self.utterance_sequence,
+            # Preserve the new ASR stream while cancelling only the old answer.
+            await self.confirm_interruption(
+                request_id=command.request_id, reason="barge_in", cancel_asr=False
             )
-        )
+            await self.send(
+                VoiceStatusEvent(
+                    "user_speaking",
+                    utterance_id=self.utterance_sequence,
+                )
+            )
 
     async def handle_text(self, command: TextCommand) -> None:
         if not command.text:
@@ -848,12 +881,12 @@ class VoiceSessionRuntime:
     def handle_context(self, command: ContextCommand) -> None:
         self.update_context(command)
 
-    async def handle_interrupt(self) -> None:
+    async def handle_interrupt(self, command: InterruptCommand) -> None:
         async with self.batch_lock:
-            await self.stop_answer("client_interrupt")
-            self.batch.clear()
-            await self.lifecycle.cancel_finalizers()
-            await self.lifecycle.cancel_asr()
+            await self.confirm_interruption(
+                request_id=command.request_id, reason="client_interrupt",
+                cancel_asr=True,
+            )
             await self.send(
                 VoiceStatusEvent(
                     "listening",
@@ -869,13 +902,13 @@ class VoiceSessionRuntime:
         elif isinstance(command, UtteranceCancelCommand):
             await self.handle_utterance_cancel()
         elif isinstance(command, BargeInCommand):
-            await self.handle_barge_in()
+            await self.handle_barge_in(command)
         elif isinstance(command, TextCommand):
             await self.handle_text(command)
         elif isinstance(command, ContextCommand):
             self.handle_context(command)
         elif isinstance(command, InterruptCommand):
-            await self.handle_interrupt()
+            await self.handle_interrupt(command)
 
     async def close(self) -> None:
         self.batch.clear()

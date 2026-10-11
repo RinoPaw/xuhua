@@ -107,3 +107,24 @@ def test_client_turn_id_is_validated_and_optional_for_legacy_text_commands() -> 
     assert decode_voice_command('{"type":"text","text":"旧客户端"}') == TextCommand(
         "旧客户端"
     )
+
+
+
+def test_correlated_interruption_commands_validate_request_ids() -> None:
+    from heritage_explorer.voice_protocol import BargeInCommand, InterruptCommand
+
+    request_id = "ab" * 16
+    for event_type, command_type in (
+        ("barge_in", BargeInCommand),
+        ("interrupt", InterruptCommand),
+    ):
+        assert decode_voice_command(
+            json.dumps({"type": event_type, "request_id": request_id})
+        ) == command_type(request_id)
+        assert decode_voice_command(json.dumps({"type": event_type})) == command_type()
+        assert decode_voice_command(
+            json.dumps({"type": event_type, "request_id": "not-hex"})
+        ) is None
+        assert decode_voice_command(
+            json.dumps({"type": event_type, "request_id": 7})
+        ) is None

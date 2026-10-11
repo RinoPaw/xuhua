@@ -124,3 +124,19 @@ def test_server_events_encode_to_stable_wire_shapes() -> None:
 def test_legacy_chinese_engine_label_is_normalized_to_the_single_slm_path() -> None:
     event = UserTranscriptEvent(1, 1, "hello", "hello", (), "en-US", "chinese")
     assert encode_voice_event(event)["asr_engine"] == "xfyun_slm"
+
+
+
+def test_interruption_ack_encodes_actual_cancellation_details() -> None:
+    from heritage_explorer.voice_events import InterruptAckEvent
+
+    assert encode_voice_event(
+        InterruptAckEvent("ab" * 16, "barge_in", "turn-1", 7, True)
+    ) == {
+        "type": "interrupt.ack",
+        "request_id": "ab" * 16,
+        "reason": "barge_in",
+        "turn_id": "turn-1",
+        "utterance_id": 7,
+        "cancelled": True,
+    }

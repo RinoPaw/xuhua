@@ -80,6 +80,17 @@ class AssistantCancelledEvent:
 
 
 @dataclass(frozen=True, slots=True)
+class InterruptAckEvent:
+    """The requested cancellation work has completed on the server."""
+
+    request_id: str
+    reason: str
+    turn_id: str = ""
+    utterance_id: int = 0
+    cancelled: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class VoiceErrorEvent:
     message: str
     code: str = ""
@@ -97,6 +108,7 @@ VoiceServerEvent: TypeAlias = (
     | SourcesEvent
     | AssistantDoneEvent
     | AssistantCancelledEvent
+    | InterruptAckEvent
     | VoiceErrorEvent
 )
 
@@ -170,6 +182,15 @@ def encode_voice_event(event: VoiceServerEvent) -> dict[str, Any]:
             "turn_id": event.turn_id,
             "reason": event.reason,
         }
+    if isinstance(event, InterruptAckEvent):
+        return {
+            "type": "interrupt.ack",
+            "request_id": event.request_id,
+            "reason": event.reason,
+            "turn_id": event.turn_id,
+            "utterance_id": event.utterance_id,
+            "cancelled": event.cancelled,
+        }
     if isinstance(event, VoiceErrorEvent):
         payload = {"type": "error", "message": event.message}
         if event.code:
@@ -186,6 +207,7 @@ __all__ = [
     "AssistantCancelledEvent",
     "AssistantDeltaEvent",
     "AssistantDoneEvent",
+    "InterruptAckEvent",
     "ReadyEvent",
     "SourcesEvent",
     "UserPartialEvent",

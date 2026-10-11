@@ -4,16 +4,25 @@ import { LocalWakeWordDetector } from "./localWakeWordDetector.js";
 import { PersonaVoiceGate } from "./personaVoiceGate.js";
 
 export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
-  constructor({ gate = null, wakeDetector = null, ...options } = {}) {
+  constructor({ gate = null, wakeDetector = null, onWakeListeningChange = () => {}, ...options } = {}) {
     super(options);
     this.gate = gate || new PersonaVoiceGate({ log: this.log });
     this.wakeDetector = wakeDetector || new LocalWakeWordDetector({ log: this.log });
     this.autoWakeEnabled = false;
+    this.wakeListening = false;
+    this.onWakeListeningChange = onWakeListeningChange;
     this.wakeGeneration = 0;
     this.armingWake = null;
     this.waking = false;
     this.disposed = false;
     this.gate.setOnSleep?.(() => this.enterSleep());
+  }
+
+  setWakeListening(value) {
+    const active = Boolean(value);
+    if (this.wakeListening === active) return;
+    this.wakeListening = active;
+    this.onWakeListeningChange(active);
   }
 
   async armWake() {
@@ -31,11 +40,14 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
         if (generation !== this.wakeGeneration) return false;
         if (!started || this.disposed || !this.autoWakeEnabled || !this.gate.sleeping) {
           this.wakeDetector.stop();
+          this.setWakeListening(false);
           return false;
         }
+        this.setWakeListening(true);
         return true;
       } catch (error) {
         if (generation === this.wakeGeneration && this.autoWakeEnabled && !this.disposed) {
+          this.setWakeListening(false);
           this.reportInputError(error);
         }
         return false;
@@ -56,6 +68,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     const generation = ++this.wakeGeneration;
     this.waking = true;
     this.wakeDetector.stop();
+    this.setWakeListening(false);
     this.gate.wake(keyword);
     try {
       const started = await super.start();
@@ -102,6 +115,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.wakeGeneration += 1;
     this.armingWake = null;
     this.wakeDetector.stop();
+    this.setWakeListening(false);
     this.gate.wake("手动开启");
     const started = await super.start();
     if (!started && !this.connection.connected) this.gate.reset();
@@ -196,6 +210,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.wakeGeneration += 1;
     this.armingWake = null;
     this.wakeDetector.stop();
+    this.setWakeListening(false);
     return super.stop();
   }
 
@@ -205,6 +220,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.wakeGeneration += 1;
     this.armingWake = null;
     this.wakeDetector.dispose();
+    this.setWakeListening(false);
     super.destroy();
     this.gate.dispose();
   }

@@ -34,6 +34,7 @@ export function useVoiceConversation({
   const [error, setError] = useState(null);
   const [spectrum, setSpectrum] = useState(() => Array(24).fill(0));
   const [microphoneEnabled, setMicrophoneEnabled] = useState(false);
+  const [wakeListening, setWakeListening] = useState(false);
 
   const connected = voiceMachine.transport === VOICE_TRANSPORT_PHASE.CONNECTED;
   const isPlaying = voiceMachine.output === VOICE_OUTPUT_PHASE.SPEAKING;
@@ -66,6 +67,7 @@ export function useVoiceConversation({
     setError,
     setSpectrum,
     setMicrophoneEnabled,
+    setWakeListening,
   };
 
   const sessionRef = useRef(null);
@@ -80,6 +82,7 @@ export function useVoiceConversation({
       onErrorState: (value) => bindingsRef.current.setError(value),
       onSpectrum: (value) => bindingsRef.current.setSpectrum(value),
       onMicrophoneEnabledChange: (value) => bindingsRef.current.setMicrophoneEnabled(value),
+      onWakeListeningChange: (value) => bindingsRef.current.setWakeListening(value),
     });
   }
   sessionRef.current.setWebsocketPath(websocketPath);
@@ -113,6 +116,7 @@ export function useVoiceConversation({
     error,
     isConnected: connected,
     isMicrophoneEnabled: microphoneEnabled,
+    isWakeListening: wakeListening,
     isPlaying,
     isSpeechPending,
     spectrum,

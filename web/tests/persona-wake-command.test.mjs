@@ -493,3 +493,45 @@ test("rejected stale ASR partial cannot cancel the idle grace countdown", async 
   assert.equal(h.activeTimers.size, 1);
   session.destroy();
 });
+
+
+test("local wake microphone ownership is reflected in the subscribed UI state", async () => {
+  const updates = [];
+  const { session, detector, connection } = makeSession();
+  session.onWakeListeningChange = (value) => updates.push(value);
+
+  assert.equal(session.wakeListening, false);
+  assert.equal(await session.armWake(), true);
+  assert.equal(session.wakeListening, true);
+  assert.deepEqual(updates, [true]);
+
+  assert.equal(await detector.wake(), true);
+  assert.equal(connection.connected, true);
+  assert.equal(session.wakeListening, false);
+  assert.deepEqual(updates, [true, false]);
+
+  assert.equal(await session.enterSleep(), true);
+  assert.equal(connection.connected, false);
+  assert.equal(session.wakeListening, true);
+  assert.deepEqual(updates, [true, false, true]);
+
+  session.stop();
+  assert.equal(session.wakeListening, false);
+  assert.deepEqual(updates, [true, false, true, false]);
+  session.destroy();
+});
+
+test("pending or rejected local wake capture is never advertised as active", async () => {
+  const updates = [];
+  const { session, detector } = makeSession();
+  session.onWakeListeningChange = (value) => updates.push(value);
+  let resolveStart;
+  detector.start = () => new Promise((resolve) => { resolveStart = resolve; });
+  const pending = session.armWake();
+  assert.equal(session.wakeListening, false);
+  resolveStart(false);
+  assert.equal(await pending, false);
+  assert.equal(session.wakeListening, false);
+  assert.deepEqual(updates, []);
+  session.destroy();
+});

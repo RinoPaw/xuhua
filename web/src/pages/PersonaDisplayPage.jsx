@@ -124,7 +124,8 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
     ? conversation.messages.findLast((message) => message.role === "assistant")
     : conversation.messages.slice(lastUserIndex + 1).find((message) => message.role === "assistant");
   const connecting = realtime.status === REALTIME_VOICE_STATUS.CONNECTING;
-  const voiceActive = realtime.isConnected && realtime.isMicrophoneEnabled;
+  const voiceActive = realtime.isWakeListening
+    || (realtime.isConnected && realtime.isMicrophoneEnabled);
 
   const handleVoice = () => {
     dispatch({ type: "clear.error" });
@@ -133,11 +134,17 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
       void realtime.toggleMicrophone();
       return;
     }
+    if (realtime.isWakeListening) {
+      personaSessionRef.current?.stop();
+      return;
+    }
+    // Manual activation while asleep must enable local wake detection,
+    // never open remote ASR before the wake phrase.
     interruptText();
     if (["retrieving", "composing", "streaming"].includes(conversation.phase)) {
       dispatch({ type: "cancel" });
     }
-    void realtime.start();
+    void personaSessionRef.current?.armWake();
   };
 
   const submitText = (event) => {
@@ -207,11 +214,14 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
             disabled={connecting || voiceAvailable === false}
             aria-label={realtime.isConnected
               ? (voiceActive ? "关闭麦克风" : "开启麦克风")
-              : voiceAvailable === false ? "语音服务暂不可用" : "开启语音对话"}
-            aria-pressed={realtime.isConnected ? voiceActive : undefined}
+              : voiceAvailable === false ? "语音服务暂不可用"
+                : realtime.isWakeListening ? "关闭本地唤醒监听" : "开启本地唤醒监听"}
+            aria-pressed={voiceActive}
           >{connecting ? <SpinnerGap className="spin" /> : realtime.isConnected && !voiceActive
             ? <MicrophoneSlash /> : <Microphone />}</button>
-          <p className="sr-only" role="status" aria-live="polite">{conversation.announcement}</p>
+          <p className="sr-only" role="status" aria-live="polite">
+            {realtime.isWakeListening ? "正在本地监听唤醒词叙华" : conversation.announcement}
+          </p>
         </section>
       </div>
     </main>

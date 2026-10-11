@@ -10,6 +10,7 @@ import time
 import uuid
 from typing import Any
 
+from .admission import AdmissionController, AdmissionDenied
 from .assistant import AssistantService
 from .asr_normalization import NormalizedTranscript
 from .dataset import KnowledgeBase
@@ -169,6 +170,8 @@ class VoiceSessionRuntime:
         stream_factory: Callable[..., Any],
         normalize_final: Callable[..., NormalizedTranscript],
         max_session_id_chars: int,
+        admission: AdmissionController,
+        client_id: str,
     ) -> None:
         self.emit = emit
         self.connection_id = connection_id
@@ -182,6 +185,8 @@ class VoiceSessionRuntime:
         self.stream_factory = stream_factory
         self.normalize_final = normalize_final
         self.max_session_id_chars = max_session_id_chars
+        self.admission = admission
+        self.client_id = client_id
 
         self.context = VoiceContextState()
         self.batch = VoiceBatchState()
@@ -397,7 +402,7 @@ class VoiceSessionRuntime:
                 )
             )
         finally:
-            self.lifecycle.clear_answer_if(asyncio.current_task(), turn_id)
+            await self.lifecycle.finish_answer(asyncio.current_task(), turn_id)
 
     async def start_answer(
         self,
@@ -406,12 +411,31 @@ class VoiceSessionRuntime:
         locale_hint: str = "",
     ) -> None:
         await self.stop_answer(reason)
+        try:
+            # HTTP /api/chat and voice turns share the same chat capacity and
+            # rolling rate buckets. The long-lived voice socket is only a
+            # transport lease; it must not permit unlimited assistant turns.
+            lease = await self.admission.acquire("chat", self.client_id)
+        except AdmissionDenied as exc:
+            await self.send(
+                VoiceErrorEvent(
+                    "回答请求过于频繁，请稍后再试",
+                    code=f"chat_{exc.reason}",
+                )
+            )
+            return
+
         turn_id = uuid.uuid4().hex
-        self.lifecycle.start_answer(
-            turn_id,
-            self.answer(question, turn_id, locale_hint),
-            name=f"voice-answer-{turn_id}",
-        )
+        try:
+            self.lifecycle.start_answer(
+                turn_id,
+                self.answer(question, turn_id, locale_hint),
+                name=f"voice-answer-{turn_id}",
+                lease=lease,
+            )
+        except BaseException:
+            await lease.release()
+            raise
 
     async def commit_voice_batch(self, generation: int) -> None:
         if generation != self.batch.generation:
@@ -620,6 +644,8 @@ class VoiceSessionRuntime:
         command: UtteranceStartCommand,
     ) -> None:
         async with self.batch_lock:
+            if not self.lifecycle.can_start_asr():
+                raise VoiceProviderError("voice_asr_capacity")
             self.utterance_sequence += 1
             utterance_id = self.utterance_sequence
             self.batch.partials[utterance_id] = ""

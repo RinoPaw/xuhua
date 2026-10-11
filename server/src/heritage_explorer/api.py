@@ -370,6 +370,7 @@ def create_app(
         normalize_final=normalize_asr_final,
         stream_factory=XfyunStream,
         max_session_id_chars=MAX_SESSION_ID_CHARS,
+        admission=admission,
     )
 
     if FRONTEND_DIR.is_dir():

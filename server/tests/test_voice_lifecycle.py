@@ -1,6 +1,7 @@
 import asyncio
 
-from heritage_explorer.voice_lifecycle import VoiceConnectionScope
+from heritage_explorer.admission import AdmissionController, AdmissionPolicy
+from heritage_explorer.voice_lifecycle import MAX_ASR_OPERATIONS_PER_CONNECTION, VoiceConnectionScope
 
 
 class RecordingStream:
@@ -96,3 +97,41 @@ def test_connection_scope_close_cancels_entire_resource_tree() -> None:
         )
 
     assert asyncio.run(scenario()) == (True, True, True, True)
+
+def test_answer_budget_is_released_even_if_task_never_starts() -> None:
+    async def scenario() -> None:
+        controller = AdmissionController({"chat": AdmissionPolicy(1, 10, 10)})
+        lease = await controller.acquire("chat", "one")
+        scope = VoiceConnectionScope()
+
+        async def blocked() -> None:
+            await asyncio.Future()
+
+        scope.start_answer("turn", blocked(), lease=lease)
+        # No scheduling point between create_task and cancellation.
+        await scope.cancel_answer()
+        replacement = await controller.acquire("chat", "two")
+        await replacement.release()
+
+    asyncio.run(scenario())
+
+
+def test_asr_capacity_counts_pending_finalizers_and_active_stream() -> None:
+    async def scenario() -> None:
+        scope = VoiceConnectionScope()
+        gate = asyncio.Event()
+
+        async def blocked() -> None:
+            await gate.wait()
+
+        for number in range(MAX_ASR_OPERATIONS_PER_CONNECTION):
+            assert scope.can_start_asr()
+            scope.start_finalizer(blocked(), name=f"asr-finalizer-{number}")
+
+        assert scope.active_asr_operations == MAX_ASR_OPERATIONS_PER_CONNECTION
+        assert not scope.can_start_asr()
+        await scope.cancel_finalizers()
+        assert scope.active_asr_operations == 0
+        assert scope.can_start_asr()
+
+    asyncio.run(scenario())

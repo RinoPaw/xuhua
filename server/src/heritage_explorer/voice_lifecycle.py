@@ -7,10 +7,12 @@ from collections.abc import Awaitable
 import logging
 from typing import Any
 
+from .admission import AdmissionLease
 from .task_scope import TaskSet, TaskSlot, cancel_task
 
 
 LOGGER = logging.getLogger(__name__)
+MAX_ASR_OPERATIONS_PER_CONNECTION = 3
 
 
 async def close_resource(resource: Any | None, *, label: str) -> None:
@@ -35,6 +37,7 @@ class VoiceConnectionScope:
     def __init__(self) -> None:
         self._answer = TaskSlot()
         self._answer_turn_id: str | None = None
+        self._answer_lease: AdmissionLease | None = None
         self._asr_start = TaskSlot()
         self._asr_stream: Any | None = None
         self._finalizers = TaskSet()
@@ -55,15 +58,27 @@ class VoiceConnectionScope:
     def finalizer_count(self) -> int:
         return len(self._finalizers.tasks)
 
+    @property
+    def active_asr_operations(self) -> int:
+        """An ASR operation remains active while its finalizer is pending."""
+        return int(self._asr_stream is not None) + sum(
+            not task.done() for task in self._finalizers.tasks
+        )
+
+    def can_start_asr(self) -> bool:
+        return self.active_asr_operations < MAX_ASR_OPERATIONS_PER_CONNECTION
+
     def start_answer(
         self,
         turn_id: str,
         awaitable: Awaitable[None],
         *,
         name: str | None = None,
+        lease: AdmissionLease | None = None,
     ):
         task = self._answer.create(awaitable, name=name)
         self._answer_turn_id = turn_id
+        self._answer_lease = lease
         return task
 
     def take_answer(self):
@@ -79,9 +94,23 @@ class VoiceConnectionScope:
         self._answer_turn_id = None
         return True
 
+    async def _release_answer_lease(self) -> None:
+        lease, self._answer_lease = self._answer_lease, None
+        if lease is not None:
+            await lease.release()
+
+    async def finish_answer(self, task, turn_id: str) -> None:
+        if self.clear_answer_if(task, turn_id):
+            await self._release_answer_lease()
+
     async def cancel_answer(self) -> None:
         task, _turn_id = self.take_answer()
-        await cancel_task(task)
+        try:
+            await cancel_task(task)
+        finally:
+            # Cancellation before the task's first scheduling step never runs
+            # its coroutine's finally block. The scope still owns the lease.
+            await self._release_answer_lease()
 
     def start_asr(
         self,
@@ -127,4 +156,4 @@ class VoiceConnectionScope:
         await self.cancel_asr()
 
 
-__all__ = ["VoiceConnectionScope", "close_resource"]
+__all__ = ["MAX_ASR_OPERATIONS_PER_CONNECTION", "VoiceConnectionScope", "close_resource"]

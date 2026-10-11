@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
+from .admission import AdmissionController, client_key_from_scope
 from .assistant import AssistantService
 from .asr_normalization import NormalizedTranscript
 from .dataset import KnowledgeBase
@@ -145,7 +146,11 @@ async def run_voice_transport(
                 continue
             command = decode_voice_command(raw)
             if command is not None:
-                await dispatch_voice_command(runtime, command)
+                try:
+                    await dispatch_voice_command(runtime, command)
+                except VoiceProviderError as exc:
+                    await websocket.close(code=1013, reason=str(exc)[:123])
+                    break
     except WebSocketDisconnect:
         pass
     finally:
@@ -166,6 +171,7 @@ def register_voice_route(
     stream_factory: Callable[..., Any] = XfyunStream,
     normalize_final: Callable[..., NormalizedTranscript],
     max_session_id_chars: int = 128,
+    admission: AdmissionController,
 ) -> None:
     """Register the browser voice route on top of the typed transport boundary."""
 
@@ -199,6 +205,8 @@ def register_voice_route(
             stream_factory=stream_factory,
             normalize_final=normalize_final,
             max_session_id_chars=max_session_id_chars,
+            admission=admission,
+            client_id=client_key_from_scope(websocket.scope),
         )
         await run_voice_transport(websocket, channel, runtime)
 

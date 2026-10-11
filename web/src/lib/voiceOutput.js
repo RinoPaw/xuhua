@@ -41,18 +41,24 @@ export class VoiceOutputController {
     this.onTerminal = onTerminal;
     this.pipelineActive = false;
     this.playing = false;
+    this.activeGeneration = null;
     this.traceId = "";
     this.locale = DEFAULT_LOCALE;
     this.textPlan = new TtsTextPlan(DEFAULT_LOCALE);
     this.clipCache = createClipCache();
     this.scheduler = createScheduler({
       prepareSource: (options) => this.prepareSource(options),
-      onEvent: (event) => this.onEvent(event),
-      onPlayingChange: (playing) => {
+      onEvent: (event) => {
+        if (event?.generation !== this.activeGeneration) return;
+        this.onEvent(event);
+      },
+      onPlayingChange: (playing, generation) => {
+        if (generation !== this.activeGeneration) return;
         this.playing = playing;
         this.onPlayingChange(playing);
       },
       onTerminal: (result = {}) => {
+        if (result.generation !== this.activeGeneration) return;
         this.clearTurnState();
         this.onTerminal(result);
       },
@@ -63,13 +69,16 @@ export class VoiceOutputController {
     this.websocketPath = String(path || "/api/voice");
   }
 
-  async prepareSource({ text, segment, reason, locale, signal }) {
+  async prepareSource({ text, segment, reason, locale, traceId, signal }) {
     const cached = await this.clipCache.sourceFor(text, locale);
+    // Cancellation during an awaited cache/prewarm must not launch a ticket
+    // request under the next turn's identity.
+    if (signal?.aborted) return "";
     if (cached) return cached;
     return requestTtsSource({
       websocketPath: this.websocketPath,
       text,
-      traceId: this.traceId,
+      traceId,
       segment,
       reason,
       locale,
@@ -94,6 +103,7 @@ export class VoiceOutputController {
   clearTurnState() {
     this.pipelineActive = false;
     this.playing = false;
+    this.activeGeneration = null;
     this.traceId = "";
     this.locale = DEFAULT_LOCALE;
     this.textPlan.reset(DEFAULT_LOCALE);
@@ -101,6 +111,7 @@ export class VoiceOutputController {
 
   begin(locale = "") {
     const generation = this.scheduler.begin();
+    this.activeGeneration = generation;
     this.pipelineActive = true;
     this.traceId = this.createTraceId();
     this.locale = resolveSpeechLocale(
@@ -129,6 +140,7 @@ export class VoiceOutputController {
     return this.scheduler.enqueue(content, {
       reason,
       locale: this.locale,
+      traceId: this.traceId,
     });
   }
 

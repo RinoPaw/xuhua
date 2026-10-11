@@ -307,6 +307,7 @@ export class BrowserVoiceSession {
       this.latency.markTranscript(message);
       logFinalVoiceText(this.log, "用户", message);
     } else if (accepted && message?.type === "assistant.done") {
+      this.latency.noteTurn(message);
       logFinalVoiceText(this.log, "叙华", message);
     }
     return accepted;

@@ -97,3 +97,22 @@ test("latency correlation does not log transcript content", () => {
   assert.equal(lines.length, 1);
   assert.doesNotMatch(lines[0], /敏感转写内容|敏感回答内容/);
 });
+
+
+
+test("terminal-only assistant responses still preserve the server turn ID", () => {
+  let now = 1000;
+  const logs = [];
+  const trace = new VoiceLatencyTrace({
+    now: () => now,
+    log: { info: (line) => logs.push(line) },
+  });
+  trace.markSpeechEnd(900);
+  now = 1200;
+  trace.markTranscript({ connection_id: "conn-done", utterance_id: 12 });
+  assert.equal(trace.noteTurn({ turn_id: "turn-done" }), true);
+  now = 1250;
+  trace.markPlaying("tts-done");
+  assert.match(logs[0], /connection=conn-done utterance=12 turn=turn-done/);
+  assert.match(logs[0], /agent_first_delta=-/);
+});

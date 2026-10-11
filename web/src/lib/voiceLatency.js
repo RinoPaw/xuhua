@@ -53,10 +53,16 @@ export class VoiceLatencyTrace {
     return true;
   }
 
+  noteTurn(event = {}) {
+    if (this.marks.speechEnd === null) return false;
+    this.context.connectionId ||= String(event.connection_id || "");
+    this.context.turnId ||= String(event.turn_id || "");
+    return true;
+  }
+
   markFirstDelta(event = {}) {
     if (this.marks.speechEnd === null || this.marks.firstDelta !== null) return false;
-    this.context.connectionId ||= String(event.connection_id || "");
-    this.context.turnId = String(event.turn_id || "");
+    this.noteTurn(event);
     this.marks.firstDelta = this.now();
     return true;
   }

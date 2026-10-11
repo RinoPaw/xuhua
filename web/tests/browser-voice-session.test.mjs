@@ -400,3 +400,28 @@ test("unexpected socket close is cleaned up and reported once", async () => {
   assert.equal(harness.errors.at(-1), "voice_socket_closed");
   assert.equal(harness.calls.filter((entry) => entry[0] === "callback.error").length, 1);
 });
+
+
+
+test("voice diagnostic console records IDs and lengths, never spoken text", () => {
+  const harness = createHarness();
+  const lines = [];
+  harness.session.log.info = (message) => lines.push(message);
+
+  assert.equal(harness.session.routeServerEvent({
+    type: "user.transcript", connection_id: "connection-a",
+    utterance_id: 7, text: "个人敏感内容", locale: "zh-CN",
+  }), true);
+  assert.equal(harness.session.routeServerEvent({
+    type: "assistant.done", connection_id: "connection-a",
+    turn_id: "turn-1", text: "不要记录回答正文", locale: "zh-CN",
+  }), true);
+
+  const diagnosticLines = lines.filter((line) => line.includes("[叙华][voice]"));
+  assert.equal(diagnosticLines.length, 2);
+  assert.match(diagnosticLines[0], /connection=connection-a utterance=7 .*chars=6/);
+  assert.match(diagnosticLines[1], /connection=connection-a .*turn=turn-1 chars=/);
+  for (const line of diagnosticLines) {
+    assert.doesNotMatch(line, /个人敏感内容|不要记录回答正文/);
+  }
+});

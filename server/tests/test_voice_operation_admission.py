@@ -225,3 +225,64 @@ def test_asr_rate_budget_applies_across_connections(monkeypatch) -> None:
             assert denied.value.reason == "voice_asr_client_rate"
 
     assert len(StalledAsrStream.instances) == 1
+
+
+
+def test_voice_server_logs_connection_and_first_answer_delta_without_question(
+    monkeypatch, caplog
+) -> None:
+    import logging
+
+    class DeltaAssistant(ControlledAssistant):
+        async def stream_turn(self, question, *, session_id=None, turn_id=None, **_kwargs):
+            self.calls += 1
+            yield AssistantEvent(
+                "response.text.delta",
+                session_id or "voice-session",
+                turn_id or "turn-id",
+                0,
+                payload={"delta": "保密回答", "locale": "zh-CN"},
+            )
+            yield AssistantEvent(
+                "turn.completed",
+                session_id or "voice-session",
+                turn_id or "turn-id",
+                1,
+                payload={"answer": "保密回答", "locale": "zh-CN"},
+            )
+
+    configure_voice(monkeypatch)
+    app = create_app(assistant=DeltaAssistant())  # type: ignore[arg-type]
+    with caplog.at_level(logging.INFO):
+        with TestClient(app) as client:
+            with client.websocket_connect("/api/voice") as ws:
+                ready = ws.receive_json()
+                ws.send_json({"type": "text", "text": "保密问题"})
+                receive_until(ws, lambda event: event.get("type") == "assistant.done")
+
+    connection_id = ready["connection_id"]
+    lines = [record.message for record in caplog.records]
+    assert any(
+        f"voice.connection.open connection={connection_id}" in line for line in lines
+    )
+    assert any(
+        f"voice.llm.first_delta connection={connection_id}" in line
+        and "elapsed_ms=" in line
+        for line in lines
+    )
+    assert any(
+        f"voice.llm.finish connection={connection_id}" in line
+        and "outcome=completed" in line
+        for line in lines
+    )
+    assert any(
+        f"voice.chat.release connection={connection_id}" in line
+        and "held_ms=" in line
+        for line in lines
+    )
+    assert any(
+        f"voice.connection.close connection={connection_id}" in line
+        and "duration_ms=" in line
+        for line in lines
+    )
+    assert not any("保密问题" in line or "保密回答" in line for line in lines)

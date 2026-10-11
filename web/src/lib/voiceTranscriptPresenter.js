@@ -17,9 +17,13 @@ export class VoiceTranscriptPresenter {
     this.clearScheduledInterval = clearScheduledInterval;
     this.intervalMs = intervalMs;
     this.reveal = createPartialRevealState();
+    this.timerGeneration = 0;
   }
 
   clear(resetText = false) {
+    // An interval tick may already be queued even after clearInterval().
+    // Invalidate the callback before a new utterance can reuse this state.
+    this.timerGeneration += 1;
     if (this.reveal.timer !== null) {
       this.clearScheduledInterval(this.reveal.timer);
       this.reveal.timer = null;
@@ -35,10 +39,11 @@ export class VoiceTranscriptPresenter {
     this.getCallbacks().onUserPartial?.(this.reveal.visible, message);
 
     if (this.reveal.timer === null && this.reveal.visible.length < this.reveal.target.length) {
+      const generation = this.timerGeneration;
       this.reveal.timer = this.scheduleInterval(() => {
+        if (generation !== this.timerGeneration) return;
         if (this.reveal.visible.length >= this.reveal.target.length) {
-          this.clearScheduledInterval(this.reveal.timer);
-          this.reveal.timer = null;
+          this.clear();
           return;
         }
         this.reveal.visible += this.reveal.target[this.reveal.visible.length];

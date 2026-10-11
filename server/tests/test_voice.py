@@ -346,3 +346,52 @@ def test_cancel_and_close_stop_sender_without_leaking_queued_frames(monkeypatch)
         assert stream._send_queue.empty()
 
     asyncio.run(scenario())
+
+
+def test_finish_result_does_not_wait_for_provider_socket_teardown(monkeypatch) -> None:
+    closing = asyncio.Event()
+    allow_close = asyncio.Event()
+
+    class SlowCloseSocket:
+        def __init__(self, stream: XfyunStream) -> None:
+            self.stream = stream
+
+        async def send(self, packet: str) -> None:
+            if json.loads(packet)["header"]["status"] == 2:
+                self.stream._done.set()
+
+        async def close(self) -> None:
+            closing.set()
+            await allow_close.wait()
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            await asyncio.Future()
+
+    async def scenario() -> None:
+        stream = make_stream()
+        socket = SlowCloseSocket(stream)
+
+        async def fake_connect(*_args, **_kwargs):
+            return socket
+
+        monkeypatch.setattr(voice_module, "connect", fake_connect)
+        await stream.send_audio(bytes(stream.chunk_size))
+        await stream.start()
+        result = await asyncio.wait_for(stream.finish_result(), timeout=2)
+        assert result == ""
+        assert not closing.is_set()
+        assert stream._socket is socket
+
+        teardown = asyncio.create_task(stream.close())
+        await asyncio.wait_for(closing.wait(), timeout=2)
+        assert not teardown.done()
+        allow_close.set()
+        await asyncio.wait_for(teardown, timeout=2)
+        assert stream._socket is None
+        assert stream._sender is None
+        assert stream._receiver is None
+
+    asyncio.run(scenario())

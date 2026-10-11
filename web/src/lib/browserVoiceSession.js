@@ -250,7 +250,13 @@ export class BrowserVoiceSession {
   }
 
   stopSpeech(bargeIn = false, notifyServer = true) {
-    this.latency.finish(bargeIn ? "interrupted" : "cancelled");
+    // While processing a new user.transcript, stopSpeech can still be
+    // shutting down the previous TTS. Do not terminate the *new* attempt
+    // before its first accepted transcript has been recorded.
+    if (this.latency.marks?.transcript !== null && this.latency.marks?.transcript !== undefined
+      || this.latency.marks?.playing != null || this.latency.marks?.firstDelta != null) {
+      this.latency.finish(bargeIn ? "interrupted" : "cancelled");
+    }
     // Local turn replacement invalidates confirmations for earlier requests.
     this.pendingInterrupt = null;
     this.input.clearBargeInCandidate();

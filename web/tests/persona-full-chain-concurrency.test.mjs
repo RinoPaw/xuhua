@@ -294,7 +294,8 @@ test("unexpected disconnect during TTS releases media and restores only local ke
     const audio = h.question(1, "before-disconnect");
     const oldSocketMessage = h.connection.handlers.onMessage;
     assert.equal(h.connection.closeUnexpectedly(), true);
-    for (let tick = 0; tick < 20 && !h.wakeDetector.active; tick += 1) await Promise.resolve();
+    for (let tick = 0; tick < 20 && !h.session.wakeListening; tick += 1) await Promise.resolve();
+    assert.equal(h.wakeDetector.active, true);
     assert.equal(h.session.wakeListening, true);
     assert.equal(h.connection.connected, false);
     assert.equal(h.session.microphoneEnabled, false);

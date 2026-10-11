@@ -109,3 +109,22 @@ test("assistant turn tracker owns active and ignored turn identity", () => {
   assert.equal(turns.ignoredTurns.has("turn-2"), true);
   assert.equal(turns.ignoredTurns.has("turn-3"), true);
 });
+
+
+test("progressive TTS requests preserve ticket privacy and opt into streaming only for playback", async () => {
+  const source = await requestTtsSource({
+    websocketPath: "/api/voice",
+    text: "先朗读第一段。",
+    traceId: "trace-first",
+    segment: 0,
+    reason: "first_phrase",
+    locale: "zh-CN",
+    progressive: true,
+    fetchImpl: async () => ({ ok: true, json: async () => ({ token: "private-token" }) }),
+  });
+  assert.equal(source, "/api/tts/private-token?stream=1");
+  assert.equal(source.includes("先朗读"), false);
+  // Retry marker is added by TtsScheduler; the backend then serves buffered
+  // audio to avoid repeating potentially already played partial speech.
+  assert.equal(`${source}&tts_retry=1`, "/api/tts/private-token?stream=1&tts_retry=1");
+});

@@ -95,6 +95,7 @@ export async function requestTtsSource({
   reason,
   locale,
   signal,
+  progressive = false,
   fetchImpl = browserFetch,
 }) {
   if (typeof fetchImpl !== "function") throw new Error("tts_fetch_unavailable");
@@ -115,7 +116,8 @@ export async function requestTtsSource({
   const payload = await response.json();
   const token = String(payload?.token || "").trim();
   if (!token) throw new Error("tts_ticket_invalid");
-  return `${endpoint.replace(/\/+$/u, "")}/${encodeURIComponent(token)}`;
+  const url = `${endpoint.replace(/\/+$/u, "")}/${encodeURIComponent(token)}`;
+  return progressive ? `${url}?stream=1` : url;
 }
 
 export function compactRecognitionContext(context) {

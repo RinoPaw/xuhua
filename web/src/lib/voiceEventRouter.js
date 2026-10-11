@@ -26,6 +26,9 @@ export function routeVoiceServerEvent(message, {
   const assistantPending = isVoiceAssistantPending(state.machine);
 
   if (message.type === "ready") return true;
+  if (message.type === "interrupt.ack") {
+    return actions.confirmInterruptAck?.(message) ?? false;
+  }
 
   if (message.type === "status") {
     const decision = acceptServerVoiceStatus(message, {

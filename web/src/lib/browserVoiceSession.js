@@ -84,6 +84,7 @@ export class BrowserVoiceSession {
     this.latency = latency || new VoiceLatencyTrace({ log });
     this.transcript = transcript || new VoiceTranscriptPresenter({ getCallbacks });
     this.microphoneEnabled = false;
+    this.pendingInterrupt = null;
     this.output = createOutput({
       websocketPath,
       getRecognitionContext,
@@ -242,6 +243,8 @@ export class BrowserVoiceSession {
   }
 
   stopSpeech(bargeIn = false, notifyServer = true) {
+    // Local turn replacement invalidates confirmations for earlier requests.
+    this.pendingInterrupt = null;
     this.input.clearBargeInCandidate();
     this.turns.ignoreActive();
     this.output?.stop();
@@ -253,10 +256,27 @@ export class BrowserVoiceSession {
     else this.input.blockFor(450);
     let sent = true;
     if (bargeIn) {
-      if (notifyServer) sent = this.send({ type: "barge_in" });
+      if (notifyServer) {
+        const requestId = makeClientTurnId();
+        sent = this.send({ type: "barge_in", request_id: requestId });
+        if (sent) this.pendingInterrupt = { requestId, reason: "barge_in" };
+      }
       this.getCallbacks()?.onBargeIn?.();
     }
     if (!sent) return this.handleTransportFailure();
+    return true;
+  }
+
+  confirmInterruptAck(message) {
+    const pending = this.pendingInterrupt;
+    if (!pending || message?.request_id !== pending.requestId
+      || message?.reason !== pending.reason) return false;
+    this.pendingInterrupt = null;
+    this.log.info?.(
+      `[叙华][voice] interrupt.ack request=${pending.requestId} `
+      + `turn=${message.turn_id || "-"} cancelled=${message.cancelled}`,
+    );
+    // Confirmation is informational; it never interrupts a newer TTS stream.
     return true;
   }
 
@@ -307,6 +327,7 @@ export class BrowserVoiceSession {
       actions: {
         dispatchMany: (actions) => this.dispatchMany(actions),
         clearBargeInCandidate: () => this.clearBargeInCandidate(),
+        confirmInterruptAck: (message) => this.confirmInterruptAck(message),
         confirmBargeInFromAsr: () => this.confirmBargeInFromAsr(),
         stopSpeech: (...args) => this.stopSpeech(...args),
         settleListening: () => this.settleListening(),

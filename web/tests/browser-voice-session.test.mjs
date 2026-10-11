@@ -268,7 +268,9 @@ test("browser voice session centralizes barge-in output cancellation", () => {
   assert.equal(harness.session.confirmBargeInFromAsr(), true);
   assert.equal(harness.output.pipelineActive, false);
   assert.equal(harness.turns.current, "");
-  assert.deepEqual(harness.sent.at(-1), { type: "barge_in" });
+  assert.equal(harness.sent.at(-1).type, "barge_in");
+  assert.match(harness.sent.at(-1).request_id, /^[0-9a-f]{32}$/u);
+  assert.equal(harness.session.pendingInterrupt?.requestId, harness.sent.at(-1).request_id);
   assert.equal(harness.calls.some((entry) => entry[0] === "callback.bargeIn"), true);
 });
 
@@ -492,4 +494,53 @@ test("consecutive typed turns reject a delayed first response without a status h
   }), true);
   assert.equal(h.calls.some(([kind, text]) => kind === "output.finish" && text === "第二问的回答"), true);
   assert.equal(h.calls.some(([kind, text]) => kind === "output.finish" && text === "第一问的迟到回答"), false);
+});
+
+
+
+test("server interruption ack only matches the latest request and never stops new TTS", () => {
+  const h = createHarness();
+  h.connection.connected = true;
+  h.output.pipelineActive = true;
+  h.input.bargeInPhase = "tentative";
+  assert.equal(h.session.confirmBargeInFromAsr(), true);
+  const requestId = h.sent.at(-1).request_id;
+
+  h.turns.current = "turn-new";
+  h.output.pipelineActive = true;
+  h.output.playing = true;
+  const stopped = h.calls.filter(([method]) => method === "output.stop").length;
+
+  assert.equal(h.session.routeServerEvent({
+    type: "interrupt.ack", request_id: "f".repeat(32),
+    reason: "barge_in", cancelled: true, turn_id: "turn-old",
+  }), false);
+  assert.equal(h.session.routeServerEvent({
+    type: "interrupt.ack", request_id: requestId,
+    reason: "barge_in", cancelled: true, turn_id: "turn-old",
+  }), true);
+  assert.equal(h.session.routeServerEvent({
+    type: "interrupt.ack", request_id: requestId,
+    reason: "barge_in", cancelled: true, turn_id: "turn-old",
+  }), false);
+  assert.equal(h.session.pendingInterrupt, null);
+  assert.equal(h.turns.current, "turn-new");
+  assert.equal(h.output.pipelineActive, true);
+  assert.equal(h.output.playing, true);
+  assert.equal(h.calls.filter(([method]) => method === "output.stop").length, stopped);
+});
+
+test("typing a new question invalidates an earlier barge-in acknowledgement", () => {
+  const h = createHarness();
+  h.connection.connected = true;
+  h.input.bargeInPhase = "tentative";
+  assert.equal(h.session.confirmBargeInFromAsr(), true);
+  const oldId = h.sent.at(-1).request_id;
+  assert.equal(h.session.sendText("新问题"), true);
+  const newTurn = h.sent.at(-1).turn_id;
+  assert.equal(h.session.routeServerEvent({
+    type: "interrupt.ack", request_id: oldId,
+    reason: "barge_in", cancelled: true, turn_id: "old-turn",
+  }), false);
+  assert.equal(h.turns.current, newTurn);
 });

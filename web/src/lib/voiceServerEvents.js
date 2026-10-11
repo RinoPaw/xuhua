@@ -24,6 +24,7 @@ const SERVER_EVENT_TYPES = new Set([
   "sources",
   "assistant.done",
   "assistant.cancelled",
+  "interrupt.ack",
   "error",
 ]);
 
@@ -40,6 +41,10 @@ export function decodeVoiceServerEvent(value) {
 
   const message = { ...value, type };
   if (type === "status" && !SERVER_STATUS_MAP[message.status]) return null;
+  if (type === "interrupt.ack"
+    && (!/^[0-9a-f]{32}$/u.test(message.request_id || "")
+      || !["barge_in", "client_interrupt"].includes(message.reason)
+      || typeof message.cancelled !== "boolean")) return null;
 
   if (UTTERANCE_EVENTS.has(type)) {
     const utteranceId = normalizeUtteranceId(message.utterance_id);

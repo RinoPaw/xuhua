@@ -218,3 +218,23 @@ test("repeated rejection cannot reset next utterance's transcription", () => {
     ["markThinking"], ["publishUserTranscript", "当前问题"],
   ]);
 });
+
+
+
+test("router delegates cancellation confirmation without touching voice state", () => {
+  const h = createHarness();
+  const machineBefore = h.state.machine;
+  const ack = {
+    type: "interrupt.ack", request_id: "a".repeat(32),
+    reason: "barge_in", cancelled: true,
+  };
+  h.actions.confirmInterruptAck = (message) => {
+    h.calls.push(["confirmInterruptAck", message.request_id]);
+    return true;
+  };
+  assert.equal(routeVoiceServerEvent(ack, {
+    state: h.state, actions: h.actions,
+  }), true);
+  assert.deepEqual(h.calls, [["confirmInterruptAck", ack.request_id]]);
+  assert.deepEqual(h.state.machine, machineBefore);
+});

@@ -118,3 +118,16 @@ test("ignored assistant turn errors never update utterance state", () => {
   assert.equal(inputState.latestUtteranceId, 0);
   assert.equal(inputState.finalizedUtteranceId, 0);
 });
+
+
+
+test("interruption acknowledgements reject invalid requests and reasons", () => {
+  const valid = {
+    type: "interrupt.ack", request_id: "a".repeat(32),
+    reason: "barge_in", cancelled: true, turn_id: "old", utterance_id: 2,
+  };
+  assert.deepEqual(decodeVoiceServerEvent(valid), valid);
+  assert.equal(decodeVoiceServerEvent({ ...valid, request_id: "invalid" }), null);
+  assert.equal(decodeVoiceServerEvent({ ...valid, reason: "unknown" }), null);
+  assert.equal(decodeVoiceServerEvent({ ...valid, cancelled: "true" }), null);
+});

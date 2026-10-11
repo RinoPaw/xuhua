@@ -20,6 +20,7 @@ export class PersonaVoiceGate {
     this.log = log;
     this.sleeping = true;
     this.sleepTimer = null;
+    this.countdownGeneration = 0;
   }
 
   setOnSleep(callback) {
@@ -31,6 +32,9 @@ export class PersonaVoiceGate {
   }
 
   clearCountdown() {
+    // A cleared callback may already be queued. Invalidate it even if the
+    // timer handle has already been removed by the browser.
+    this.countdownGeneration += 1;
     if (this.sleepTimer === null) return false;
     this.clearTimeoutFn.call(globalThis, this.sleepTimer);
     this.sleepTimer = null;
@@ -61,8 +65,11 @@ export class PersonaVoiceGate {
     if (this.sleeping) return false;
     this.clearCountdown();
     this.logState(`sleep countdown ${formatSleepDelay(this.sleepDelayMs)}`);
+    const generation = this.countdownGeneration;
     this.sleepTimer = this.setTimeoutFn.call(globalThis, () => {
+      if (generation !== this.countdownGeneration || this.sleeping) return;
       this.sleepTimer = null;
+      this.countdownGeneration += 1;
       this.sleeping = true;
       this.logState("sleeping");
       try {

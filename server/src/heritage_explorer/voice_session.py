@@ -615,7 +615,11 @@ class VoiceSessionRuntime:
                 self.batch.partials[utterance_id] = transcript
         except asyncio.CancelledError:
             raise
-        except VoiceProviderError:
+        except Exception:
+            # Provider setup/finalization can raise exceptions other than
+            # VoiceProviderError (e.g. a failed socket or decoder task).
+            # The finalizer must still commit a terminal failure so the
+            # browser does not wait for a transcript that will never arrive.
             final_status = "failed"
             LOGGER.warning(
                 "voice.asr.failed connection=%s utterance=%s",

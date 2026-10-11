@@ -17,17 +17,16 @@ def test_logging_bootstrap_adds_default_info_handler_only_without_host_configura
     root = Mock()
     root.handlers = []
     configured = Mock()
-    monkeypatch.setattr(setup.logging, "getLogger", lambda: root)
     monkeypatch.setattr(setup.logging, "basicConfig", configured)
 
-    assert setup.configure_application_logging() is True
+    assert setup.configure_application_logging(root_logger=root) is True
     configured.assert_called_once_with(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
     root.handlers = [object()]
-    assert setup.configure_application_logging() is False
+    assert setup.configure_application_logging(root_logger=root) is False
     configured.assert_called_once()
 
 

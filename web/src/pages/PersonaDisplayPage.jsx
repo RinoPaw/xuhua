@@ -8,7 +8,7 @@ import { useTextConversation } from "../hooks/useTextConversation.js";
 import { REALTIME_VOICE_STATUS, useVoiceConversation } from "../hooks/useVoiceConversation.js";
 import { createConversationSessionId } from "../lib/conversationSession.js";
 import { conversationReducer, initialConversationState } from "../lib/conversationState.js";
-import { personaDisplayState } from "../lib/displayMode.js";
+import { personaDisplayState, personaVoiceControlState } from "../lib/displayMode.js";
 import { getLocaleHint, getPreferredLocales } from "../lib/locale.js";
 import { PersonaBrowserVoiceSession } from "../lib/personaBrowserVoiceSession.js";
 import "./PersonaDisplayPage.css";
@@ -124,8 +124,14 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
     ? conversation.messages.findLast((message) => message.role === "assistant")
     : conversation.messages.slice(lastUserIndex + 1).find((message) => message.role === "assistant");
   const connecting = realtime.status === REALTIME_VOICE_STATUS.CONNECTING;
-  const voiceActive = realtime.isWakeListening
-    || (realtime.isConnected && realtime.isMicrophoneEnabled);
+  const voiceControl = personaVoiceControlState({
+    connected: realtime.isConnected,
+    microphoneEnabled: realtime.isMicrophoneEnabled,
+    wakeListening: realtime.isWakeListening,
+    wakeStarting: realtime.isWakeStarting,
+    available: voiceAvailable !== false,
+  });
+  const voiceActive = voiceControl.active;
 
   const handleVoice = () => {
     dispatch({ type: "clear.error" });
@@ -134,7 +140,7 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
       void realtime.toggleMicrophone();
       return;
     }
-    if (realtime.isWakeListening) {
+    if (realtime.isWakeListening || realtime.isWakeStarting) {
       personaSessionRef.current?.stop();
       return;
     }
@@ -212,15 +218,13 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
             type="button"
             onClick={handleVoice}
             disabled={connecting || voiceAvailable === false}
-            aria-label={realtime.isConnected
-              ? (voiceActive ? "关闭麦克风" : "开启麦克风")
-              : voiceAvailable === false ? "语音服务暂不可用"
-                : realtime.isWakeListening ? "关闭本地唤醒监听" : "开启本地唤醒监听"}
+            aria-label={voiceControl.label}
             aria-pressed={voiceActive}
-          >{connecting ? <SpinnerGap className="spin" /> : realtime.isConnected && !voiceActive
+          >{connecting || voiceControl.preparing ? <SpinnerGap className="spin" /> : realtime.isConnected && !voiceActive
             ? <MicrophoneSlash /> : <Microphone />}</button>
           <p className="sr-only" role="status" aria-live="polite">
-            {realtime.isWakeListening ? "正在本地监听唤醒词叙华" : conversation.announcement}
+            {realtime.isWakeListening ? "正在本地监听唤醒词叙华"
+              : realtime.isWakeStarting ? "正在准备本地唤醒监听" : conversation.announcement}
           </p>
         </section>
       </div>

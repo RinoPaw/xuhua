@@ -535,3 +535,27 @@ test("pending or rejected local wake capture is never advertised as active", asy
   assert.deepEqual(updates, []);
   session.destroy();
 });
+
+
+test("local wake startup can be cancelled while model loading or permission is pending", async () => {
+  const { session, detector, connection } = makeSession();
+  const preparing = [];
+  const listening = [];
+  session.onWakeStartingChange = (value) => preparing.push(value);
+  session.onWakeListeningChange = (value) => listening.push(value);
+  let allowStart;
+  detector.start = () => new Promise((resolve) => { allowStart = resolve; });
+
+  const pending = session.armWake();
+  assert.equal(session.wakeStarting, true);
+  assert.equal(session.wakeListening, false);
+  session.stop();
+  assert.equal(session.wakeStarting, false);
+  allowStart(true);
+  assert.equal(await pending, false);
+  assert.equal(session.wakeListening, false);
+  assert.equal(connection.connected, false);
+  assert.deepEqual(preparing, [true, false]);
+  assert.deepEqual(listening, []);
+  session.destroy();
+});

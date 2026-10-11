@@ -4,13 +4,15 @@ import { LocalWakeWordDetector } from "./localWakeWordDetector.js";
 import { PersonaVoiceGate } from "./personaVoiceGate.js";
 
 export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
-  constructor({ gate = null, wakeDetector = null, onWakeListeningChange = () => {}, ...options } = {}) {
+  constructor({ gate = null, wakeDetector = null, onWakeListeningChange = () => {}, onWakeStartingChange = () => {}, ...options } = {}) {
     super(options);
     this.gate = gate || new PersonaVoiceGate({ log: this.log });
     this.wakeDetector = wakeDetector || new LocalWakeWordDetector({ log: this.log });
     this.autoWakeEnabled = false;
     this.wakeListening = false;
+    this.wakeStarting = false;
     this.onWakeListeningChange = onWakeListeningChange;
+    this.onWakeStartingChange = onWakeStartingChange;
     this.wakeGeneration = 0;
     this.armingWake = null;
     this.waking = false;
@@ -25,6 +27,13 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.onWakeListeningChange(active);
   }
 
+  setWakeStarting(value) {
+    const active = Boolean(value);
+    if (this.wakeStarting === active) return;
+    this.wakeStarting = active;
+    this.onWakeStartingChange(active);
+  }
+
   async armWake() {
     if (this.disposed || this.connection.connected || !this.gate.sleeping) return false;
     // Both the metadata effect and a failed-connection retry can request local
@@ -33,6 +42,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     if (this.armingWake) return this.armingWake;
     this.autoWakeEnabled = true;
     const generation = ++this.wakeGeneration;
+    this.setWakeStarting(true);
     const pending = (async () => {
       try {
         const started = await this.wakeDetector.start((keyword) => this.handleLocalWake(keyword));
@@ -57,7 +67,10 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     try {
       return await pending;
     } finally {
-      if (this.armingWake === pending) this.armingWake = null;
+      if (this.armingWake === pending) {
+        this.armingWake = null;
+        this.setWakeStarting(false);
+      }
     }
   }
 
@@ -67,6 +80,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     }
     const generation = ++this.wakeGeneration;
     this.waking = true;
+    this.setWakeStarting(false);
     this.wakeDetector.stop();
     this.setWakeListening(false);
     this.gate.wake(keyword);
@@ -114,6 +128,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.autoWakeEnabled = true;
     this.wakeGeneration += 1;
     this.armingWake = null;
+    this.setWakeStarting(false);
     this.wakeDetector.stop();
     this.setWakeListening(false);
     this.gate.wake("手动开启");
@@ -209,6 +224,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.autoWakeEnabled = false;
     this.wakeGeneration += 1;
     this.armingWake = null;
+    this.setWakeStarting(false);
     this.wakeDetector.stop();
     this.setWakeListening(false);
     return super.stop();
@@ -219,6 +235,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.autoWakeEnabled = false;
     this.wakeGeneration += 1;
     this.armingWake = null;
+    this.setWakeStarting(false);
     this.wakeDetector.dispose();
     this.setWakeListening(false);
     super.destroy();

@@ -9,7 +9,7 @@
 - 连续会话：服务端维护 session / turn，并支持取消当前回答。
 - 实时语音：人物页休眠时通过本地 Sherpa-ONNX 检测唤醒词“叙华”，唤醒后再建立远端语音连接；浏览器 VAD 采集 PCM，经讯飞流式 ASR 转写后进入同一回答链路。
 - 中英语音识别：当前只使用讯飞“中英识别大模型”一条 ASR 链路，配置为 `zh_cn` / `mandarin` / `slm`。
-- Edge TTS：浏览器先向 `/api/tts` 提交朗读文本换取短期、客户端绑定的 ticket，再通过 `/api/tts/{token}` 获取完整 MP3 音频；前端支持中断与有界重试，不使用浏览器 `speechSynthesis` 降级。
+- Edge TTS：浏览器先向 `/api/tts` 换取短期、客户端绑定的 ticket；首播请求使用 `/api/tts/{token}?stream=1` 在收到第一块 MP3 后开始渐进传输，重试和旧客户端仍使用完整缓冲。支持中断与有界重试，不使用浏览器 `speechSynthesis` 降级。
 - 数字人界面：React / Vite Web 客户端，由 FastAPI 同源提供构建产物。
 
 ## 仓库结构
@@ -150,7 +150,7 @@ npm run dev
 | POST | `/api/chat/{session_id}/turn/{turn_id}/cancel` | 中断指定轮次 |
 | WS | `/api/voice` | VAD、讯飞 ASR、连续对话与抢话 |
 | POST | `/api/tts` | 提交朗读文本并获取短期、客户端绑定的 TTS token |
-| GET | `/api/tts/{token}` | 使用 token 获取完整 Edge TTS MP3 音频 |
+| GET | `/api/tts/{token}` | 使用 token 获取完整 Edge TTS MP3；加 `?stream=1` 渐进传输首播音频，带 `tts_retry` 的请求始终完整缓冲 |
 
 实时语音路径：
 
@@ -161,7 +161,7 @@ npm run dev
   → XfyunStream
   → AssistantService / LLM
   → POST /api/tts 获取 ticket
-  → GET /api/tts/{token} 获取并播放完整音频
+  → GET /api/tts/{token}?stream=1 渐进接收并播放音频（重试使用完整 MP3）
 ```
 
 人物页休眠时远端 WebSocket 关闭，仅本地唤醒器占用麦克风；识别到唤醒词后先停止本地监听，再建立远端连接并发送 `wake` 命令。播报结束并空闲约 7 秒后，关闭远端连接并重新切回本地监听。`wake` 不会伪装成普通文本问题进入检索 / LLM 链路。

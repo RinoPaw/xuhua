@@ -138,3 +138,83 @@ test("router rejects errors for ignored assistant turns", () => {
   assert.equal(accepted, false);
   assert.deepEqual(harness.calls, []);
 });
+
+
+
+test("duplicate final transcript does not interrupt the new answer", () => {
+  const h = createHarness();
+  const transcript = { type: "user.transcript", utterance_id: 4, text: "第一问" };
+
+  assert.equal(routeVoiceServerEvent(transcript, {
+    state: h.state, actions: h.actions,
+  }), true);
+  assert.equal(h.state.input.finalizedUtteranceId, 4);
+  h.setMachine(reduceVoiceMachine(h.state.machine, { type: "output.speaking" }));
+  h.state.output.playing = true;
+  h.calls.length = 0;
+
+  assert.equal(routeVoiceServerEvent(transcript, {
+    state: h.state, actions: h.actions,
+  }), false);
+  assert.equal(routeVoiceServerEvent({
+    type: "user.partial", utterance_id: 4, text: "旧文本",
+  }, { state: h.state, actions: h.actions }), false);
+  assert.deepEqual(h.calls, []);
+});
+
+test("old ASR errors cannot stop a newer assistant turn or TTS", () => {
+  const h = createHarness();
+  const context = { state: h.state, actions: h.actions };
+  assert.equal(routeVoiceServerEvent({
+    type: "user.transcript", utterance_id: 1, text: "旧问题",
+  }, context), true);
+  assert.equal(routeVoiceServerEvent({
+    type: "user.transcript", utterance_id: 2, text: "新问题",
+  }, context), true);
+  h.state.turns.setActive("turn-new");
+  h.state.output.pipelineActive = true;
+  h.setMachine(reduceVoiceMachine(h.state.machine, { type: "output.speaking" }));
+  h.calls.length = 0;
+
+  assert.equal(routeVoiceServerEvent({
+    type: "error", utterance_id: 1, code: "asr_unavailable", message: "旧识别失败",
+  }, context), false);
+  assert.equal(h.state.turns.current, "turn-new");
+  assert.deepEqual(h.calls, []);
+});
+
+test("ASR error is terminal for its utterance but not the next one", () => {
+  const h = createHarness();
+  const context = { state: h.state, actions: h.actions };
+  const asrFailure = {
+    type: "error", utterance_id: 3, code: "asr_unavailable", message: "无法识别",
+  };
+  assert.equal(routeVoiceServerEvent(asrFailure, context), true);
+  assert.equal(h.state.input.finalizedUtteranceId, 3);
+  assert.equal(routeVoiceServerEvent(asrFailure, context), false);
+  assert.equal(routeVoiceServerEvent({
+    type: "user.transcript", utterance_id: 4, text: "新的提问",
+  }, context), true);
+  assert.deepEqual(
+    h.calls.filter((call) => call[0] === "reportError"),
+    [["reportError", "无法识别"]],
+  );
+});
+
+test("repeated rejection cannot reset next utterance's transcription", () => {
+  const h = createHarness();
+  const context = { state: h.state, actions: h.actions };
+  assert.equal(routeVoiceServerEvent({
+    type: "utterance.rejected", utterance_id: 2,
+  }, context), true);
+  h.calls.length = 0;
+  assert.equal(routeVoiceServerEvent({
+    type: "utterance.rejected", utterance_id: 2,
+  }, context), false);
+  assert.equal(routeVoiceServerEvent({
+    type: "user.transcript", utterance_id: 3, text: "当前问题",
+  }, context), true);
+  assert.deepEqual(h.calls, [
+    ["markThinking"], ["publishUserTranscript", "当前问题"],
+  ]);
+});

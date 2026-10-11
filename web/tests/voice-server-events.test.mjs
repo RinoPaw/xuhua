@@ -89,3 +89,32 @@ test("server errors tied to ignored turns are rejected", () => {
   ), false);
   assert.equal(acceptServerVoiceError({ message: "transport" }), true);
 });
+
+
+
+test("ASR-scoped errors honor terminal and supersession boundaries", () => {
+  const inputState = createVoiceInputState();
+  inputState.latestUtteranceId = 5;
+  assert.equal(acceptServerVoiceError({
+    type: "error", utterance_id: 4, message: "late",
+  }, { inputState }), false);
+  assert.equal(acceptServerVoiceError({
+    type: "error", utterance_id: 5, message: "current",
+  }, { inputState }), true);
+  assert.equal(inputState.finalizedUtteranceId, 5);
+  assert.equal(acceptServerVoiceError({
+    type: "error", utterance_id: 5, message: "duplicate",
+  }, { inputState }), false);
+  assert.equal(acceptServerVoiceError({
+    type: "error", utterance_id: 6, message: "next",
+  }, { inputState }), true);
+});
+
+test("ignored assistant turn errors never update utterance state", () => {
+  const inputState = createVoiceInputState();
+  assert.equal(acceptServerVoiceError({
+    type: "error", turn_id: "old", utterance_id: 8,
+  }, { inputState, assistantPending: true, ignoredTurns: new Set(["old"]) }), false);
+  assert.equal(inputState.latestUtteranceId, 0);
+  assert.equal(inputState.finalizedUtteranceId, 0);
+});

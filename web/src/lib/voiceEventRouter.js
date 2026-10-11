@@ -45,7 +45,7 @@ export function routeVoiceServerEvent(message, {
   }
 
   if (message.type === "user.transcript") {
-    if (!acceptVoiceUtteranceMessage(state.input, message)) return false;
+    if (!acceptVoiceUtteranceMessage(state.input, message, { terminal: true })) return false;
     state.input.activeUtteranceId = 0;
     const transcript = normalizeVoiceText(message.text);
     if (!transcript) {
@@ -104,7 +104,7 @@ export function routeVoiceServerEvent(message, {
   }
 
   if (message.type === "utterance.rejected") {
-    if (!acceptVoiceUtteranceMessage(state.input, message)) return false;
+    if (!acceptVoiceUtteranceMessage(state.input, message, { terminal: true })) return false;
     presenter?.reject(message);
     if (bargeInTentative) actions.clearBargeInCandidate();
     else actions.settleListening();
@@ -120,6 +120,7 @@ export function routeVoiceServerEvent(message, {
 
   if (message.type === "error") {
     if (!acceptServerVoiceError(message, {
+      inputState: state.input,
       activeTurn: state.turns.current,
       assistantPending,
       ignoredTurns: state.turns.ignoredTurns,

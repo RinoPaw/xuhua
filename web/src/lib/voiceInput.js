@@ -27,6 +27,7 @@ export function createVoiceInputState() {
     resampler: null,
     spectrumUpdatedAt: 0,
     latestUtteranceId: 0,
+    finalizedUtteranceId: 0,
     activeUtteranceId: 0,
     nextUtteranceId: 0,
     minimumUtteranceId: 1,
@@ -43,6 +44,7 @@ export function resetVoiceInputPhase(state, { resetIds = false, discardResampler
   if (discardResampler) state.resampler = null;
   if (resetIds) {
     state.latestUtteranceId = 0;
+    state.finalizedUtteranceId = 0;
     state.activeUtteranceId = 0;
     state.nextUtteranceId = 0;
     state.minimumUtteranceId = 1;
@@ -70,15 +72,24 @@ export function resetVoiceOnset(state) {
   return state;
 }
 
-export function acceptVoiceUtteranceMessage(state, message, { required = true } = {}) {
+export function acceptVoiceUtteranceMessage(
+  state,
+  message,
+  { required = true, terminal = false } = {},
+) {
   const id = normalizeUtteranceId(message?.utterance_id);
   if (!id) return !required;
+  // Once a final transcript, rejection, or ASR error has been accepted,
+  // further events for that utterance cannot start a second turn or
+  // overwrite the next turn's input/status.
+  if (id <= (Number(state.finalizedUtteranceId) || 0)) return false;
   if (id < (Number(state.minimumUtteranceId) || 1)) return false;
   if (!shouldAcceptUtteranceEvent(id, state.latestUtteranceId, state.activeUtteranceId)) {
     return false;
   }
   state.latestUtteranceId = Math.max(state.latestUtteranceId, id);
   state.nextUtteranceId = Math.max(state.nextUtteranceId, id);
+  if (terminal) state.finalizedUtteranceId = id;
   return true;
 }
 

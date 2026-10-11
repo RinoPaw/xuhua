@@ -133,3 +133,17 @@ test("superseding input rejects the old utterance and preserves the next server 
   assert.equal(state.activeUtteranceId, 4);
   assert.equal(acceptVoiceUtteranceMessage(state, { utterance_id: 4 }), true);
 });
+
+
+
+test("terminal utterance acceptance resets only on a new connection", () => {
+  const state = createVoiceInputState();
+  assert.equal(acceptVoiceUtteranceMessage(state, {
+    utterance_id: 7,
+  }, { terminal: true }), true);
+  assert.equal(acceptVoiceUtteranceMessage(state, { utterance_id: 7 }), false);
+  resetVoiceInputPhase(state);
+  assert.equal(acceptVoiceUtteranceMessage(state, { utterance_id: 7 }), false);
+  resetVoiceInputPhase(state, { resetIds: true });
+  assert.equal(acceptVoiceUtteranceMessage(state, { utterance_id: 7 }), true);
+});

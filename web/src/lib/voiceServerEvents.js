@@ -116,11 +116,23 @@ export function acceptServerVoiceStatus(message, {
 }
 
 export function acceptServerVoiceError(message, {
+  inputState = null,
   activeTurn = "",
   assistantPending = false,
   ignoredTurns = new Set(),
 } = {}) {
   const turnId = normalizeVoiceId(message?.turn_id);
-  if (!turnId) return true;
-  return shouldAcceptServerTurn(turnId, activeTurn, assistantPending, ignoredTurns);
+  if (turnId && !shouldAcceptServerTurn(
+    turnId, activeTurn, assistantPending, ignoredTurns,
+  )) return false;
+
+  // ASR errors have an utterance_id but no turn_id. They must obey the same
+  // supersession/finalization boundary as ASR transcripts and rejections;
+  // otherwise a late error can abort an unrelated assistant answer.
+  if (message?.utterance_id !== undefined && message?.utterance_id !== null) {
+    return Boolean(inputState && acceptVoiceUtteranceMessage(
+      inputState, message, { terminal: true },
+    ));
+  }
+  return true;
 }

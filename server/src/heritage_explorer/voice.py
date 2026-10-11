@@ -233,6 +233,18 @@ class XfyunStream:
                     pending.done.set_exception(failure)
 
     async def finish(self) -> str:
+        """Complete an utterance and close the provider stream (legacy contract)."""
+        try:
+            return await self.finish_result()
+        finally:
+            await self.close()
+
+    async def finish_result(self) -> str:
+        """Wait for the final transcript without blocking on socket teardown.
+
+        The owning VoiceConnectionScope must subsequently close the stream.
+        This lets the voice runtime start answering while ASR cleanup runs.
+        """
         try:
             async with self._send_lock:
                 if self._socket is None:
@@ -265,8 +277,6 @@ class XfyunStream:
             await asyncio.wait_for(self._done.wait(), timeout=self.finish_timeout)
         except TimeoutError:
             raise VoiceProviderError("voice_provider_timeout") from None
-        finally:
-            await self.close()
         if self._error:
             raise VoiceProviderError("voice_provider_failed")
         return self.current_text()

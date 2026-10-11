@@ -597,7 +597,15 @@ class VoiceSessionRuntime:
                 )
             )
             await start_task
-            transcript = await stream.finish()
+            # XfyunStream exposes its final transcript before waiting for
+            # websocket teardown. Keep supporting injected/legacy streams
+            # whose finish() still combines both operations.
+            finish_result = getattr(stream, "finish_result", None)
+            transcript = (
+                await finish_result()
+                if finish_result is not None
+                else await stream.finish()
+            )
             final_status = "completed"
             LOGGER.info(
                 "voice.asr.finished connection=%s utterance=%s chars=%s",
@@ -645,12 +653,16 @@ class VoiceSessionRuntime:
                 final_status,
                 (time.perf_counter() - final_started_at) * 1000,
             )
+            self.batch.pending_user_speaking.discard(utterance_id)
+            self.batch.pending.discard(utterance_id)
             try:
-                await self.lifecycle.release_asr(stream, label="voice.asr.finalizer")
-            finally:
-                self.batch.pending_user_speaking.discard(utterance_id)
-                self.batch.pending.discard(utterance_id)
+                # A final transcript can enter the answer pipeline immediately.
+                # The finalizer still owns the detached provider stream and
+                # admission lease until its cleanup finishes; cancellation and
+                # connection close continue to join this owned task.
                 await self.commit_voice_batch(generation)
+            finally:
+                await self.lifecycle.release_asr(stream, label="voice.asr.finalizer")
 
     async def start_asr(self, stream: Any, utterance_id: int) -> None:
         started_at = time.perf_counter()

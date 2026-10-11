@@ -257,6 +257,7 @@ def create_app(
 
         async def audio_chunks() -> AsyncIterator[bytes]:
             nonlocal first_chunk_logged, bytes_sent
+            outcome = "cancelled"
             try:
                 async for chunk in upstream:
                     if chunk.get("type") != "audio" or not chunk.get("data"):
@@ -272,6 +273,7 @@ def create_app(
                         )
                     bytes_sent += len(data)
                     yield data
+                outcome = "completed"
                 LOGGER.info(
                     "[trace=%s segment=%s] tts.complete +%.3fs bytes=%s",
                     ticket.trace_id or "-",
@@ -279,12 +281,35 @@ def create_app(
                     time.perf_counter() - started,
                     bytes_sent,
                 )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                outcome = "failed"
+                raise
             finally:
+                LOGGER.info(
+                    "[trace=%s segment=%s] tts.finish outcome=%s elapsed_ms=%.1f bytes=%s first_chunk=%s",
+                    ticket.trace_id or "-",
+                    ticket.segment,
+                    outcome,
+                    (time.perf_counter() - started) * 1000,
+                    bytes_sent,
+                    first_chunk_logged,
+                )
                 close = getattr(upstream, "aclose", None)
                 if close is not None:
                     await close()
 
         audio = audio_chunks()
+
+        async def release_audio() -> None:
+            # Upstream generators may themselves fail during close(). A failed
+            # teardown must never retain TTS admission capacity.
+            try:
+                await audio.aclose()
+            finally:
+                await lease.release()
+
         streaming = progressive and "tts_retry" not in request.query_params
         if streaming:
             # The network/browser can start consuming this MP3 before Edge
@@ -292,12 +317,10 @@ def create_app(
             try:
                 first = await anext(audio, None)
             except asyncio.CancelledError:
-                await audio.aclose()
-                await lease.release()
+                await release_audio()
                 raise
             except Exception as exc:
-                await audio.aclose()
-                await lease.release()
+                await release_audio()
                 LOGGER.warning(
                     "[trace=%s segment=%s] tts.provider.failed locale=%s reason=%s",
                     ticket.trace_id or "-",
@@ -307,8 +330,7 @@ def create_app(
                 )
                 raise HTTPException(status_code=502, detail="tts_provider_unavailable") from None
             if not first:
-                await audio.aclose()
-                await lease.release()
+                await release_audio()
                 raise HTTPException(status_code=502, detail="tts_provider_no_audio")
 
             async def progressive_audio() -> AsyncIterator[bytes]:
@@ -331,8 +353,7 @@ def create_app(
                     # report an error (without replaying already heard audio).
                     raise RuntimeError("tts_stream_interrupted") from None
                 finally:
-                    await audio.aclose()
-                    await lease.release()
+                    await release_audio()
 
             return StreamingResponse(
                 progressive_audio(),
@@ -362,8 +383,7 @@ def create_app(
             )
             raise HTTPException(status_code=502, detail="tts_provider_unavailable") from None
         finally:
-            await audio.aclose()
-            await lease.release()
+            await release_audio()
 
         if not payload:
             raise HTTPException(status_code=502, detail="tts_provider_no_audio")

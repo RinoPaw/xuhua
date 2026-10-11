@@ -54,6 +54,10 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
           return false;
         }
         this.setWakeListening(true);
+        // The remote socket may have failed, but successfully restored local
+        // wake capture is an operational idle state, not a fatal UI fault.
+        this.clearError();
+        this.dispatchVoice({ type: "fault.clear" });
         return true;
       } catch (error) {
         if (generation === this.wakeGeneration && this.autoWakeEnabled && !this.disposed) {

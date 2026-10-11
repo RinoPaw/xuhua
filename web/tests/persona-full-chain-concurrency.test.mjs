@@ -302,6 +302,7 @@ test("unexpected disconnect during TTS releases media and restores only local ke
     assert.equal(h.session.output.pipelineActive, false);
     assert.equal(audio.pauseCalls > 0, true);
     assert.equal(h.status, "idle");
+    assert.equal(h.machine.fault, false);
     audio.emit("ended");
     assert.equal(h.timers.size, 0);
 

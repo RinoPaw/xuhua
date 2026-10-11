@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  isPersonaWakePhrase,
   PERSONA_RESPONSE_GRACE_MS,
   PersonaVoiceGate,
 } from "../src/lib/personaVoiceGate.js";
@@ -19,22 +18,14 @@ function createLog() {
   };
 }
 
-test("persona wake phrase must start with 叙华", () => {
-  assert.equal(isPersonaWakePhrase("叙华"), true);
-  assert.equal(isPersonaWakePhrase("  叙华，讲讲汴绣"), true);
-  assert.equal(isPersonaWakePhrase("介绍一下叙华"), false);
-  assert.equal(isPersonaWakePhrase("循环"), false);
-});
-
-test("persona gate sleeps initially and wakes only on the wake phrase", () => {
+test("persona gate sleeps until local wake detector explicitly wakes it", () => {
   const log = createLog();
   const gate = new PersonaVoiceGate({ log: log.logger });
 
-  assert.equal(gate.allowAssistantResponse(), false);
-  assert.equal(gate.acceptTranscript("今天天气不错"), "ignore");
-  assert.equal(gate.allowAssistantResponse(), false);
-  assert.equal(gate.acceptTranscript("叙华"), "wake");
-  assert.equal(gate.allowAssistantResponse(), true);
+  assert.equal(gate.sleeping, true);
+  assert.equal(gate.noteUserActivity(), false);
+  gate.wake("叙华");
+  assert.equal(gate.sleeping, false);
   assert.deepEqual(log.messages, [
     "[叙华][persona] wake: 叙华",
     "[叙华][persona] awake",
@@ -67,15 +58,15 @@ test("persona gate logs countdown cancellation and hands off to local sleep", ()
   gate.wake("叙华");
   assert.equal(gate.responseSettled(), true);
   assert.equal(timerDelay, PERSONA_RESPONSE_GRACE_MS);
-  assert.equal(gate.allowAssistantResponse(), true);
+  assert.equal(gate.sleeping, false);
 
   assert.equal(gate.noteUserActivity(), true);
   assert.deepEqual(cleared, [17]);
-  assert.equal(gate.allowAssistantResponse(), true);
+  assert.equal(gate.sleeping, false);
 
   assert.equal(gate.responseSettled(), true);
   timerCallback();
-  assert.equal(gate.allowAssistantResponse(), false);
+  assert.equal(gate.sleeping, true);
   assert.deepEqual(sleeps, ["sleep"]);
   assert.deepEqual(log.messages, [
     "[叙华][persona] wake: 叙华",

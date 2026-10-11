@@ -1,12 +1,4 @@
-const WAKE_WORD = "叙华";
-const WAKE_PREFIX_TRIM = /^[\s，,。！？!?：:、~～]+/u;
-
 export const PERSONA_RESPONSE_GRACE_MS = 7000;
-
-export function isPersonaWakePhrase(value) {
-  const text = String(value || "").replace(WAKE_PREFIX_TRIM, "").trim();
-  return text.startsWith(WAKE_WORD);
-}
 
 function formatSleepDelay(milliseconds) {
   const seconds = Number(milliseconds || 0) / 1000;
@@ -65,16 +57,6 @@ export class PersonaVoiceGate {
     return true;
   }
 
-  acceptTranscript(text) {
-    if (!this.sleeping) {
-      if (this.clearCountdown()) this.logState("awake");
-      return "active";
-    }
-    if (!isPersonaWakePhrase(text)) return "ignore";
-    this.wake(text);
-    return "wake";
-  }
-
   responseSettled() {
     if (this.sleeping) return false;
     this.clearCountdown();
@@ -91,10 +73,6 @@ export class PersonaVoiceGate {
       }
     }, this.sleepDelayMs);
     return true;
-  }
-
-  allowAssistantResponse() {
-    return !this.sleeping;
   }
 
   dispose() {

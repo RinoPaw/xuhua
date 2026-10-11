@@ -1,4 +1,4 @@
-import { isVoiceAssistantPending } from "../hooks/voiceState.js";
+import { isVoiceAssistantPending, VOICE_INPUT_PHASE } from "../hooks/voiceState.js";
 import { BrowserVoiceSession } from "./browserVoiceSession.js";
 import { LocalWakeWordDetector } from "./localWakeWordDetector.js";
 import { PersonaVoiceGate } from "./personaVoiceGate.js";
@@ -132,43 +132,31 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     return result;
   }
 
+  // Sleeping closes the remote socket. No second "remote ASR while asleep"
+  // branch is needed; accept events only from the active connected session.
   routeServerEvent(message) {
-    if (message?.type === "user.partial") {
+    const accepted = super.routeServerEvent(message);
+    if (!accepted) return false;
+
+    if (message?.type === "user.partial" || message?.type === "user.transcript") {
       this.gate.noteUserActivity();
+    } else if (["assistant.cancelled", "utterance.rejected", "error"].includes(message?.type)) {
+      // Failure/rejection can terminate a turn without triggering audio output.
+      this.scheduleSleepIfIdle();
     }
-
-    if (message?.type === "user.transcript") {
-      const decision = this.gate.acceptTranscript(message.text);
-      const accepted = super.routeServerEvent(message);
-      if (decision === "ignore" && accepted) this.cancelSleepingTurn();
-      return accepted;
-    }
-
-    if (
-      (message?.type === "assistant.delta" || message?.type === "assistant.done")
-      && !this.gate.allowAssistantResponse()
-    ) {
-      if (message.turn_id) this.turns.ignore(message.turn_id);
-      return true;
-    }
-
-    return super.routeServerEvent(message);
+    return true;
   }
 
-  cancelSleepingTurn() {
-    if (!this.connection.connected) return false;
-    this.input.clearBargeInCandidate();
-    this.turns.ignoreActive();
-    this.output?.stop();
-    this.dispatchMany([
-      { type: "input.idle" },
-      { type: "turn.idle" },
-      { type: "output.idle" },
-    ]);
-    const sent = this.send({ type: "interrupt" });
-    if (!sent) return this.handleTransportFailure();
-    this.settleListening();
-    return true;
+  scheduleSleepIfIdle() {
+    const machine = this.getMachine();
+    if (this.disposed || !this.autoWakeEnabled || this.gate.sleeping
+      || !this.connection.connected || this.input.utteranceActive
+      || machine?.input === VOICE_INPUT_PHASE.SPEAKING
+      || machine?.input === VOICE_INPUT_PHASE.TRANSCRIBING
+      || this.output?.pipelineActive || this.output?.playing
+      || isVoiceAssistantPending(machine)
+      || this.gate.sleepTimer !== null) return false;
+    return this.gate.responseSettled();
   }
 
   sendText(value) {
@@ -181,7 +169,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
 
   handleOutputTerminal(result = {}) {
     super.handleOutputTerminal(result);
-    this.gate.responseSettled();
+    this.scheduleSleepIfIdle();
   }
 
   stopSpeech(bargeIn = false, notifyServer = true) {
@@ -192,8 +180,8 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     );
     const result = super.stopSpeech(bargeIn, notifyServer);
     if (hadResponse) {
-      this.gate.responseSettled();
       if (bargeIn && this.input.utteranceActive) this.gate.noteUserActivity();
+      else this.scheduleSleepIfIdle();
     }
     return result;
   }

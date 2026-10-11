@@ -425,3 +425,68 @@ test("manual stop ignores an obsolete remote close callback", async () => {
   assert.equal(detector.active, false);
   session.destroy();
 });
+
+
+test("failed answer without TTS still enters a grace period and sleeps", async () => {
+  const h = makeLifecycleHarness();
+  const { session, detector, connection } = h;
+  await session.armWake();
+  await detector.wake();
+
+  assert.equal(session.routeServerEvent({
+    type: "error", code: "llm_unavailable", message: "服务不可用",
+  }), true);
+  assert.equal(h.activeTimers.size, 1);
+  h.expireTimer();
+  for (let i = 0; i < 15 && !detector.active; i += 1) await Promise.resolve();
+  assert.equal(connection.connected, false);
+  assert.equal(detector.active, true);
+  session.destroy();
+});
+
+test("rejected utterance without an answer returns to local wake", async () => {
+  const h = makeLifecycleHarness();
+  const { session, detector, connection } = h;
+  await session.armWake();
+  await detector.wake();
+  assert.equal(session.routeServerEvent({
+    type: "utterance.rejected", utterance_id: 1,
+  }), true);
+  assert.equal(h.activeTimers.size, 1);
+  h.expireTimer();
+  for (let i = 0; i < 15 && !detector.active; i += 1) await Promise.resolve();
+  assert.equal(connection.connected, false);
+  assert.equal(detector.active, true);
+  session.destroy();
+});
+
+test("delayed TTS completion does not sleep during a new utterance", async () => {
+  const h = makeLifecycleHarness();
+  const { session, detector, connection } = h;
+  await session.armWake();
+  await detector.wake();
+  session.input.state.utteranceActive = true;
+  session.dispatchVoice({ type: "input.speaking" });
+
+  h.output.settle();
+  assert.equal(h.activeTimers.size, 0);
+  assert.equal(connection.connected, true);
+  assert.equal(detector.active, false);
+  session.destroy();
+});
+
+test("rejected stale ASR partial cannot cancel the idle grace countdown", async () => {
+  const h = makeLifecycleHarness();
+  const { session, detector } = h;
+  await session.armWake();
+  await detector.wake();
+  session.gate.responseSettled();
+  assert.equal(h.activeTimers.size, 1);
+  session.input.state.minimumUtteranceId = 5;
+
+  assert.equal(session.routeServerEvent({
+    type: "user.partial", utterance_id: 1, text: "旧片段",
+  }), false);
+  assert.equal(h.activeTimers.size, 1);
+  session.destroy();
+});

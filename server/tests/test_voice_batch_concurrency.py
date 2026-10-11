@@ -16,6 +16,7 @@ from heritage_explorer.voice_events import (
     AssistantDoneEvent,
     UserPartialEvent,
     UserTranscriptEvent,
+    UtteranceRejectedEvent,
     VoiceErrorEvent,
 )
 from heritage_explorer.voice_protocol import TextCommand, UtteranceStartCommand
@@ -99,7 +100,7 @@ def make_runtime(
 
     async def emit(event: object) -> None:
         events.append(event)
-        if isinstance(event, (AssistantDoneEvent, VoiceErrorEvent)):
+        if isinstance(event, (AssistantDoneEvent, VoiceErrorEvent, UtteranceRejectedEvent)):
             completed.set()
 
     def stream_factory(**kwargs) -> ControlledStream:
@@ -266,5 +267,43 @@ def test_failed_asr_segment_does_not_poison_other_segment_out_of_order() -> None
         finally:
             await runtime.close()
         assert admission._active["asr"] == 0
+
+    asyncio.run(scenario())
+
+
+
+def test_sequential_successful_and_empty_batches_advance_generation_separately() -> None:
+    async def scenario() -> None:
+        runtime, streams, events, assistant, completed, admission = make_runtime([
+            ("第一个问题", None, None),
+            ("", None, None),
+            ("第二个问题", None, None),
+        ])
+        try:
+            starting_generation = runtime.batch.generation
+            for index in range(3):
+                completed.clear()
+                await runtime.handle_utterance_start(UtteranceStartCommand())
+                await runtime.handle_utterance_end()
+                await asyncio.wait_for(streams[index].finish_started.wait(), timeout=2)
+                streams[index].finish_gate.set()
+                await asyncio.wait_for(completed.wait(), timeout=2)
+                assert runtime.batch.generation == starting_generation + index + 1
+                assert runtime.batch.partials == {}
+                assert runtime.batch.pending == set()
+                assert runtime.batch.results == {}
+
+            transcripts = [e for e in events if isinstance(e, UserTranscriptEvent)]
+            rejections = [e for e in events if isinstance(e, UtteranceRejectedEvent)]
+            assert [(e.utterance_id, e.text) for e in transcripts] == [
+                (1, "第一个问题"), (3, "第二个问题"),
+            ]
+            assert [e.utterance_id for e in rejections] == [2]
+            assert assistant.calls == ["第一个问题", "第二个问题"]
+            assert all(stream.close_count == 1 for stream in streams)
+        finally:
+            await runtime.close()
+        assert admission._active["asr"] == 0
+        assert admission._active["chat"] == 0
 
     asyncio.run(scenario())

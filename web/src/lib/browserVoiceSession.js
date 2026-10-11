@@ -183,6 +183,11 @@ export class BrowserVoiceSession {
     return false;
   }
 
+  // Called only for a socket close reported by the transport. Explicit stop()
+  // detaches the close handler, so subclasses can offer opt-in recovery.
+  handleConnectionClosed(_event) {}
+
+
   settleListening() {
     if (this.input.utteranceActive
       || this.output?.pipelineActive
@@ -408,6 +413,7 @@ export class BrowserVoiceSession {
           if (event.code !== 1000 && statusBeforeClose !== REALTIME_VOICE_STATUS.IDLE) {
             this.reportError("voice_socket_closed");
           }
+          this.handleConnectionClosed(event);
         },
       });
       if (!started) return false;

@@ -31,13 +31,18 @@ function makeSession({ gate = new PersonaVoiceGate({ log: { info() {} } }) } = {
   const connection = {
     connected: false,
     starting: false,
-    async start(_path, { onOpen }) {
+    async start(_path, handlers) {
       this.starting = true;
       this.connected = true;
+      this.handlers = handlers;
       calls.push("remote.start");
-      onOpen();
+      handlers.onOpen();
       this.starting = false;
       return true;
+    },
+    serverClose(code = 1006) {
+      this.connected = false;
+      this.handlers?.onClose({ code });
     },
     stop() {
       this.connected = false;
@@ -359,5 +364,64 @@ test("activity during grace period cancels pending sleep until response settles 
   }
   assert.equal(detector.active, true);
   assert.equal(connection.connected, false);
+  session.destroy();
+});
+
+
+
+test("unexpected remote disconnect restores local wake without reconnect loops", async () => {
+  const { session, detector, connection, calls, sent } = makeSession();
+  await session.armWake();
+  await detector.wake();
+  assert.equal(connection.connected, true);
+  connection.serverClose(1006);
+  for (let i = 0; i < 10 && !detector.active; i += 1) await Promise.resolve();
+
+  assert.equal(connection.connected, false);
+  assert.equal(detector.active, true);
+  assert.equal(session.gate.sleeping, true);
+  assert.equal(calls.filter((call) => call === "remote.start").length, 1);
+  assert.equal(await detector.wake(), true);
+  assert.equal(connection.connected, true);
+  assert.equal(sent.filter((packet) => packet.type === "wake").length, 2);
+  session.destroy();
+});
+
+test("failed socket send restores local wake while reporting the transport failure", async () => {
+  const { session, detector, connection, sent } = makeSession();
+  await session.start();
+  const originalSend = connection.sendJson.bind(connection);
+  connection.sendJson = () => false;
+
+  assert.equal(session.syncRecognitionContext(), false);
+  for (let i = 0; i < 10 && !detector.active; i += 1) await Promise.resolve();
+  assert.equal(detector.active, true);
+  assert.equal(connection.connected, false);
+  connection.sendJson = originalSend;
+  assert.equal(await detector.wake(), true);
+  assert.equal(connection.connected, true);
+  assert.equal(sent.at(-1).type, "wake");
+  session.destroy();
+});
+
+test("manual microphone pause prevents wake rearming on a later remote close", async () => {
+  const { session, detector, connection } = makeSession();
+  await session.start();
+  assert.equal(session.pauseMicrophone(), true);
+  connection.serverClose(1006);
+  await Promise.resolve();
+  assert.equal(detector.active, false);
+  assert.equal(session.autoWakeEnabled, false);
+  session.destroy();
+});
+
+test("manual stop ignores an obsolete remote close callback", async () => {
+  const { session, detector, connection } = makeSession();
+  await session.start();
+  const stale = connection.handlers.onClose;
+  session.stop();
+  stale({ code: 1006 });
+  await Promise.resolve();
+  assert.equal(detector.active, false);
   session.destroy();
 });

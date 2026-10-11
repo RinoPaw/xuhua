@@ -76,6 +76,19 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     }
   }
 
+  handleConnectionClosed(event) {
+    if (this.disposed || !this.autoWakeEnabled) return;
+    this.log.info?.(`[叙华][persona] remote connection closed code=${event?.code ?? "-"}; restoring local wake`);
+    void this.armWake();
+  }
+
+  handleTransportFailure() {
+    const shouldRecover = this.autoWakeEnabled && !this.disposed;
+    const result = super.handleTransportFailure();
+    if (shouldRecover) void this.armWake();
+    return result;
+  }
+
   async enterSleep() {
     if (this.disposed || !this.autoWakeEnabled) return false;
     // Closing the remote connection cancels outstanding ASR/LLM work. The

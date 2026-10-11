@@ -131,6 +131,10 @@ export class BrowserVoiceSession {
       ]);
     } else if (event?.type === "segment.complete") {
       this.log.info?.(`[叙华][trace=${trace}] tts.segment.complete segment=${event.segment} +${elapsed.toFixed(3)}s`);
+    } else if (event?.type === "request.failed") {
+      // A terminal failure is also recorded in the per-utterance summary;
+      // never print arbitrary provider exception messages here.
+      this.log.info?.(`[叙华][trace=${trace}] tts.request.failed segment=${event.segment} retries=${event.retries}`);
     }
   }
 
@@ -148,6 +152,7 @@ export class BrowserVoiceSession {
   }
 
   handleOutputTerminal({ failed, reason } = {}) {
+    this.latency.finish(failed ? "failed" : "completed", { reason: failed ? reason : "" });
     this.input.blockFor(450);
     this.dispatchMany([
       { type: "turn.idle" },
@@ -172,6 +177,7 @@ export class BrowserVoiceSession {
 
   reportError(value) {
     const error = value instanceof Error ? value : new Error(String(value || "voice_error"));
+    this.latency.finish("failed", { reason: error.message });
     this.onErrorState(error);
     this.dispatchVoice({ type: "fault.raise" });
     this.getCallbacks()?.onError?.(error);
@@ -193,7 +199,7 @@ export class BrowserVoiceSession {
   }
 
   handleTransportFailure() {
-    this.cleanup();
+    this.cleanup("disconnected");
     this.reportError("voice_socket_send_failed");
     return false;
   }
@@ -244,6 +250,7 @@ export class BrowserVoiceSession {
   }
 
   stopSpeech(bargeIn = false, notifyServer = true) {
+    this.latency.finish(bargeIn ? "interrupted" : "cancelled");
     // Local turn replacement invalidates confirmations for earlier requests.
     this.pendingInterrupt = null;
     this.input.clearBargeInCandidate();
@@ -330,7 +337,12 @@ export class BrowserVoiceSession {
         clearBargeInCandidate: () => this.clearBargeInCandidate(),
         confirmInterruptAck: (message) => this.confirmInterruptAck(message),
         confirmBargeInFromAsr: () => this.confirmBargeInFromAsr(),
-        stopSpeech: (...args) => this.stopSpeech(...args),
+        stopSpeech: (...args) => {
+          if (message?.type === "error") {
+            this.latency.finish("failed", { reason: message.code });
+          }
+          return this.stopSpeech(...args);
+        },
         settleListening: () => this.settleListening(),
         markThinking: () => this.markThinking(),
         appendSpeechDelta: (...args) => {
@@ -349,6 +361,8 @@ export class BrowserVoiceSession {
     } else if (accepted && message?.type === "assistant.done") {
       this.latency.noteTurn(message);
       logFinalVoiceText(this.log, "叙华", message);
+    } else if (accepted && message?.type === "utterance.rejected") {
+      this.latency.finish("rejected");
     }
     return accepted;
   }
@@ -413,7 +427,8 @@ export class BrowserVoiceSession {
     return this.microphoneEnabled ? this.pauseMicrophone() : this.resumeMicrophone();
   }
 
-  cleanup() {
+  cleanup(outcome = "cancelled") {
+    this.latency.finish(outcome);
     this.latency.clear();
     this.transcript.clear(true);
     this.stopSpeech(false);
@@ -434,6 +449,7 @@ export class BrowserVoiceSession {
 
     this.transcript.clear(true);
     this.input.reset({ resetIds: true, discardResampler: true });
+    this.latency.finish("superseded");
     this.latency.clear();
     this.clearError();
     this.dispatchVoice({ type: "transport.connecting" });
@@ -448,7 +464,7 @@ export class BrowserVoiceSession {
         onSamples: (samples, inputRate) => this.processAudio(samples, inputRate),
         onClose: (event) => {
           const statusBeforeClose = deriveVoiceStatus(this.getMachine());
-          this.cleanup();
+          this.cleanup("disconnected");
           if (event.code !== 1000 && statusBeforeClose !== REALTIME_VOICE_STATUS.IDLE) {
             this.reportError("voice_socket_closed");
           }
@@ -481,6 +497,7 @@ export class BrowserVoiceSession {
     const turnId = makeClientTurnId();
     const sent = this.send({ type: "text", text, turn_id: turnId });
     if (!sent) return this.handleTransportFailure();
+    this.latency.finish("superseded");
     this.latency.clear();
     this.transcript.clear(true);
     this.input.supersedeUtterance();

@@ -255,7 +255,7 @@ function makeLifecycleHarness() {
   };
   session.input = new VoiceInputController();
   session.latency = {
-    clear() {}, markTranscript() {}, markFirstDelta() {}, markSpeechEnd() {},
+    clear() {}, markTranscript() {}, markFirstDelta() {}, markSpeechEnd() {}, noteTurn() {},
   };
   session.turns = new VoiceTurnTracker();
   session.transcript = {

@@ -654,17 +654,26 @@ class VoiceSessionRuntime:
                 raise VoiceProviderError(f"voice_asr_{exc.reason}") from exc
             lease_transferred = False
             try:
-                await self._begin_utterance(command, asr_lease)
+                emit_speaking_status = await self._begin_utterance(command, asr_lease)
                 lease_transferred = True
             finally:
                 if not lease_transferred:
                     await asr_lease.release()
+            # The new ASR stream already owns the lease before sending status;
+            # cancellation of websocket I/O must not release an active lease.
+            if emit_speaking_status:
+                await self.send(
+                    VoiceStatusEvent(
+                        "user_speaking",
+                        utterance_id=self.utterance_sequence,
+                    )
+                )
 
     async def _begin_utterance(
         self,
         command: UtteranceStartCommand,
         asr_lease: AdmissionLease,
-    ) -> None:
+    ) -> bool:
         self.utterance_sequence += 1
         utterance_id = self.utterance_sequence
         self.batch.partials[utterance_id] = ""
@@ -737,13 +746,7 @@ class VoiceSessionRuntime:
         except BaseException:
             await close_resource(stream, label="voice.asr.unowned")
             raise
-        if utterance_id not in self.batch.pending_user_speaking:
-            await self.send(
-                VoiceStatusEvent(
-                    "user_speaking",
-                    utterance_id=utterance_id,
-                )
-            )
+        return utterance_id not in self.batch.pending_user_speaking
 
     async def handle_utterance_end(self) -> None:
         if self.lifecycle.asr_stream is None:

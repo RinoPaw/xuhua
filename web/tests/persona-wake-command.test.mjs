@@ -173,7 +173,7 @@ test("typed persona questions wake the gate after a successful send", () => {
   const session = Object.create(PersonaBrowserVoiceSession.prototype);
   session.connection = { connected: true };
   session.send = (payload) => { sent.push(payload); return true; };
-  session.latency = { clear() {} };
+  session.latency = new VoiceLatencyTrace({ log: { info() {} } });
   session.transcript = { clear() {} };
   session.input = { supersedeUtterance() {} };
   session.stopSpeech = () => true;
@@ -263,9 +263,7 @@ function makeLifecycleHarness() {
     for (const action of actions) machine = reduceVoiceMachine(machine, action);
   };
   session.input = new VoiceInputController();
-  session.latency = {
-    clear() {}, markTranscript() {}, markFirstDelta() {}, markSpeechEnd() {}, noteTurn() {},
-  };
+  session.latency = new VoiceLatencyTrace({ log: { info() {} } });
   session.turns = new VoiceTurnTracker();
   session.transcript = {
     clear() {},

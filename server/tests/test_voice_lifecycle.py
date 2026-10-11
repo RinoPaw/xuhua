@@ -135,3 +135,49 @@ def test_asr_capacity_counts_pending_finalizers_and_active_stream() -> None:
         assert scope.can_start_asr()
 
     asyncio.run(scenario())
+
+
+
+def test_cancel_finalizer_before_first_step_returns_asr_lease() -> None:
+    async def scenario() -> None:
+        controller = AdmissionController({"asr": AdmissionPolicy(1, 10, 10)})
+        scope = VoiceConnectionScope()
+        stream = RecordingStream()
+        lease = await controller.acquire("asr", "client-1")
+        gate = asyncio.Event()
+
+        async def pending() -> None:
+            await gate.wait()
+
+        scope.start_asr(stream, pending(), lease=lease)
+        detached, start_task = scope.detach_asr()
+        assert detached is stream
+        start_task.cancel()
+        await asyncio.gather(start_task, return_exceptions=True)
+        scope.start_finalizer(pending())
+        await scope.cancel_finalizers()
+
+        assert stream.closed
+        replacement = await controller.acquire("asr", "client-2")
+        await replacement.release()
+
+    asyncio.run(scenario())
+
+
+def test_asr_close_failure_still_returns_admission_slot() -> None:
+    async def scenario() -> None:
+        controller = AdmissionController({"asr": AdmissionPolicy(1, 10, 10)})
+        scope = VoiceConnectionScope()
+        lease = await controller.acquire("asr", "client-1")
+        stream = FailingStream()
+
+        async def pending() -> None:
+            await asyncio.Future()
+
+        scope.start_asr(stream, pending(), lease=lease)
+        await scope.cancel_asr()
+        assert stream.close_attempted
+        replacement = await controller.acquire("asr", "client-2")
+        await replacement.release()
+
+    asyncio.run(scenario())

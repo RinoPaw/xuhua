@@ -25,6 +25,9 @@ from .admission import (
 from .assistant import AssistantService
 from .asr_normalization import normalize_asr_final, prepare_asr_normalization
 from .config import (
+    ASR_MAX_CONCURRENCY,
+    ASR_MAX_PER_CLIENT_PER_MINUTE,
+    ASR_MAX_PER_MINUTE,
     CHAT_MAX_CONCURRENCY,
     CHAT_MAX_PER_CLIENT_PER_MINUTE,
     CHAT_MAX_PER_MINUTE,
@@ -84,6 +87,11 @@ def create_default_admission_controller() -> AdmissionController:
                 CHAT_MAX_CONCURRENCY,
                 CHAT_MAX_PER_MINUTE,
                 CHAT_MAX_PER_CLIENT_PER_MINUTE,
+            ),
+            "asr": AdmissionPolicy(
+                ASR_MAX_CONCURRENCY,
+                ASR_MAX_PER_MINUTE,
+                ASR_MAX_PER_CLIENT_PER_MINUTE,
             ),
             "tts_ticket": tts_policy,
             "tts": tts_policy,

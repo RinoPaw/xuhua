@@ -48,6 +48,14 @@ jobs:
         with:
           path: web/public/wake
           key: wake-assets-${{ runner.os }}-${{ hashFiles('web/scripts/prepare-wake-assets.mjs') }}
+      # Temporary lock refresh for collecting the verified fixed wheel hashes.
+      # The next commit will check in the lock and remove this bootstrap step.
+      - name: Refresh vulnerable multidict metadata
+        run: |
+          uv lock --upgrade-package multidict
+          echo LOCK_MULTIDICT_BEGIN
+          awk '/^name = "multidict"$/{p=1; print "[[package]]"; print; next} p && /^\\[\\[package\\]\\]/{exit} p {print}' uv.lock
+          echo LOCK_MULTIDICT_END
       - run: uv lock --check
       - run: uv sync --frozen --group dev
       - run: uv run pytest -q

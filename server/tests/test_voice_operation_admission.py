@@ -71,10 +71,14 @@ def configure_voice(monkeypatch, stream_factory=None) -> None:
         monkeypatch.setattr(api_module, "XfyunStream", stream_factory)
 
 
-def admission(chat: AdmissionPolicy) -> AdmissionController:
+def admission(
+    chat: AdmissionPolicy,
+    asr: AdmissionPolicy | None = None,
+) -> AdmissionController:
     return AdmissionController({
         "chat": chat,
-        "voice": AdmissionPolicy(2, 20, 20),
+        "voice": AdmissionPolicy(4, 20, 20),
+        "asr": asr or AdmissionPolicy(8, 120, 40),
     })
 
 
@@ -158,3 +162,66 @@ def test_voice_socket_rejects_unbounded_pending_asr_finalizers(monkeypatch) -> N
 
     assert len(StalledAsrStream.instances) == MAX_ASR_OPERATIONS_PER_CONNECTION
     assert all(stream.closed for stream in StalledAsrStream.instances)
+
+
+
+def test_asr_global_capacity_spans_multiple_voice_connections(monkeypatch) -> None:
+    configure_voice(monkeypatch, StalledAsrStream)
+    StalledAsrStream.instances = []
+    app = create_app(
+        assistant=ControlledAssistant(),  # type: ignore[arg-type]
+        admission=admission(
+            AdmissionPolicy(2, 20, 20),
+            AdmissionPolicy(1, 20, 20),
+        ),
+    )
+
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/voice") as first:
+            first.receive_json()
+            first.send_json({"type": "utterance.start"})
+            receive_until(first, lambda event: event.get("status") == "user_speaking")
+
+            with client.websocket_connect("/api/voice") as second:
+                second.receive_json()
+                second.send_json({"type": "utterance.start"})
+                with pytest.raises(WebSocketDisconnect) as denied:
+                    second.receive_json()
+                assert denied.value.code == 1013
+                assert denied.value.reason == "voice_asr_capacity"
+
+        # Closing the first connection releases the resource for a new socket.
+        with client.websocket_connect("/api/voice") as third:
+            third.receive_json()
+            third.send_json({"type": "utterance.start"})
+            receive_until(third, lambda event: event.get("status") == "user_speaking")
+
+    assert len(StalledAsrStream.instances) == 2
+    assert all(stream.closed for stream in StalledAsrStream.instances)
+
+
+def test_asr_rate_budget_applies_across_connections(monkeypatch) -> None:
+    configure_voice(monkeypatch, StalledAsrStream)
+    StalledAsrStream.instances = []
+    app = create_app(
+        assistant=ControlledAssistant(),  # type: ignore[arg-type]
+        admission=admission(
+            AdmissionPolicy(2, 20, 20),
+            AdmissionPolicy(2, 2, 1),
+        ),
+    )
+    with TestClient(app) as client:
+        with client.websocket_connect("/api/voice") as first:
+            first.receive_json()
+            first.send_json({"type": "utterance.start"})
+            receive_until(first, lambda event: event.get("status") == "user_speaking")
+
+        with client.websocket_connect("/api/voice") as second:
+            second.receive_json()
+            second.send_json({"type": "utterance.start"})
+            with pytest.raises(WebSocketDisconnect) as denied:
+                second.receive_json()
+            assert denied.value.code == 1013
+            assert denied.value.reason == "voice_asr_client_rate"
+
+    assert len(StalledAsrStream.instances) == 1

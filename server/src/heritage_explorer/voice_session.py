@@ -10,7 +10,7 @@ import time
 import uuid
 from typing import Any
 
-from .admission import AdmissionController, AdmissionDenied
+from .admission import AdmissionController, AdmissionDenied, AdmissionLease
 from .assistant import AssistantService
 from .asr_normalization import NormalizedTranscript
 from .dataset import KnowledgeBase
@@ -596,7 +596,7 @@ class VoiceSessionRuntime:
                 self.batch.failures.add(utterance_id)
         finally:
             try:
-                await close_resource(stream, label="voice.asr.finalizer")
+                await self.lifecycle.release_asr(stream, label="voice.asr.finalizer")
             finally:
                 self.batch.pending_user_speaking.discard(utterance_id)
                 self.batch.pending.discard(utterance_id)
@@ -646,80 +646,104 @@ class VoiceSessionRuntime:
         async with self.batch_lock:
             if not self.lifecycle.can_start_asr():
                 raise VoiceProviderError("voice_asr_capacity")
-            self.utterance_sequence += 1
-            utterance_id = self.utterance_sequence
-            self.batch.partials[utterance_id] = ""
-            LOGGER.info(
-                "voice.vad.utterance_start connection=%s utterance=%s interrupt=%s level=%s threshold=%s",
-                self.connection_id,
-                utterance_id,
-                command.interrupt,
-                command.level if command.level is not None else "-",
-                command.threshold if command.threshold is not None else "-",
-            )
+            try:
+                # Budget is acquired before the provider stream is constructed;
+                # previous finalizers continue holding their own reservations.
+                asr_lease = await self.admission.acquire("asr", self.client_id)
+            except AdmissionDenied as exc:
+                raise VoiceProviderError(f"voice_asr_{exc.reason}") from exc
+            lease_transferred = False
+            try:
+                await self._begin_utterance(command, asr_lease)
+                lease_transferred = True
+            finally:
+                if not lease_transferred:
+                    await asr_lease.release()
 
-            if self.lifecycle.asr_stream is not None:
-                previous_stream, previous_start = self.lifecycle.detach_asr()
-                previous_id = utterance_id - 1
-                LOGGER.info(
-                    "voice.vad.utterance_implicit_end connection=%s utterance=%s",
-                    self.connection_id,
+    async def _begin_utterance(
+        self,
+        command: UtteranceStartCommand,
+        asr_lease: AdmissionLease,
+    ) -> None:
+        self.utterance_sequence += 1
+        utterance_id = self.utterance_sequence
+        self.batch.partials[utterance_id] = ""
+        LOGGER.info(
+            "voice.vad.utterance_start connection=%s utterance=%s interrupt=%s level=%s threshold=%s",
+            self.connection_id,
+            utterance_id,
+            command.interrupt,
+            command.level if command.level is not None else "-",
+            command.threshold if command.threshold is not None else "-",
+        )
+
+        if self.lifecycle.asr_stream is not None:
+            previous_stream, previous_start = self.lifecycle.detach_asr()
+            previous_id = utterance_id - 1
+            LOGGER.info(
+                "voice.vad.utterance_implicit_end connection=%s utterance=%s",
+                self.connection_id,
+                previous_id,
+            )
+            if previous_start is not None:
+                self.schedule_finalize(
+                    previous_stream,
+                    previous_start,
                     previous_id,
                 )
-                if previous_start is not None:
-                    self.schedule_finalize(
-                        previous_stream,
-                        previous_start,
-                        previous_id,
+            elif previous_stream is not None:
+                await self.lifecycle.release_asr(previous_stream, label="voice.asr.replaced")
+
+        partial_logged = False
+
+        async def send_partial(text: str, current: int = utterance_id) -> None:
+            nonlocal partial_logged
+            if current not in self.batch.partials:
+                return
+            if (
+                current in self.batch.pending_user_speaking
+                and contains_spoken_text(text)
+            ):
+                await self.send(
+                    VoiceStatusEvent(
+                        "user_speaking",
+                        utterance_id=current,
                     )
-                elif previous_stream is not None:
-                    await close_resource(previous_stream, label="voice.asr.replaced")
+                )
+                self.batch.pending_user_speaking.discard(current)
+            if not partial_logged:
+                LOGGER.info(
+                    "voice.asr.first_partial connection=%s utterance=%s chars=%s",
+                    self.connection_id,
+                    current,
+                    len(str(text or "")),
+                )
+                partial_logged = True
+            await self.send_batch_partial(current, text)
 
-            partial_logged = False
+        if command.interrupt:
+            self.batch.pending_user_speaking.add(utterance_id)
+        else:
+            self.batch.pending_user_speaking.discard(utterance_id)
 
-            async def send_partial(text: str, current: int = utterance_id) -> None:
-                nonlocal partial_logged
-                if current not in self.batch.partials:
-                    return
-                if (
-                    current in self.batch.pending_user_speaking
-                    and contains_spoken_text(text)
-                ):
-                    await self.send(
-                        VoiceStatusEvent(
-                            "user_speaking",
-                            utterance_id=current,
-                        )
-                    )
-                    self.batch.pending_user_speaking.discard(current)
-                if not partial_logged:
-                    LOGGER.info(
-                        "voice.asr.first_partial connection=%s utterance=%s chars=%s",
-                        self.connection_id,
-                        current,
-                        len(str(text or "")),
-                    )
-                    partial_logged = True
-                await self.send_batch_partial(current, text)
-
-            if command.interrupt:
-                self.batch.pending_user_speaking.add(utterance_id)
-            else:
-                self.batch.pending_user_speaking.discard(utterance_id)
-
-            stream = self.make_asr_stream(send_partial)
+        stream = self.make_asr_stream(send_partial)
+        try:
             self.lifecycle.start_asr(
                 stream,
                 self.start_asr(stream, utterance_id),
                 name=f"voice-asr-start-{utterance_id}",
+                lease=asr_lease,
             )
-            if utterance_id not in self.batch.pending_user_speaking:
-                await self.send(
-                    VoiceStatusEvent(
-                        "user_speaking",
-                        utterance_id=utterance_id,
-                    )
+        except BaseException:
+            await close_resource(stream, label="voice.asr.unowned")
+            raise
+        if utterance_id not in self.batch.pending_user_speaking:
+            await self.send(
+                VoiceStatusEvent(
+                    "user_speaking",
+                    utterance_id=utterance_id,
                 )
+            )
 
     async def handle_utterance_end(self) -> None:
         if self.lifecycle.asr_stream is None:
@@ -741,7 +765,7 @@ class VoiceSessionRuntime:
                     utterance_id,
                 )
             else:
-                await close_resource(completed_stream, label="voice.asr.completed")
+                await self.lifecycle.release_asr(completed_stream, label="voice.asr.completed")
 
     async def handle_utterance_cancel(self) -> None:
         async with self.batch_lock:

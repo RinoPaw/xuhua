@@ -40,6 +40,8 @@ class VoiceConnectionScope:
         self._answer_lease: AdmissionLease | None = None
         self._asr_start = TaskSlot()
         self._asr_stream: Any | None = None
+        # Own every stream until its finalizer finishes, even after detach_asr.
+        self._asr_resources: dict[int, tuple[Any, AdmissionLease | None]] = {}
         self._finalizers = TaskSet()
 
     @property
@@ -118,6 +120,7 @@ class VoiceConnectionScope:
         awaitable: Awaitable[None],
         *,
         name: str | None = None,
+        lease: AdmissionLease | None = None,
     ):
         if self._asr_stream is not None:
             close = getattr(awaitable, "close", None)
@@ -126,16 +129,34 @@ class VoiceConnectionScope:
             raise RuntimeError("asr_stream_busy")
         task = self._asr_start.create(awaitable, name=name)
         self._asr_stream = stream
+        self._asr_resources[id(stream)] = (stream, lease)
         return task
 
     def detach_asr(self):
         stream, self._asr_stream = self._asr_stream, None
         return stream, self._asr_start.take()
 
+    async def release_asr(self, stream: Any | None, *, label: str) -> None:
+        """Return an operation's provider stream and its budget exactly once."""
+        if stream is None:
+            return
+        owned = self._asr_resources.pop(id(stream), None)
+        if owned is None:
+            return
+        resource, lease = owned
+        try:
+            await close_resource(resource, label=label)
+        finally:
+            if lease is not None:
+                await lease.release()
+
     async def cancel_asr(self) -> None:
         stream, start_task = self.detach_asr()
-        await cancel_task(start_task)
-        await close_resource(stream, label="voice.asr")
+        try:
+            await cancel_task(start_task)
+        finally:
+            await self.release_asr(stream, label="voice.asr")
+
 
     def start_finalizer(
         self,
@@ -146,7 +167,20 @@ class VoiceConnectionScope:
         return self._finalizers.create(awaitable, name=name)
 
     async def cancel_finalizers(self) -> None:
-        await self._finalizers.cancel_all()
+        try:
+            await self._finalizers.cancel_all()
+        finally:
+            # A finalizer cancelled before its first execution never enters
+            # finish_utterance's finally clause. The connection scope owns its
+            # detached stream and lease independently of the task.
+            detached = [
+                resource
+                for resource, _lease in self._asr_resources.values()
+                if resource is not self._asr_stream
+            ]
+            for resource in detached:
+                await self.release_asr(resource, label="voice.asr.cancelled")
+
 
     async def close(self) -> None:
         """Close the full task/resource tree in deterministic dependency order."""

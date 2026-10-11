@@ -19,10 +19,15 @@ const ACKNOWLEDGEMENT_TEXT = "我在。";
 
 function noop() {}
 
-function logFinalVoiceText(log, speaker, text) {
-  const content = String(text || "").trim();
+function logFinalVoiceText(log, speaker, message) {
+  const content = String(message?.text || "").trim();
   if (!content) return;
-  log.info?.(`[叙华][voice] ${speaker}: ${content}`);
+  // Keep transcripts out of diagnostic logs; IDs and character counts suffice.
+  log.info?.(
+    `[叙华][voice] ${speaker} connection=${message.connection_id || "-"} `
+    + `utterance=${message.utterance_id ?? "-"} `
+    + `turn=${message.turn_id || "-"} chars=${content.length}`,
+  );
 }
 
 /**
@@ -289,7 +294,7 @@ export class BrowserVoiceSession {
         settleListening: () => this.settleListening(),
         markThinking: () => this.markThinking(),
         appendSpeechDelta: (...args) => {
-          this.latency.markFirstDelta();
+          this.latency.markFirstDelta(message);
           return this.appendSpeechDelta(...args);
         },
         finishSpeechStream: (...args) => this.finishSpeechStream(...args),
@@ -299,10 +304,10 @@ export class BrowserVoiceSession {
       callbacks: this.getCallbacks(),
     });
     if (accepted && message?.type === "user.transcript") {
-      this.latency.markTranscript();
-      logFinalVoiceText(this.log, "用户", message.text);
+      this.latency.markTranscript(message);
+      logFinalVoiceText(this.log, "用户", message);
     } else if (accepted && message?.type === "assistant.done") {
-      logFinalVoiceText(this.log, "叙华", message.text);
+      logFinalVoiceText(this.log, "叙华", message);
     }
     return accepted;
   }

@@ -49,3 +49,51 @@ test("text-only playback does not invent a voice latency trace", () => {
   assert.equal(trace.markPlaying("text-turn"), null);
   assert.deepEqual(lines, []);
 });
+
+
+
+test("cross-service latency line correlates connection, ASR, assistant, and TTS", () => {
+  let current = 1000;
+  const lines = [];
+  const trace = new VoiceLatencyTrace({
+    now: () => current,
+    log: { info: (line) => lines.push(line) },
+  });
+  trace.markSpeechEnd(950);
+  current = 1100;
+  trace.markTranscript({ connection_id: "conn-1", utterance_id: 42 });
+  current = 1300;
+  trace.markFirstDelta({ connection_id: "conn-1", turn_id: "turn-2" });
+  current = 1340;
+  trace.markTtsRequest();
+  current = 1400;
+  trace.markFirstAudio();
+  current = 1450;
+  trace.markPlaying("tts-3");
+  assert.match(lines[0], /connection=conn-1 utterance=42 turn=turn-2 tts_trace=tts-3/);
+  trace.markSpeechEnd(1500);
+  assert.equal(trace.context.turnId, "");
+  assert.equal(trace.context.utteranceId, null);
+});
+
+test("latency correlation does not log transcript content", () => {
+  const lines = [];
+  let current = 200;
+  const trace = new VoiceLatencyTrace({
+    now: () => current,
+    log: { info: (line) => lines.push(line) },
+  });
+  trace.markSpeechEnd(100);
+  current = 250;
+  trace.markTranscript({
+    connection_id: "conn-safe",
+    utterance_id: 3,
+    text: "敏感转写内容",
+  });
+  current = 280;
+  trace.markFirstDelta({ turn_id: "turn-safe", text: "敏感回答内容" });
+  current = 320;
+  trace.markPlaying("clip");
+  assert.equal(lines.length, 1);
+  assert.doesNotMatch(lines[0], /敏感转写内容|敏感回答内容/);
+});

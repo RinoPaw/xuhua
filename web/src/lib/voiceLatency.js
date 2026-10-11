@@ -29,6 +29,11 @@ export class VoiceLatencyTrace {
       playing: null,
     };
     this.reported = false;
+    this.context = {
+      connectionId: "",
+      utteranceId: null,
+      turnId: "",
+    };
   }
 
   markSpeechEnd(lastVoiceAt) {
@@ -40,14 +45,18 @@ export class VoiceLatencyTrace {
     return true;
   }
 
-  markTranscript() {
+  markTranscript(event = {}) {
     if (this.marks.speechEnd === null || this.marks.transcript !== null) return false;
+    this.context.connectionId = String(event.connection_id || "");
+    this.context.utteranceId = event.utterance_id ?? null;
     this.marks.transcript = this.now();
     return true;
   }
 
-  markFirstDelta() {
+  markFirstDelta(event = {}) {
     if (this.marks.speechEnd === null || this.marks.firstDelta !== null) return false;
+    this.context.connectionId ||= String(event.connection_id || "");
+    this.context.turnId = String(event.turn_id || "");
     this.marks.firstDelta = this.now();
     return true;
   }
@@ -78,7 +87,9 @@ export class VoiceLatencyTrace {
     };
     this.reported = true;
     this.log.info?.(
-      `[叙华][latency trace=${traceId || "-"}] total=${format(metrics.totalMs)} `
+      `[叙华][latency connection=${this.context.connectionId || "-"} `
+      + `utterance=${this.context.utteranceId ?? "-"} turn=${this.context.turnId || "-"} `
+      + `tts_trace=${traceId || "-"}] total=${format(metrics.totalMs)} `
       + `eou=${format(metrics.eouMs)} asr_final=${format(metrics.asrFinalMs)} `
       + `agent_first_delta=${format(metrics.agentFirstDeltaMs)} first_phrase=${format(metrics.firstPhraseMs)} `
       + `tts_first_audio=${format(metrics.ttsFirstAudioMs)} audio_start=${format(metrics.audioStartMs)}`,

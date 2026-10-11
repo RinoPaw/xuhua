@@ -236,6 +236,7 @@ export class TtsScheduler {
         this.current = entry;
         this.tentativePaused = false;
         this.setPlaying(true);
+        if (!this.isCurrent(entry) || this.terminal) return;
         this.emit({ type: "playing", segment: entry.segment, elapsedMs: now() - entry.startedAt });
       },
       ended: () => this.end(entry),
@@ -272,6 +273,7 @@ export class TtsScheduler {
     }
     this.tentativePaused = true;
     this.setPlaying(false);
+    if (!this.isCurrent(entry) || this.terminal) return false;
     this.emit({
       type: "playback.pause_tentative",
       segment: entry.segment,
@@ -292,6 +294,7 @@ export class TtsScheduler {
       return false;
     }
     if (result?.catch) result.catch((error) => this.handleAudioError(entry, error));
+    if (!this.isCurrent(entry) || this.terminal) return false;
     this.emit({
       type: "playback.resume_tentative",
       segment: entry.segment,
@@ -357,6 +360,7 @@ export class TtsScheduler {
     if (wasCurrent) this.current = null;
     if (wasCurrent) this.tentativePaused = false;
     if (wasCurrent) this.setPlaying(false);
+    if (!this.isCurrent(entry) || this.terminal) return false;
     entry.started = false;
     entry.firstChunk = false;
     this.emit({

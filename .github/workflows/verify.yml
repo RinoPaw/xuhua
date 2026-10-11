@@ -55,20 +55,9 @@ jobs:
       - run: uv run python -m compileall -q server/src tools
       - name: Audit Python dependencies
         run: uv run --with pip-audit==2.10.1 pip-audit --skip-editable
-      # Bootstrap a refreshed lock using the npm registry on CI.
-      # Removed once the verified lockfile is committed.
-      - name: Refresh frontend lock for vulnerability fixes
-        working-directory: web
-        run: |
-          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-          npm audit fix --package-lock-only --ignore-scripts --no-fund
-          echo FRONTEND_LOCK_BEGIN
-          cat package-lock.json
-          echo FRONTEND_LOCK_END
       - run: npm ci --no-audit --no-fund
         working-directory: web
       - name: Audit npm dependencies
-        continue-on-error: true
         run: npm audit --audit-level=high
         working-directory: web
       - run: npm run prepare:assets

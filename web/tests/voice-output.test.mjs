@@ -9,7 +9,8 @@ function makeSchedulerHarness() {
   const scheduler = {
     segmentCount: 0,
     hasSegments: false,
-    begin() { calls.push(["begin"]); return 7; },
+    generation: 6,
+    begin() { calls.push(["begin"]); this.generation += 1; return this.generation; },
     stop() { calls.push(["stop"]); return true; },
     enqueue(text, meta) {
       calls.push(["enqueue", text, meta]);
@@ -55,6 +56,7 @@ test("voice output snapshots locale and queues first phrase before completion", 
   assert.deepEqual(harness.calls[1][2], {
     reason: "first_phrase",
     locale: "zh-CN",
+    traceId: "trace-1",
   });
   controller.finish("", "zh-CN");
   assert.equal(harness.calls.at(-1)[0], "complete");
@@ -87,7 +89,7 @@ test("scheduler terminal preserves failure metadata and clears controller turn s
   });
   controller.begin();
   controller.append("Pending text");
-  harness.options.onPlayingChange(true);
+  harness.options.onPlayingChange(true, 7);
   assert.equal(controller.playing, true);
   assert.equal(controller.traceId, "trace-terminal");
   const terminalResult = {
@@ -117,4 +119,81 @@ test("stop clears pipeline state and resets text plan", () => {
   assert.equal(controller.playing, false);
   assert.equal(controller.traceId, "");
   assert.equal(harness.calls.at(-1)[0], "stop");
+});
+
+
+test("late TTS callbacks cannot reset or contaminate the next output generation", () => {
+  const harness = makeSchedulerHarness();
+  const events = [];
+  const playingChanges = [];
+  const terminals = [];
+  let sequence = 0;
+  const output = new VoiceOutputController({
+    createScheduler: (options) => harness.createScheduler(options),
+    createTraceId: () => `tts-trace-${++sequence}`,
+    onEvent: (event) => events.push(event),
+    onPlayingChange: (playing) => playingChanges.push(playing),
+    onTerminal: (result) => terminals.push(result),
+  });
+  assert.equal(output.begin(), 7);
+  assert.equal(output.begin(), 8);
+  output.append("新一轮回答", "zh-CN");
+  assert.equal(output.traceId, "tts-trace-2");
+
+  harness.options.onPlayingChange(true, 7);
+  harness.options.onEvent({ type: "playing", generation: 7 });
+  harness.options.onTerminal({ generation: 7, failed: true, reason: "old_failed" });
+  assert.equal(output.pipelineActive, true);
+  assert.equal(output.traceId, "tts-trace-2");
+  assert.equal(output.playing, false);
+  assert.deepEqual(playingChanges, []);
+  assert.deepEqual(events, []);
+  assert.deepEqual(terminals, []);
+
+  harness.options.onPlayingChange(true, 8);
+  harness.options.onEvent({ type: "playing", generation: 8 });
+  assert.equal(output.playing, true);
+  assert.deepEqual(playingChanges, [true]);
+  assert.equal(events.length, 1);
+  harness.options.onTerminal({ generation: 8, failed: false });
+  assert.equal(output.pipelineActive, false);
+  assert.equal(output.traceId, "");
+  assert.equal(terminals.length, 1);
+  harness.options.onTerminal({ generation: 7, failed: true });
+  assert.equal(terminals.length, 1);
+});
+
+test("cancelled cache wait does not issue a new TTS ticket", async () => {
+  let releaseCache;
+  const output = new VoiceOutputController({
+    createClipCache: () => ({
+      sourceFor: () => new Promise((resolve) => { releaseCache = resolve; }),
+      dispose() {},
+    }),
+  });
+  const abort = new AbortController();
+  const source = output.prepareSource({
+    text: "已取消的旧回答", locale: "zh-CN", traceId: "old-trace",
+    segment: 0, reason: "text_complete", signal: abort.signal,
+  });
+  abort.abort();
+  releaseCache("");
+  assert.equal(await source, "");
+});
+
+test("TTS scheduler receives a trace snapshot for each turn", () => {
+  const harness = makeSchedulerHarness();
+  let sequence = 0;
+  const output = new VoiceOutputController({
+    createScheduler: (options) => harness.createScheduler(options),
+    createTraceId: () => `trace-${++sequence}`,
+  });
+  output.begin();
+  output.append("旧回答。");
+  output.begin();
+  output.append("新回答。");
+  const enqueueCalls = harness.calls.filter(([name]) => name === "enqueue");
+  assert.equal(enqueueCalls.length, 2);
+  assert.equal(enqueueCalls[0][2].traceId, "trace-1");
+  assert.equal(enqueueCalls[1][2].traceId, "trace-2");
 });

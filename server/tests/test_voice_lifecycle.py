@@ -226,3 +226,76 @@ def test_voice_lifecycle_logs_each_budget_release_once(caplog) -> None:
     assert len(asr) == 1
     assert "connection=trace-conn utterance=7" in asr[0]
     assert "held_ms=50.0 remaining=0" in asr[0]
+
+
+
+def test_connection_close_waits_for_finished_answers_in_flight_lease_release() -> None:
+    async def scenario() -> None:
+        controller = AdmissionController({"chat": AdmissionPolicy(1, 10, 10)})
+        underlying = await controller.acquire("chat", "first")
+        release_started = asyncio.Event()
+        release_allowed = asyncio.Event()
+
+        class PausedLease:
+            async def release(self) -> None:
+                release_started.set()
+                await release_allowed.wait()
+                await underlying.release()
+
+        scope = VoiceConnectionScope()
+
+        async def answer() -> None:
+            await scope.finish_answer(asyncio.current_task(), "turn")
+
+        task = scope.start_answer("turn", answer(), lease=PausedLease())  # type: ignore[arg-type]
+        await asyncio.wait_for(release_started.wait(), timeout=2)
+        # The turn slot is already empty, but the chat budget is still held.
+        assert scope.active_turn_id is None
+        closing = asyncio.create_task(scope.close())
+        await asyncio.sleep(0)
+        assert not closing.done()
+        assert controller._active["chat"] == 1
+
+        release_allowed.set()
+        await asyncio.wait_for(closing, timeout=2)
+        await asyncio.gather(task, return_exceptions=True)
+        assert controller._active["chat"] == 0
+        next_lease = await controller.acquire("chat", "next")
+        await next_lease.release()
+
+    asyncio.run(scenario())
+
+
+def test_cancel_during_answer_lease_release_joins_the_same_release() -> None:
+    async def scenario() -> None:
+        controller = AdmissionController({"chat": AdmissionPolicy(1, 10, 10)})
+        underlying = await controller.acquire("chat", "first")
+        release_started = asyncio.Event()
+        release_allowed = asyncio.Event()
+        release_calls = 0
+
+        class PausedLease:
+            async def release(self) -> None:
+                nonlocal release_calls
+                release_calls += 1
+                release_started.set()
+                await release_allowed.wait()
+                await underlying.release()
+
+        scope = VoiceConnectionScope()
+
+        async def answer() -> None:
+            await scope.finish_answer(asyncio.current_task(), "turn")
+
+        scope.start_answer("turn", answer(), lease=PausedLease())  # type: ignore[arg-type]
+        await asyncio.wait_for(release_started.wait(), timeout=2)
+        cancelling = asyncio.create_task(scope.cancel_answer())
+        await asyncio.sleep(0)
+        assert not cancelling.done()
+
+        release_allowed.set()
+        await asyncio.wait_for(cancelling, timeout=2)
+        assert release_calls == 1
+        assert controller._active["chat"] == 0
+
+    asyncio.run(scenario())

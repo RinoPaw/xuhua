@@ -4,6 +4,7 @@ import test from "node:test";
 import { PersonaBrowserVoiceSession } from "../src/lib/personaBrowserVoiceSession.js";
 import { PersonaVoiceGate } from "../src/lib/personaVoiceGate.js";
 import { VoiceInputController } from "../src/lib/voiceInputController.js";
+import { VoiceLatencyTrace } from "../src/lib/voiceLatency.js";
 import { VoiceTurnTracker } from "../src/lib/voiceProtocol.js";
 import { createVoiceMachineState, reduceVoiceMachine } from "../src/hooks/voiceState.js";
 
@@ -70,7 +71,7 @@ function makeSession({ gate = new PersonaVoiceGate({ log: { info() {} } }) } = {
     },
     turns: { ignoreActive() {}, reset() {} },
     transcript: { clear() {} },
-    latency: { clear() {} },
+    latency: new VoiceLatencyTrace({ log: { info() {} } }),
     createOutput: () => ({
       prewarm() {},
       pipelineActive: false,

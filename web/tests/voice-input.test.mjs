@@ -14,7 +14,7 @@ function constantSamples(length, value) {
   return Float32Array.from({ length }, () => value);
 }
 
-test("voice input emits onset, retained PCM and transcribing transition after 420ms silence", () => {
+test("voice input emits onset, retained PCM and transcribing after 340ms silence", () => {
   const state = createVoiceInputState();
   const onset = processVoiceInputFrame(state, {
     samples: constantSamples(960, 0.1), // 60 ms at 16 kHz
@@ -24,7 +24,7 @@ test("voice input emits onset, retained PCM and transcribing transition after 42
     agentBusy: false,
   });
 
-  assert.equal(VOICE_INPUT_LIMITS.silenceMs, 420);
+  assert.equal(VOICE_INPUT_LIMITS.silenceMs, 340);
   assert.equal(onset.started?.utteranceId, 1);
   assert.equal(onset.started?.shouldInterrupt, false);
   assert.equal(onset.nextStatus, "user_speaking");
@@ -36,7 +36,7 @@ test("voice input emits onset, retained PCM and transcribing transition after 42
   const stillOpen = processVoiceInputFrame(state, {
     samples: constantSamples(1600, 0),
     inputRate: 16000,
-    now: 1420,
+    now: 1340,
     transportReady: true,
     agentBusy: false,
   });
@@ -46,7 +46,7 @@ test("voice input emits onset, retained PCM and transcribing transition after 42
   const ending = processVoiceInputFrame(state, {
     samples: constantSamples(1600, 0),
     inputRate: 16000,
-    now: 1421,
+    now: 1341,
     transportReady: true,
     agentBusy: false,
   });
@@ -146,4 +146,22 @@ test("terminal utterance acceptance resets only on a new connection", () => {
   assert.equal(acceptVoiceUtteranceMessage(state, { utterance_id: 7 }), false);
   resetVoiceInputPhase(state, { resetIds: true });
   assert.equal(acceptVoiceUtteranceMessage(state, { utterance_id: 7 }), true);
+});
+
+
+test("natural speech resumed within the silence window stays in one ASR utterance", () => {
+  const state = createVoiceInputState();
+  const frame = (now, level) => processVoiceInputFrame(state, {
+    samples: constantSamples(960, level),
+    inputRate: 16000,
+    now,
+    transportReady: true,
+    agentBusy: false,
+  });
+  assert.equal(frame(1000, 0.1).started?.utteranceId, 1);
+  assert.equal(frame(1300, 0).actions.some((entry) => entry.payload?.type === "utterance.end"), false);
+  // New speech before the 340ms deadline moves the endpoint forward.
+  assert.equal(frame(1320, 0.1).actions.some((entry) => entry.payload?.type === "utterance.end"), false);
+  assert.equal(frame(1650, 0).actions.some((entry) => entry.payload?.type === "utterance.end"), false);
+  assert.equal(frame(1661, 0).actions.at(-1).payload.type, "utterance.end");
 });

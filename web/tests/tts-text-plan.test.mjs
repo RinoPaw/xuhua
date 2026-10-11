@@ -56,3 +56,22 @@ test("keeps a closing quote with the completed English sentence", () => {
   assert.equal(plan.append('She said “Hello.” Then left.'), 'She said “Hello.”');
   assert.equal(plan.finish(), "Then left.");
 });
+
+
+test("an eight-character Chinese clause starts TTS before sentence completion", () => {
+  const plan = new TtsTextPlan("zh-CN");
+  const prefix = "这项技艺历史悠久，";
+  assert.ok([...prefix].length >= MIN_EARLY_CJK_CHARS);
+  assert.equal(plan.append("这项技艺"), null);
+  assert.equal(plan.append("历史悠久，"), prefix);
+  assert.equal(plan.append("有着非常独特的传承背景。"), null);
+  assert.equal(plan.finish(), "有着非常独特的传承背景。");
+});
+
+test("short pauses still wait for a meaningful phrase rather than generating tiny audio clips", () => {
+  const plan = new TtsTextPlan("zh-CN");
+  assert.equal(plan.append("你好，"), null);
+  assert.equal(plan.append("朋友，"), null);
+  assert.equal(plan.append("今天介绍木版年画。"), "你好，朋友，今天介绍木版年画。");
+  assert.equal(plan.finish(), null);
+});

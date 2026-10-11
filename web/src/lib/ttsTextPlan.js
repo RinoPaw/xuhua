@@ -3,7 +3,8 @@ const SOFT_BOUNDARIES = new Set(["，", ",", "：", ":"]);
 const CLOSING_PUNCTUATION = new Set(["\"", "'", "”", "’", ")", "]", "】", "》"]);
 const COMMON_ABBREVIATION = /(?:^|\s)(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc)\.$/iu;
 const INITIALISM = /(?:^|\s)(?:[a-z]\.){2,}$/iu;
-const MIN_EARLY_CJK_CHARS = 12;
+// Start synthesizing once a natural Chinese clause is long enough.
+const MIN_EARLY_CJK_CHARS = 8;
 
 function isPeriodBoundary(text, index) {
   const previous = text[index - 1] || "";

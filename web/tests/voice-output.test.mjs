@@ -197,3 +197,22 @@ test("TTS scheduler receives a trace snapshot for each turn", () => {
   assert.equal(enqueueCalls[0][2].traceId, "trace-1");
   assert.equal(enqueueCalls[1][2].traceId, "trace-2");
 });
+
+
+test("voice output requests synthesis at an early Chinese comma before LLM completion", () => {
+  const harness = makeSchedulerHarness();
+  const controller = new VoiceOutputController({
+    createScheduler: (options) => harness.createScheduler(options),
+    createTraceId: () => "low-latency-first-phrase",
+  });
+  controller.begin("zh-CN");
+  assert.equal(controller.append("这项技艺", "zh-CN"), true);
+  assert.equal(harness.calls.filter(([type]) => type === "enqueue").length, 0);
+  assert.equal(controller.append("历史悠久，", "zh-CN"), true);
+  assert.deepEqual(
+    harness.calls.filter(([type]) => type === "enqueue").map(([, text]) => text),
+    ["这项技艺历史悠久，"],
+  );
+  controller.finish("这项技艺历史悠久，有着非常独特的传承背景。", "zh-CN");
+  assert.equal(harness.calls.at(-1)[0], "complete");
+});

@@ -106,8 +106,13 @@ function createHarness() {
     current: "turn-1",
     ignoredTurns: new Set(["old-turn"]),
     ignoreActive() { calls.push(["turn.ignore", this.current]); this.current = ""; return true; },
-    accept(message) { if (!message?.turn_id) return false; this.current = message.turn_id; return true; },
-    setActive(id) { this.current = id; return true; },
+    accept(message) { return this.setActive(message?.turn_id); },
+    setActive(id) {
+      if (!id || this.ignoredTurns.has(id)
+        || (this.current && this.current !== id)) return false;
+      this.current = id;
+      return true;
+    },
     ignore(id) { this.ignoredTurns.add(id); if (this.current === id) this.current = ""; return true; },
     reset() { this.current = ""; this.ignoredTurns.clear(); calls.push(["turn.reset"]); },
   };

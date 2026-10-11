@@ -506,8 +506,9 @@ class VoiceSessionRuntime:
             committed_id = ordered_ids[-1]
 
             if not raw_text:
-                self.batch.partials.clear()
-                self.batch.revision = 0
+                # Even empty batches have ended; later ASR callbacks belong to
+                # a superseded generation and cannot enter the next question.
+                self.batch.clear()
                 if failures:
                     await self.send(
                         VoiceErrorEvent(
@@ -553,11 +554,16 @@ class VoiceSessionRuntime:
                 len(canonical_text),
                 len(normalizations),
             )
+            revision = self.batch.revision
+            # A completed batch owns exactly one assistant turn. Start the
+            # next normal utterance in a fresh generation as well as after
+            # explicit cancellations/text inputs.
+            self.batch.clear()
             await self.stop_answer("asr_batch")
             await self.send(
                 UserTranscriptEvent(
                     utterance_id=committed_id,
-                    revision=self.batch.revision,
+                    revision=revision,
                     text=canonical_text,
                     raw_text=raw_text,
                     normalizations=normalizations,
@@ -565,8 +571,6 @@ class VoiceSessionRuntime:
                     asr_engine="chinese",
                 )
             )
-            self.batch.partials.clear()
-            self.batch.revision = 0
             if is_assistant_address_only(canonical_text):
                 await self.acknowledge_address(resolved_locale)
                 return

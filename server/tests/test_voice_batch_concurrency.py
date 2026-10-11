@@ -81,6 +81,8 @@ class RecordingAssistant:
 
 def make_runtime(
     specs: list[tuple[str, Exception | None, Exception | None]],
+    *,
+    stream_cls: type[ControlledStream] = ControlledStream,
 ) -> tuple[
     VoiceSessionRuntime,
     list[ControlledStream],
@@ -105,7 +107,7 @@ def make_runtime(
 
     def stream_factory(**kwargs) -> ControlledStream:
         text, finish_error, start_error = specs[len(streams)]
-        stream = ControlledStream(
+        stream = stream_cls(
             text,
             kwargs["on_partial"],
             finish_error=finish_error,
@@ -302,6 +304,59 @@ def test_sequential_successful_and_empty_batches_advance_generation_separately()
             assert assistant.calls == ["第一个问题", "第二个问题"]
             assert all(stream.close_count == 1 for stream in streams)
         finally:
+            await runtime.close()
+        assert admission._active["asr"] == 0
+        assert admission._active["chat"] == 0
+
+    asyncio.run(scenario())
+
+
+class SlowCleanupStream(ControlledStream):
+    """Mimic Xfyun final text arriving before its websocket closes."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.close_started = asyncio.Event()
+        self.allow_close = asyncio.Event()
+
+    async def finish_result(self) -> str:
+        return await self.finish()
+
+    async def close(self) -> None:
+        self.close_count += 1
+        self.close_started.set()
+        await self.allow_close.wait()
+        self.closed.set()
+
+
+def test_final_transcript_and_answer_do_not_wait_for_slow_asr_close() -> None:
+    async def scenario() -> None:
+        runtime, streams, events, assistant, completed, admission = make_runtime(
+            [("汴绣的历史", None, None)], stream_cls=SlowCleanupStream,
+        )
+        stream = streams[0] if streams else None
+        try:
+            await runtime.handle_utterance_start(UtteranceStartCommand())
+            await runtime.handle_utterance_end()
+            stream = streams[0]
+            await asyncio.wait_for(stream.finish_started.wait(), timeout=2)
+            stream.finish_gate.set()
+
+            # The old implementation waited for the slow provider close
+            # before emitting a final transcript or beginning the answer.
+            await asyncio.wait_for(completed.wait(), timeout=2)
+            assert assistant.calls == ["汴绣的历史"]
+            assert any(isinstance(event, UserTranscriptEvent) for event in events)
+            await asyncio.wait_for(stream.close_started.wait(), timeout=2)
+            assert stream.closed.is_set() is False
+            assert admission._active["asr"] == 1
+            assert stream.close_count == 1
+
+            stream.allow_close.set()
+            await asyncio.wait_for(stream.closed.wait(), timeout=2)
+        finally:
+            if stream is not None:
+                stream.allow_close.set()
             await runtime.close()
         assert admission._active["asr"] == 0
         assert admission._active["chat"] == 0

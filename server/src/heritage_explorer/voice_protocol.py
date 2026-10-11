@@ -35,12 +35,12 @@ class UtteranceCancelCommand:
 
 @dataclass(frozen=True, slots=True)
 class BargeInCommand:
-    pass
+    request_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class InterruptCommand:
-    pass
+    request_id: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +139,14 @@ def _context_command(event: dict[str, Any]) -> ContextCommand:
     )
 
 
+def _request_id(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    if value and re.fullmatch(r"[0-9a-f]{32}", value) is None:
+        return None
+    return value
+
+
 def decode_voice_command(raw: str) -> VoiceCommand | None:
     """Decode one browser JSON frame into the protocol's canonical command set."""
 
@@ -161,9 +169,11 @@ def decode_voice_command(raw: str) -> VoiceCommand | None:
     if event_type == "utterance.cancel":
         return UtteranceCancelCommand()
     if event_type == "barge_in":
-        return BargeInCommand()
+        request_id = _request_id(event.get("request_id", ""))
+        return BargeInCommand(request_id) if request_id is not None else None
     if event_type == "interrupt":
-        return InterruptCommand()
+        request_id = _request_id(event.get("request_id", ""))
+        return InterruptCommand(request_id) if request_id is not None else None
     if event_type == "wake":
         return WakeCommand()
     if event_type == "text":

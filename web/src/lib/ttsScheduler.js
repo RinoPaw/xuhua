@@ -10,9 +10,9 @@ function now() {
 
 function noop() {}
 
-function callSafely(callback, value) {
+function callSafely(callback, ...values) {
   try {
-    callback(value);
+    callback(...values);
   } catch {
     // Observability must never break audio scheduling.
   }
@@ -94,7 +94,7 @@ export class TtsScheduler {
     return this.activeGeneration;
   }
 
-  enqueue(text, { reason = "text_complete", locale = "" } = {}) {
+  enqueue(text, { reason = "text_complete", locale = "", traceId = "" } = {}) {
     const content = String(text || "").trim();
     if (!content || this.completed || this.terminal || this.entries.size >= MAX_SEGMENTS) {
       return false;
@@ -109,6 +109,7 @@ export class TtsScheduler {
       url: "",
       content,
       locale: String(locale || ""),
+      traceId: String(traceId || ""),
       generation: this.activeGeneration,
       segment,
       reason,
@@ -123,6 +124,7 @@ export class TtsScheduler {
     };
     this.entries.set(segment, entry);
     this.emit({ type: "request.start", segment, reason, elapsedMs: 0 });
+    if (!this.isCurrent(entry) || this.terminal) return false;
     this.prepare(entry);
     return true;
   }
@@ -135,6 +137,7 @@ export class TtsScheduler {
         segment: entry.segment,
         reason: entry.reason,
         locale: entry.locale,
+        traceId: entry.traceId,
         signal: entry.prepareController.signal,
       });
     } catch (error) {
@@ -304,7 +307,11 @@ export class TtsScheduler {
     if (wasCurrent) this.current = null;
     if (wasCurrent) this.tentativePaused = false;
     if (wasCurrent) this.setPlaying(false);
+    // Playing callbacks may replace a turn synchronously. Old entries must
+    // never advance the new generation or emit events under its identity.
+    if (!this.isCurrent(entry) || this.terminal) return;
     this.emit({ type: "segment.complete", segment: entry.segment, elapsedMs: now() - entry.startedAt });
+    if (!this.isCurrent(entry) || this.terminal) return;
 
     const next = this.entries.get(entry.segment + 1);
     if (next && !next.started) this.start(next);
@@ -320,6 +327,7 @@ export class TtsScheduler {
     this.current = null;
     this.tentativePaused = false;
     this.setPlaying(false);
+    if (generation !== this.activeGeneration) return false;
     callSafely(this.onTerminal, { generation, failed: false });
     return true;
   }
@@ -359,6 +367,7 @@ export class TtsScheduler {
       elapsedMs: now() - entry.startedAt,
       reason: failureCode(reason),
     });
+    if (!this.isCurrent(entry) || this.terminal) return false;
 
     entry.retryTimer = this.scheduleRetry(() => {
       entry.retryTimer = null;
@@ -400,6 +409,7 @@ export class TtsScheduler {
     this.current = null;
     this.tentativePaused = false;
     this.setPlaying(false);
+    if (generation !== this.activeGeneration) return;
     callSafely(this.onTerminal, { generation, failed: true, reason });
   }
 
@@ -434,7 +444,7 @@ export class TtsScheduler {
     const next = Boolean(value);
     if (this.playing === next) return;
     this.playing = next;
-    callSafely(this.onPlayingChange, next);
+    callSafely(this.onPlayingChange, next, this.activeGeneration);
   }
 
   emit(event) {

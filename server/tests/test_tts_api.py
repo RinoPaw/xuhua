@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 
+from fastapi import HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 import httpx
+import pytest
 
 import heritage_explorer.api as api_module
 from heritage_explorer.admission import AdmissionController, AdmissionPolicy
-from heritage_explorer.api import create_app
+from heritage_explorer.api import TtsRequest, create_app
 from heritage_explorer.dataset import KnowledgeBase
 from heritage_explorer.models import SearchResponse
 from heritage_explorer.sessions import SessionStore
@@ -186,5 +189,173 @@ def test_tts_holds_synthesis_capacity_for_the_full_stream(monkeypatch) -> None:
 
             third = await client.get(second_path)
             assert third.status_code == 200
+
+    asyncio.run(scenario())
+
+
+def _direct_tts_routes(app):
+    prepare = next(route.endpoint for route in app.routes if getattr(route, "path", "") == "/api/tts")
+    synthesize = next(route.endpoint for route in app.routes if getattr(route, "path", "") == "/api/tts/{token}")
+    return prepare, synthesize
+
+
+def _tts_scope(query: bytes = b"stream=1") -> dict:
+    return {
+        "type": "http",
+        "method": "GET",
+        "path": "/api/tts",
+        "query_string": query,
+        "headers": [],
+        "client": ("198.51.100.72", 41000),
+    }
+
+
+def test_tts_progressive_emits_first_audio_before_upstream_completion(monkeypatch) -> None:
+    first_ready = asyncio.Event()
+    release = asyncio.Event()
+
+    class ControlledCommunicate:
+        def __init__(self, _text: str, **_kwargs: str) -> None:
+            pass
+
+        async def stream(self):
+            yield {"type": "audio", "data": b"first"}
+            first_ready.set()
+            await release.wait()
+            yield {"type": "audio", "data": b"second"}
+
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", ControlledCommunicate)
+    admission = AdmissionController({
+        "tts": AdmissionPolicy(1, 10, 10),
+        "tts_ticket": AdmissionPolicy(1, 10, 10),
+    })
+    app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
+    prepare, synthesize = _direct_tts_routes(app)
+
+    async def scenario() -> None:
+        scope = _tts_scope()
+        ticket = await prepare(
+            TtsRequest(text="第一段语音", locale="zh-CN"), Request(scope), Response()
+        )
+        response = await synthesize(Request(scope), ticket["token"], progressive=True)
+        assert isinstance(response, StreamingResponse)
+        assert response.status_code == 200
+        assert response.media_type == "audio/mpeg"
+        assert "content-length" not in response.headers
+        assert await asyncio.wait_for(anext(response.body_iterator), 1) == b"first"
+        assert admission._active["tts"] == 1
+
+        pending = asyncio.create_task(anext(response.body_iterator))
+        await asyncio.wait_for(first_ready.wait(), 1)
+        await asyncio.sleep(0)
+        assert not pending.done()
+        release.set()
+        assert await asyncio.wait_for(pending, 1) == b"second"
+        with pytest.raises(StopAsyncIteration):
+            await anext(response.body_iterator)
+        assert admission._active["tts"] == 0
+
+    asyncio.run(scenario())
+
+
+def test_tts_progressive_start_failure_is_http_error_and_releases_capacity(monkeypatch) -> None:
+    class FailBeforeAudio:
+        def __init__(self, _text: str, **_kwargs: str) -> None:
+            pass
+
+        async def stream(self):
+            yield {"type": "WordBoundary", "text": "not audio"}
+            raise RuntimeError("provider startup failed")
+
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", FailBeforeAudio)
+    admission = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})
+    app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
+    prepare, synthesize = _direct_tts_routes(app)
+
+    async def scenario() -> None:
+        scope = _tts_scope()
+        ticket = await prepare(TtsRequest(text="语音"), Request(scope), Response())
+        with pytest.raises(HTTPException) as failure:
+            await synthesize(Request(scope), ticket["token"], progressive=True)
+        assert failure.value.status_code == 502
+        assert failure.value.detail == "tts_provider_unavailable"
+        assert admission._active["tts"] == 0
+
+    asyncio.run(scenario())
+
+
+def test_tts_progressive_midstream_failure_is_not_silent_success(monkeypatch) -> None:
+    class FailAfterFirst:
+        def __init__(self, _text: str, **_kwargs: str) -> None:
+            pass
+
+        async def stream(self):
+            yield {"type": "audio", "data": b"partial"}
+            raise RuntimeError("upstream disconnected")
+
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", FailAfterFirst)
+    admission = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})
+    app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
+    prepare, synthesize = _direct_tts_routes(app)
+
+    async def scenario() -> None:
+        scope = _tts_scope()
+        ticket = await prepare(TtsRequest(text="部分合成"), Request(scope), Response())
+        response = await synthesize(Request(scope), ticket["token"], progressive=True)
+        assert await anext(response.body_iterator) == b"partial"
+        with pytest.raises(RuntimeError, match="tts_stream_interrupted"):
+            await anext(response.body_iterator)
+        assert admission._active["tts"] == 0
+
+    asyncio.run(scenario())
+
+
+def test_tts_retry_uses_complete_buffer_even_if_stream_query_is_present(monkeypatch) -> None:
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", _FakeCommunicate)
+    admission = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})
+    app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
+    prepare, synthesize = _direct_tts_routes(app)
+
+    async def scenario() -> None:
+        scope = _tts_scope(b"stream=1&tts_retry=1")
+        ticket = await prepare(TtsRequest(text="完整重试"), Request(scope), Response())
+        response = await synthesize(Request(scope), ticket["token"], progressive=True)
+        assert isinstance(response, Response)
+        assert not isinstance(response, StreamingResponse)
+        assert response.body == b"firstsecond"
+        assert response.headers["content-length"] == "11"
+        assert admission._active["tts"] == 0
+
+    asyncio.run(scenario())
+
+
+def test_tts_disconnected_progressive_consumer_releases_capacity(monkeypatch) -> None:
+    closed = asyncio.Event()
+
+    class PausedCommunicate:
+        def __init__(self, _text: str, **_kwargs: str) -> None:
+            pass
+
+        async def stream(self):
+            try:
+                yield {"type": "audio", "data": b"first"}
+                await asyncio.Event().wait()
+            finally:
+                closed.set()
+
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", PausedCommunicate)
+    admission = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})
+    app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
+    prepare, synthesize = _direct_tts_routes(app)
+
+    async def scenario() -> None:
+        scope = _tts_scope()
+        ticket = await prepare(TtsRequest(text="取消播放"), Request(scope), Response())
+        response = await synthesize(Request(scope), ticket["token"], progressive=True)
+        assert await anext(response.body_iterator) == b"first"
+        assert admission._active["tts"] == 1
+        await response.body_iterator.aclose()
+        assert closed.is_set()
+        assert admission._active["tts"] == 0
 
     asyncio.run(scenario())

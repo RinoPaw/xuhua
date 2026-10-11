@@ -149,7 +149,8 @@ def requested_item_count(question: str) -> int | None:
     match = ITEM_COUNT_RE.search(question)
     if not match:
         match = re.search(
-            r"\b(\d+)\s*(?:projects?|items?|types?|traditions?|examples?)\b",
+            r"\b(\d+)\s*(?:(?:heritage|traditional|cultural|intangible)\s+){0,3}"
+            r"(?:projects?|items?|types?|traditions?|examples?)\b",
             question,
             flags=re.IGNORECASE,
         )

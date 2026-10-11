@@ -3,6 +3,7 @@ import {
   isVoiceAssistantPending,
   REALTIME_VOICE_STATUS,
   VOICE_TRANSPORT_PHASE,
+  VOICE_INPUT_PHASE,
 } from "../hooks/voiceState.js";
 import { VoiceConnectionController } from "./voiceConnection.js";
 import { routeVoiceServerEvent } from "./voiceEventRouter.js";
@@ -396,7 +397,11 @@ export class BrowserVoiceSession {
       this.input.resetOnset();
       this.clearError();
       this.setMicrophoneEnabled(true);
-      this.settleListening();
+      // A resumed capture is independent of the in-flight ASR finalizer.
+      // Do not present "listening" until that transcription has ended.
+      if (this.getMachine()?.input !== VOICE_INPUT_PHASE.TRANSCRIBING) {
+        this.settleListening();
+      }
       return true;
     } catch (error) {
       this.reportInputError(error);

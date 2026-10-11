@@ -544,3 +544,27 @@ test("typing a new question invalidates an earlier barge-in acknowledgement", ()
   }), false);
   assert.equal(h.turns.current, newTurn);
 });
+
+
+test("resuming microphone while ASR is transcribing preserves the UI phase", async () => {
+  const h = createHarness();
+  await h.session.start();
+  assert.equal(h.session.pauseMicrophone(), true);
+  h.session.dispatchVoice({ type: "input.transcribing" });
+  assert.equal(h.machine.input, "transcribing");
+  assert.equal(await h.session.resumeMicrophone(), true);
+  assert.equal(h.machine.input, "transcribing");
+  assert.equal(h.session.microphoneEnabled, true);
+  assert.equal(h.connection.inputActive, true);
+});
+
+test("resuming microphone after idle input keeps the listening state", async () => {
+  const h = createHarness();
+  await h.session.start();
+  assert.equal(h.session.pauseMicrophone(), true);
+  h.session.dispatchVoice({ type: "fault.raise" });
+  assert.equal(await h.session.resumeMicrophone(), true);
+  assert.equal(h.machine.input, "idle");
+  assert.equal(h.machine.fault, false);
+  assert.equal(h.session.microphoneEnabled, true);
+});

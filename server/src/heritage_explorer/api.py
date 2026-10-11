@@ -273,14 +273,15 @@ def create_app(
                         )
                     bytes_sent += len(data)
                     yield data
-                outcome = "completed"
-                LOGGER.info(
-                    "[trace=%s segment=%s] tts.complete +%.3fs bytes=%s",
-                    ticket.trace_id or "-",
-                    ticket.segment,
-                    time.perf_counter() - started,
-                    bytes_sent,
-                )
+                outcome = "completed" if first_chunk_logged else "failed"
+                if first_chunk_logged:
+                    LOGGER.info(
+                        "[trace=%s segment=%s] tts.complete +%.3fs bytes=%s",
+                        ticket.trace_id or "-",
+                        ticket.segment,
+                        time.perf_counter() - started,
+                        bytes_sent,
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception:

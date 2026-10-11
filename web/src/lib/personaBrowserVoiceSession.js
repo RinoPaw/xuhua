@@ -10,6 +10,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.wakeDetector = wakeDetector || new LocalWakeWordDetector({ log: this.log });
     this.autoWakeEnabled = false;
     this.wakeGeneration = 0;
+    this.armingWake = null;
     this.waking = false;
     this.disposed = false;
     this.gate.setOnSleep?.(() => this.enterSleep());
@@ -17,23 +18,34 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
 
   async armWake() {
     if (this.disposed || this.connection.connected || !this.gate.sleeping) return false;
+    // Both the metadata effect and a failed-connection retry can request local
+    // listening. They must share one initialization instead of invalidating
+    // each other's generation and stopping the newer microphone.
+    if (this.armingWake) return this.armingWake;
     this.autoWakeEnabled = true;
     const generation = ++this.wakeGeneration;
-    try {
-      const started = await this.wakeDetector.start((keyword) => this.handleLocalWake(keyword));
-      if (
-        !started || this.disposed || !this.autoWakeEnabled
-        || generation !== this.wakeGeneration || !this.gate.sleeping
-      ) {
-        this.wakeDetector.stop();
+    const pending = (async () => {
+      try {
+        const started = await this.wakeDetector.start((keyword) => this.handleLocalWake(keyword));
+        // A stale operation never stops a detector owned by a newer attempt.
+        if (generation !== this.wakeGeneration) return false;
+        if (!started || this.disposed || !this.autoWakeEnabled || !this.gate.sleeping) {
+          this.wakeDetector.stop();
+          return false;
+        }
+        return true;
+      } catch (error) {
+        if (generation === this.wakeGeneration && this.autoWakeEnabled && !this.disposed) {
+          this.reportInputError(error);
+        }
         return false;
       }
-      return true;
-    } catch (error) {
-      if (generation === this.wakeGeneration && this.autoWakeEnabled && !this.disposed) {
-        this.reportInputError(error);
-      }
-      return false;
+    })();
+    this.armingWake = pending;
+    try {
+      return await pending;
+    } finally {
+      if (this.armingWake === pending) this.armingWake = null;
     }
   }
 

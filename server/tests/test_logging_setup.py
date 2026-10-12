@@ -106,7 +106,7 @@ def test_local_diagnostics_record_only_allowlisted_events(monkeypatch, caplog) -
             {"event": "arbitrary", "connection": "-"},
             {"event": "wake.local.detected", "connection": "-", "text": "SECRET"},
             {"event": "wake.local.detected", "connection": "token=SECRET"},
-            {"event": "wake.local.detected", "level": 1e309},
+            {"event": "wake.local.detected", "level": 1e100},
         ):
             assert client.post("/api/voice/diagnostics", json=malicious).status_code == 422
         assert client.post("/api/voice/diagnostics", json={

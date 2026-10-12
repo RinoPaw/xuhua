@@ -370,8 +370,13 @@ export class BrowserVoiceSession {
     } else if (accepted && message?.type === "utterance.rejected") {
       this.latency.finish("rejected", { reason: message.reason });
       if (String(message.reason || "").startsWith("voice_asr_")) {
-        // Back off after provider admission rejects, rather than repeatedly
-        // opening new ASR streams on background noise.
+        // The rejected start will never receive a transcript. End its local
+        // capture immediately so the server exits discard mode before the
+        // next accepted utterance, then suppress noisy VAD retriggers.
+        this.input.finishActiveUtterance({
+          connection: this.connection,
+          onTransportFailure: () => this.handleTransportFailure(),
+        });
         this.input.blockFor(850);
         this.log.warn?.(
           `[叙华][voice] asr.admission_rejected reason=${message.reason} retry_after=850ms`,

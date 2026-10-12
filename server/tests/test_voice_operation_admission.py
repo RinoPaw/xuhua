@@ -159,11 +159,15 @@ def test_voice_socket_rejects_unbounded_pending_asr_finalizers(monkeypatch) -> N
             rejected = receive_until(
                 ws, lambda e: e.get("type") == "utterance.rejected"
             )[-1]
-            assert rejected == {
+            assert {
+                key: rejected[key] for key in ("type", "utterance_id", "reason")
+            } == {
                 "type": "utterance.rejected",
                 "utterance_id": MAX_ASR_OPERATIONS_PER_CONNECTION + 1,
                 "reason": "voice_asr_capacity",
             }
+            assert rejected["connection_id"]
+            assert rejected["sequence"] > 0
             # The rejected PCM/end must not use one of the older streams.
             ws.send_bytes(b"\x01\x02")
             ws.send_json({"type": "utterance.end"})

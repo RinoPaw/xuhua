@@ -50,7 +50,7 @@ jobs:
           key: wake-assets-${{ runner.os }}-${{ hashFiles('web/scripts/prepare-wake-assets.mjs') }}
       - run: uv lock --check
       - run: uv sync --frozen --group dev
-      - run: timeout 90s uv run pytest -vv -s
+      - run: uv run pytest -q
       - run: uv run ruff check server/src tools server/tests
       - run: uv run python -m compileall -q server/src tools
       - name: Audit Python dependencies

@@ -13,7 +13,7 @@ from typing import Any
 
 from .admission import AdmissionController, AdmissionDenied, AdmissionLease
 from .assistant import AssistantService
-from .asr_normalization import NormalizedTranscript
+from .asr_normalization import NormalizedSpan, NormalizedTranscript
 from .dataset import KnowledgeBase
 from .language import (
     detect_locale,
@@ -54,6 +54,10 @@ MAX_VOICE_RECENT_ITEMS = 8
 ASSISTANT_NAME = "叙华"
 ASSISTANT_ACKNOWLEDGEMENT = "我在。"
 _ASSISTANT_ADDRESS_TRIM = " \t\r\n，,。！？!?：:、~～"
+# Observed iFlytek final transcripts for isolated calls of '叙华'.
+# These are *not* global vocabulary aliases: 姓华 and 玉华 can be real
+# names, and 华 can also be an ordinary word.
+_ISOLATED_SPOKEN_ADDRESS_RECOVERIES = frozenset({"姓华", "玉华", "华"})
 LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
@@ -73,9 +77,41 @@ def is_assistant_address_only(value: object) -> bool:
         str.maketrans("", "", _ASSISTANT_ADDRESS_TRIM)
     )
     return re.fullmatch(
-        r"(?:叙华){1,3}(?:啊|呀|呢|哎|诶|在吗|你在吗)?",
+        r"(?:你好|您好|喂|嗨)?(?:叙华){1,3}(?:啊|呀|呢|哎|诶|在吗|你在吗)?",
         compact,
     ) is not None
+
+
+def recover_isolated_spoken_address(
+    normalized: NormalizedTranscript,
+) -> NormalizedTranscript:
+    """Recover a complete, isolated wake call from an observed ASR mistake.
+
+    Only the voice transcript path uses this rule. Longer questions, typed
+    input, and person-name mentions must retain their actual wording.
+    """
+    if normalized.spans:
+        return normalized
+    compact = normalized.canonical_text.strip().translate(
+        str.maketrans("", "", _ASSISTANT_ADDRESS_TRIM)
+    )
+    if compact not in _ISOLATED_SPOKEN_ADDRESS_RECOVERIES:
+        return normalized
+    start = normalized.raw_text.find(compact)
+    if start < 0:
+        return normalized
+    return NormalizedTranscript(
+        raw_text=normalized.raw_text,
+        canonical_text=normalized.canonical_text[:start] + ASSISTANT_NAME
+        + normalized.canonical_text[start + len(compact):],
+        spans=(
+            NormalizedSpan(
+                start=start, end=start + len(compact), raw=compact,
+                canonical=ASSISTANT_NAME, score=1.0,
+                reason="isolated-voice-address-recovery",
+            ),
+        ),
+    )
 
 
 def build_voice_hotwords(
@@ -575,6 +611,8 @@ class VoiceSessionRuntime:
                 if is_chinese_locale(resolved_locale)
                 else NormalizedTranscript(raw_text, raw_text, ())
             )
+            if is_chinese_locale(resolved_locale):
+                normalized = recover_isolated_spoken_address(normalized)
             canonical_text = normalized.canonical_text
             log_voice_text(
                 "asr.batch.raw", connection=self.connection_id,

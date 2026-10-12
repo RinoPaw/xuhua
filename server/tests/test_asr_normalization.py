@@ -118,3 +118,11 @@ def test_common_asr_name_homophones_are_corrected_only_as_direct_address() -> No
         result = normalize_asr_final(raw, kb=_kb())
         assert result.canonical_text == raw, raw
         assert result.spans == ()
+
+
+
+def test_observed_wake_mistakes_are_not_globally_rewritten_in_normalizer() -> None:
+    for raw in ("姓华。", "玉华。", "华。", "我姓华。", "玉华是传承人"):
+        normalized = normalize_asr_final(raw, kb=_kb())
+        assert normalized.canonical_text == raw
+        assert normalized.spans == ()

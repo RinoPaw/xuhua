@@ -479,3 +479,65 @@ def test_short_name_call_from_asr_acks_without_starting_llm(spoken: str) -> None
         assert admission._active["chat"] == 0
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("spoken", ["姓华。", "玉华。", "华。"])
+def test_observed_asr_wake_mistakes_ack_without_llm(spoken: str) -> None:
+    async def scenario() -> None:
+        runtime, streams, events, assistant, completed, admission = make_runtime(
+            [(spoken, None, None)]
+        )
+        runtime.normalize_final = normalize_asr_final
+        try:
+            await runtime.handle_utterance_start(UtteranceStartCommand())
+            await runtime.handle_utterance_end()
+            await asyncio.wait_for(streams[0].finish_started.wait(), 2)
+            streams[0].finish_gate.set()
+            await asyncio.wait_for(completed.wait(), 2)
+            transcripts = [e for e in events if isinstance(e, UserTranscriptEvent)]
+            assert len(transcripts) == 1
+            assert transcripts[0].raw_text == spoken
+            assert transcripts[0].text == "叙华。"
+            assert transcripts[0].normalizations[0]["reason"] == (
+                "isolated-voice-address-recovery"
+            )
+            answers = [e for e in events if isinstance(e, AssistantDoneEvent)]
+            assert len(answers) == 1
+            assert answers[0].text == "我在。"
+            assert assistant.calls == []
+        finally:
+            await runtime.close()
+        assert admission._active["asr"] == 0
+        assert admission._active["chat"] == 0
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "spoken", [
+        "我姓华。", "玉华是传承人。", "华，请解释这个字。",
+        "姓华。啊，那他是虚脱了。",
+    ],
+)
+def test_ambiguous_name_in_full_question_is_not_swallowed(spoken: str) -> None:
+    async def scenario() -> None:
+        runtime, streams, events, assistant, completed, admission = make_runtime(
+            [(spoken, None, None)]
+        )
+        runtime.normalize_final = normalize_asr_final
+        try:
+            await runtime.handle_utterance_start(UtteranceStartCommand())
+            await runtime.handle_utterance_end()
+            await asyncio.wait_for(streams[0].finish_started.wait(), 2)
+            streams[0].finish_gate.set()
+            await asyncio.wait_for(completed.wait(), 2)
+            transcripts = [e for e in events if isinstance(e, UserTranscriptEvent)]
+            assert len(transcripts) == 1
+            assert transcripts[0].raw_text == spoken
+            assert len(assistant.calls) == 1
+            assert not any(e.text == "我在。" for e in events
+                           if isinstance(e, AssistantDoneEvent))
+        finally:
+            await runtime.close()
+
+    asyncio.run(scenario())

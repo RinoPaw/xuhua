@@ -91,3 +91,35 @@ def test_address_detection_does_not_consume_question_or_normal_words() -> None:
         "你叫叙华吗", "叙华叙华讲一下汴绣", "虚化",
     ):
         assert not is_assistant_address_only(spoken), spoken
+
+
+
+def test_isolated_voice_name_recovery_is_scoped_to_exact_short_calls() -> None:
+    from heritage_explorer.asr_normalization import NormalizedTranscript
+    from heritage_explorer.voice_session import recover_isolated_spoken_address
+
+    for raw in ("姓华。", "玉华。", "华。", " 华！ ", "姓华？"):
+        normalized = recover_isolated_spoken_address(NormalizedTranscript(raw, raw, ()))
+        assert is_assistant_address_only(normalized.canonical_text), raw
+        assert normalized.raw_text == raw
+        assert normalized.spans[0].reason == "isolated-voice-address-recovery"
+        assert normalized.spans[0].raw in {"姓华", "玉华", "华"}
+
+    for raw in (
+        "我姓华。", "玉华是传承人", "华", "华文明", "华，请解释这个字",
+        "姓华。啊，那他是虚脱了。", "玉华，请介绍汴绣", "花。", "叙华",
+    ):
+        normalized = recover_isolated_spoken_address(
+            NormalizedTranscript(raw, raw, ())
+        )
+        if raw == "华":
+            assert normalized.canonical_text == "叙华"
+        else:
+            assert normalized.canonical_text == raw, raw
+
+
+def test_greeting_with_actual_name_acks_but_a_following_question_does_not() -> None:
+    for value in ("你好，叙华！", "喂叙华", "您好叙华呀"):
+        assert is_assistant_address_only(value), value
+    for value in ("你好叙华，介绍一下汴绣", "叙华。华指什么"):
+        assert not is_assistant_address_only(value), value

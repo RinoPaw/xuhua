@@ -156,11 +156,31 @@ def test_voice_socket_rejects_unbounded_pending_asr_finalizers(monkeypatch) -> N
                     and e.get("utterance_id") == number,
                 )
             ws.send_json({"type": "utterance.start"})
-            with pytest.raises(WebSocketDisconnect) as closed:
-                ws.receive_json()
-            assert closed.value.code == 1013
+            rejected = receive_until(
+                ws, lambda e: e.get("type") == "utterance.rejected"
+            )[-1]
+            assert rejected == {
+                "type": "utterance.rejected",
+                "utterance_id": MAX_ASR_OPERATIONS_PER_CONNECTION + 1,
+                "reason": "voice_asr_capacity",
+            }
+            # The rejected PCM/end must not use one of the older streams.
+            ws.send_bytes(b"\x01\x02")
+            ws.send_json({"type": "utterance.end"})
+            assert len(StalledAsrStream.instances) == MAX_ASR_OPERATIONS_PER_CONNECTION
 
-    assert len(StalledAsrStream.instances) == MAX_ASR_OPERATIONS_PER_CONNECTION
+            # Same WebSocket can still handle a typed question and cancel
+            # the old stalled finalizers (returning the ASR leases).
+            ws.send_json({"type": "text", "text": "接着问"})
+            receive_until(ws, lambda e: e.get("type") == "assistant.done")
+            ws.send_json({"type": "utterance.start"})
+            recovered = receive_until(
+                ws, lambda e: e.get("status") == "user_speaking"
+                and e.get("utterance_id") == MAX_ASR_OPERATIONS_PER_CONNECTION + 2,
+            )
+            assert recovered[-1]["utterance_id"] == MAX_ASR_OPERATIONS_PER_CONNECTION + 2
+
+    assert len(StalledAsrStream.instances) == MAX_ASR_OPERATIONS_PER_CONNECTION + 1
     assert all(stream.closed for stream in StalledAsrStream.instances)
 
 
@@ -185,16 +205,19 @@ def test_asr_global_capacity_spans_multiple_voice_connections(monkeypatch) -> No
             with client.websocket_connect("/api/voice") as second:
                 second.receive_json()
                 second.send_json({"type": "utterance.start"})
-                with pytest.raises(WebSocketDisconnect) as denied:
-                    second.receive_json()
-                assert denied.value.code == 1013
-                assert denied.value.reason == "voice_asr_capacity"
-
-        # Closing the first connection releases the resource for a new socket.
-        with client.websocket_connect("/api/voice") as third:
-            third.receive_json()
-            third.send_json({"type": "utterance.start"})
-            receive_until(third, lambda event: event.get("status") == "user_speaking")
+                rejected = receive_until(
+                    second, lambda e: e.get("type") == "utterance.rejected"
+                )[-1]
+                assert rejected["reason"] == "voice_asr_capacity"
+                second.send_json({"type": "utterance.end"})
+                # Keep the socket, not the denied ASR lease.
+                assert len(StalledAsrStream.instances) == 1
+            # This connection survives capacity pressure and can answer
+            # after its competitor disconnects.
+            with client.websocket_connect("/api/voice") as third:
+                third.receive_json()
+                third.send_json({"type": "utterance.start"})
+                receive_until(third, lambda event: event.get("status") == "user_speaking")
 
     assert len(StalledAsrStream.instances) == 2
     assert all(stream.closed for stream in StalledAsrStream.instances)
@@ -219,10 +242,14 @@ def test_asr_rate_budget_applies_across_connections(monkeypatch) -> None:
         with client.websocket_connect("/api/voice") as second:
             second.receive_json()
             second.send_json({"type": "utterance.start"})
-            with pytest.raises(WebSocketDisconnect) as denied:
-                second.receive_json()
-            assert denied.value.code == 1013
-            assert denied.value.reason == "voice_asr_client_rate"
+            rejected = receive_until(
+                second, lambda e: e.get("type") == "utterance.rejected"
+            )[-1]
+            assert rejected["reason"] == "voice_asr_client_rate"
+            second.send_json({"type": "utterance.end"})
+            # Admission rate denial must not close or poison the voice socket.
+            second.send_json({"type": "text", "text": "文字继续"})
+            receive_until(second, lambda e: e.get("type") == "assistant.done")
 
     assert len(StalledAsrStream.instances) == 1
 

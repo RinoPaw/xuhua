@@ -611,3 +611,40 @@ test("receiving a new final ASR transcript does not prematurely end its own late
   h.session.handleOutputTerminal({ failed: false });
   assert.equal(h.session.latency.finished, true);
 });
+
+
+test("ASR admission rejection ends only the local input, not the socket or existing TTS", () => {
+  const h = createHarness();
+  h.connection.connected = true;
+  h.input.state.utteranceActive = true;
+  h.output.pipelineActive = true;
+  h.output.playing = true;
+  h.session.latency.markSpeechEnd(100);
+  const before = h.calls.filter(([name]) => name === "output.stop").length;
+
+  assert.equal(h.session.routeServerEvent({
+    type: "utterance.rejected", utterance_id: 1,
+    reason: "voice_asr_capacity",
+  }), true);
+  assert.equal(h.connection.connected, true);
+  assert.equal(h.input.state.utteranceActive, false);
+  assert.deepEqual(h.sent.at(-1), { type: "utterance.end" });
+  assert.equal(h.calls.some(([name, ms]) => name === "input.block" && ms === 850), true);
+  assert.equal(h.calls.filter(([name]) => name === "output.stop").length, before);
+  assert.equal(h.output.playing, true);
+  assert.equal(h.session.latency.finished, true);
+
+  // Old rejections cannot end another segment or add another cooldown.
+  h.calls.length = 0;
+  assert.equal(h.session.routeServerEvent({
+    type: "utterance.rejected", utterance_id: 1, reason: "voice_asr_capacity",
+  }), false);
+  assert.equal(h.calls.length, 0);
+
+  h.input.state.utteranceActive = true;
+  assert.equal(h.session.routeServerEvent({
+    type: "utterance.rejected", utterance_id: 2, reason: "voice_asr_client_rate",
+  }), true);
+  assert.equal(h.connection.connected, true);
+  assert.equal(h.calls.some(([name, ms]) => name === "input.block" && ms === 850), true);
+});

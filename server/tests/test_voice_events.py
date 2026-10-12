@@ -65,6 +65,10 @@ def test_server_events_encode_to_stable_wire_shapes() -> None:
             {"type": "utterance.rejected", "utterance_id": 4},
         ),
         (
+            UtteranceRejectedEvent(5, "voice_asr_capacity"),
+            {"type": "utterance.rejected", "utterance_id": 5, "reason": "voice_asr_capacity"},
+        ),
+        (
             AssistantDeltaEvent("session", "turn", "好", "zh-CN"),
             {
                 "type": "assistant.delta",

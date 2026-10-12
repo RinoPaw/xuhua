@@ -45,3 +45,8 @@
 诊断和隐私规则见 [语音链路诊断](voice-observability.md)：默认日志只记录 ID、状态、耗时和长度，不记录原始 PCM、完整转写、TTS token 或密钥。
 
 ASR 的 `finish_result()` 只等待讯飞最终识别文本，连接作用域继续拥有旧流与 admission lease；运行时先提交文字、启动回答，再由 finalizer 等待释放资源。兼容接口 `finish()` 仍在返回前关闭流。多段语音批次会等待所有段的最终文本，再按顺序合并，不能因一段提前返回而错误提交。
+
+
+### ASR 达到容量上限时的恢复
+
+同一语音 WebSocket 最多保留 3 个正在连接或最终收尾中的 ASR 操作，且每个操作继续受全局并发和速率预算限制。超过上限时，新语音段收到 `utterance.rejected`（带 `reason=voice_asr_capacity` / `voice_asr_client_rate` 等机器码），不关闭 WebSocket，不取消先前已受理的识别。被拒绝的音频及其结束事件被隔离，不可进入上一个 ASR；浏览器结束本地采集段并短暂抑制 VAD 重新触发。后台已有的 ASR finalizer 正常释放资源后，后续语音仍可继续；因分钟级速率限制被拒绝时必须等配额恢复。真正的传输失败或过量 PCM 缓冲仍会断连，以保护服务。

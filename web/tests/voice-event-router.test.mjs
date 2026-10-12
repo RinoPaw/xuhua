@@ -238,3 +238,20 @@ test("router delegates cancellation confirmation without touching voice state", 
   assert.deepEqual(h.calls, [["confirmInterruptAck", ack.request_id]]);
   assert.deepEqual(h.state.machine, machineBefore);
 });
+
+
+test("capacity rejection settles only the input and preserves an active answer", () => {
+  const h = createHarness();
+  h.state.output.pipelineActive = true;
+  h.state.output.playing = true;
+  h.state.input.utteranceActive = true;
+  const context = { state: h.state, actions: h.actions };
+  assert.equal(routeVoiceServerEvent({
+    type: "utterance.rejected", utterance_id: 4,
+    reason: "voice_asr_capacity",
+  }, context), true);
+  assert.equal(h.state.input.finalizedUtteranceId, 4);
+  assert.equal(h.state.input.activeUtteranceId, 0);
+  assert.equal(h.state.output.playing, true);
+  assert.deepEqual(h.calls, [["rejectTranscript"], ["settleListening"]]);
+});

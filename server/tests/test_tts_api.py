@@ -45,7 +45,7 @@ class _FakeCommunicate:
 
 def test_tts_text_is_exchanged_for_a_same_client_reusable_short_stream_token(monkeypatch) -> None:
     _FakeCommunicate.calls.clear()
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", _FakeCommunicate)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", _FakeCommunicate)
     app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
 
     with TestClient(app) as client:
@@ -81,7 +81,7 @@ def test_tts_text_is_exchanged_for_a_same_client_reusable_short_stream_token(mon
 
 def test_tts_ticket_cannot_be_replayed_by_another_client(monkeypatch) -> None:
     _FakeCommunicate.calls.clear()
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", _FakeCommunicate)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", _FakeCommunicate)
     app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
 
     async def scenario() -> None:
@@ -112,7 +112,7 @@ def test_tts_ticket_cannot_be_replayed_by_another_client(monkeypatch) -> None:
 
 def test_invalid_tts_token_does_not_spend_synthesis_rate_budget(monkeypatch) -> None:
     _FakeCommunicate.calls.clear()
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", _FakeCommunicate)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", _FakeCommunicate)
     admission = AdmissionController(
         {
             "tts_ticket": AdmissionPolicy(1, 10, 10),
@@ -158,7 +158,7 @@ def test_tts_holds_synthesis_capacity_for_the_full_stream(monkeypatch) -> None:
             await release.wait()
             yield {"type": "audio", "data": b"second"}
 
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", BlockingCommunicate)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", BlockingCommunicate)
     admission = AdmissionController(
         {
             "tts_ticket": AdmissionPolicy(1, 10, 10),
@@ -224,7 +224,7 @@ def test_tts_progressive_emits_first_audio_before_upstream_completion(monkeypatc
             await release.wait()
             yield {"type": "audio", "data": b"second"}
 
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", ControlledCommunicate)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", ControlledCommunicate)
     admission = AdmissionController({
         "tts": AdmissionPolicy(1, 10, 10),
         "tts_ticket": AdmissionPolicy(1, 10, 10),
@@ -267,7 +267,7 @@ def test_tts_progressive_start_failure_is_http_error_and_releases_capacity(monke
             yield {"type": "WordBoundary", "text": "not audio"}
             raise RuntimeError("provider startup failed")
 
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", FailBeforeAudio)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", FailBeforeAudio)
     admission = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})
     app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
     prepare, synthesize = _direct_tts_routes(app)
@@ -293,7 +293,7 @@ def test_tts_progressive_midstream_failure_is_not_silent_success(monkeypatch) ->
             yield {"type": "audio", "data": b"partial"}
             raise RuntimeError("upstream disconnected")
 
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", FailAfterFirst)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", FailAfterFirst)
     admission = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})
     app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
     prepare, synthesize = _direct_tts_routes(app)
@@ -311,7 +311,7 @@ def test_tts_progressive_midstream_failure_is_not_silent_success(monkeypatch) ->
 
 
 def test_tts_retry_uses_complete_buffer_even_if_stream_query_is_present(monkeypatch) -> None:
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", _FakeCommunicate)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", _FakeCommunicate)
     admission = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})
     app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
     prepare, synthesize = _direct_tts_routes(app)
@@ -343,7 +343,7 @@ def test_tts_disconnected_progressive_consumer_releases_capacity(monkeypatch) ->
             finally:
                 closed.set()
 
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", PausedCommunicate)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", PausedCommunicate)
     admission = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})
     app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
     prepare, synthesize = _direct_tts_routes(app)
@@ -377,7 +377,7 @@ def test_tts_outcome_logs_include_completed_failed_and_cancelled_without_text(
             if self.text == "cancel-secret-text":
                 await asyncio.Event().wait()
 
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", ControlledCommunicate)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", ControlledCommunicate)
     app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
     prepare, synthesize = _direct_tts_routes(app)
 
@@ -430,7 +430,7 @@ def test_tts_lease_is_released_even_if_upstream_close_raises(monkeypatch) -> Non
             finally:
                 raise RuntimeError("simulated provider cleanup failure")
 
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", FailedClose)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", FailedClose)
     admission = AdmissionController({"tts": AdmissionPolicy(1, 10, 10)})
     app = create_app(assistant=_Assistant(), admission=admission)  # type: ignore[arg-type]
     prepare, synthesize = _direct_tts_routes(app)
@@ -458,7 +458,7 @@ def test_tts_empty_provider_response_is_logged_as_failure(monkeypatch, caplog) -
 
     import logging
 
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", EmptyAudio)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", EmptyAudio)
     app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
     prepare, synthesize = _direct_tts_routes(app)
 
@@ -500,7 +500,7 @@ def test_tts_handshake_status_is_logged_without_exposing_provider_url(monkeypatc
             )
             yield {"type": "audio", "data": b"unreachable"}
 
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", FailedHandshake)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", FailedHandshake)
     app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
     prepare, synthesize = _direct_tts_routes(app)
 

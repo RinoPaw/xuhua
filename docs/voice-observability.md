@@ -91,6 +91,6 @@ Windows `tools/dev/start.bat` 会对本地运行的服务设置 `XUHUA_LOCAL_VOI
 
 - 使用讯飞官方 WebSocket `wss://tts-api.xfyun.cn/v2/tts`，服务端签名握手，`aue=lame` 与 `sfl=1` 返回可逐块传输的 MP3。浏览器不直接接触讯飞 API 凭据，沿用短期 ticket 与首块预取保护。
 - 可在 `.env` 设置 `XF_TTS_APP_ID`、`XF_TTS_API_KEY`、`XF_TTS_API_SECRET`。留空时复用 `XF_APP_ID`、`XF_API_KEY`、`XF_API_SECRET`，但讯飞语音识别与合成服务权限是分别管理的。
-- 默认普通话发音人 `XF_TTS_VOICE_ZH=xiaoyan`，其他语种和粤语使用各自的 `XF_TTS_VOICE_*` 配置。只有在讯飞控制台获得对应的 `vcn` 使用权限时才应填写该值，不能使用原有 Edge Neural 音色 ID。
+- 默认普通话发音人已改为**聆小瑜**：`XF_TTS_VOICE_ZH=x4_lingxiaoyu_assist`，其他语种和粤语使用各自的 `XF_TTS_VOICE_*` 配置。只有在讯飞控制台获得对应的 `vcn` 使用权限时才应填写该值，不能使用原有 Edge Neural 音色 ID。
 - 供应商未开通、发音人无权限或鉴权失败会返回 HTTP 502，并记录 `tts.provider.failed`，具体应根据讯飞平台的服务授权与错误码排查。自动化测试模拟协议与失败路径，不包含真实供应商连通性验证。
 - 由于句段拆分，完整一轮回答最多生成两次独立 TTS 请求；多语种质量取决于发音人是否支持。固定“我在。”提示音仍可从浏览器本地预置素材播放，不依赖在线 TTS。

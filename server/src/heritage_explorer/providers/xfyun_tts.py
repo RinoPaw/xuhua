@@ -24,6 +24,7 @@ HOST = "tts-api.xfyun.cn"
 PATH = "/v2/tts"
 MAX_TEXT_BYTES = 7999
 MAX_AUDIO_BYTES = 16 * 1024 * 1024
+DEFAULT_MANDARIN_VOICE = "x4_lingxiaoyu_assist"  # 聆小瑜 (interactive Mandarin voice)
 FIRST_AUDIO_TIMEOUT = 12.0
 STREAM_TIMEOUT = 30.0
 
@@ -46,7 +47,7 @@ def voice_for(edge_voice: str) -> str:
         return os.environ.get("XF_TTS_VOICE_JA", "").strip() or "xiaoyan"
     if edge_voice.startswith("ko-"):
         return os.environ.get("XF_TTS_VOICE_KO", "").strip() or "xiaoyan"
-    return os.environ.get("XF_TTS_VOICE_ZH", "").strip() or "xiaoyan"
+    return os.environ.get("XF_TTS_VOICE_ZH", "").strip() or DEFAULT_MANDARIN_VOICE
 
 
 class Communicate:

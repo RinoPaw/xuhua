@@ -49,7 +49,7 @@ Server / FastAPI
   ├─ SessionStore
   ├─ OpenAI-compatible LLM provider
   ├─ XfyunStream（单路实时 ASR）
-  └─ Edge TTS
+  └─ Xfyun TTS（聆小瑜，在线语音合成流式版）
 
 本地数据
   └─ data/processed/heritage_items.json
@@ -107,7 +107,7 @@ Copy-Item .env.example .env
 | `TTS_MAX_CONCURRENCY` | `12` | 单实例同时进行的 TTS 合成上限 |
 | `TTS_MAX_PER_MINUTE` | `240` | 单实例每分钟允许启动的 TTS 合成上限 |
 | `TTS_MAX_PER_CLIENT_PER_MINUTE` | `80` | 单客户端每分钟允许启动的 TTS 合成上限 |
-| `XF_TTS_APP_ID` / `XF_TTS_API_KEY` / `XF_TTS_API_SECRET` | 可留空并复用 ASR 的讯飞凭据 | 讯飞在线语音合成可能需要单独开通权限；凭据必须对应已开通 TTS 的应用 |\n| `XF_TTS_VOICE_ZH` | `xiaoyan` | 默认普通话音色；可换为控制台已授权的 `vcn` |\n| `VOICE_MAX_CONCURRENCY` | `4` | 单实例同时保持的实时语音连接上限 |
+| `XF_TTS_APP_ID` / `XF_TTS_API_KEY` / `XF_TTS_API_SECRET` | 可留空并复用 ASR 的讯飞凭据 | 讯飞在线语音合成可能需要单独开通权限；凭据必须对应已开通 TTS 的应用 |\n| `XF_TTS_VOICE_ZH` | `x4_lingxiaoyu_assist` | 聆小瑜，交互式普通话女声；需在讯飞控制台开通对应音色，也可设置其他已授权的 `vcn` |\n| `VOICE_MAX_CONCURRENCY` | `4` | 单实例同时保持的实时语音连接上限 |
 | `VOICE_MAX_PER_MINUTE` | `30` | 单实例每分钟允许建立的实时语音连接上限 |
 | `VOICE_MAX_PER_CLIENT_PER_MINUTE` | `8` | 单客户端每分钟允许建立的实时语音连接上限 |
 

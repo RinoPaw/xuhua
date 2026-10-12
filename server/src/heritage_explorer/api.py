@@ -46,7 +46,7 @@ from .config import (
 )
 from .dataset import item_to_dict
 from .language import detect_locale, get_language_profile, normalize_locale_hint
-from .logging_setup import configure_application_logging
+from .logging_setup import configure_application_logging, redact_uvicorn_tts_access_logs
 from .request_limits import RequestBodyLimitMiddleware
 from .tts_tickets import TtsTicketCapacity, TtsTicketStore
 from .voice import XfyunStream
@@ -136,6 +136,7 @@ def create_app(
         # Uvicorn configures its own loggers but does not guarantee a root
         # handler for heritage_explorer.*. Respect host-provided handlers.
         configure_application_logging()
+        redact_uvicorn_tts_access_logs()
         yield
         close = getattr(assistant, "aclose", None)
         if close is not None:

@@ -58,3 +58,8 @@ CI 校验日志结构与模拟生命周期；它无法证明真实设备的麦�
 当日志出现 `tts.provider.failed reason=WSServerHandshakeError` 时，服务端会同时记录安全的 `status=<HTTP 状态码或 ->`，例如 `status=403`。这是供应商握手失败，不是本地 `/api/tts/{token}` 路由的 HTTP 502 本身。为保护凭据，不能记录原始异常的 URL 或查询串。若 `status=403`，优先排查 Edge TTS 上游鉴权、IP/地区限制和依赖版本；若 `status=429`，排查请求速率。单次失败不能证明并发或短句就是原因。
 
 中文首播不会再把不足 6 个字符的已完成短句单独提交 TTS；需要等待更多文字以合并成一段（如果整条回答已结束，仍会完整合成短回答）。这样避免极短首段带来的额外网络握手，但不保证消除上游握手失败。保留 `segment=0/1`、`trace`、`chars`，便于比较前后实际失败率和首播延迟。
+
+
+## TTS Ticket 的访问日志脱敏
+
+Uvicorn 的默认访问日志可能显示 `GET /api/tts/<token>?stream=1`；即使业务代码从不主动记录 token，这条 HTTP 访问日志也会泄露一次性票据。应用启动时会对 `uvicorn.access` 添加幂等过滤器，将实际票据路径统一记录为 `GET /api/tts/<redacted>`，仍保留 HTTP 状态码。此过滤器不影响代理服务器、反向代理、自定义 ASGI server 或浏览器网络面板各自产生的日志；公开分享历史日志前请单独清理旧票据。

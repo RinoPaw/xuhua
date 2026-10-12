@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from heritage_explorer.admission import AdmissionController, AdmissionPolicy
-from heritage_explorer.asr_normalization import NormalizedTranscript
+from heritage_explorer.asr_normalization import NormalizedTranscript, normalize_asr_final
 from heritage_explorer.dataset import KnowledgeBase
 from heritage_explorer.models import AssistantEvent
 from heritage_explorer.sessions import SessionStore
@@ -446,6 +446,34 @@ def test_barge_in_from_a_later_utterance_still_cancels_an_older_answer() -> None
             assert acks[0].cancelled is True
         finally:
             assistant.allow.set()
+            await runtime.close()
+        assert admission._active["asr"] == 0
+        assert admission._active["chat"] == 0
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("spoken", ["许华呀", "叙花。", "叙华，叙华", "徐华你在吗"])
+def test_short_name_call_from_asr_acks_without_starting_llm(spoken: str) -> None:
+    async def scenario() -> None:
+        runtime, streams, events, assistant, completed, admission = make_runtime(
+            [(spoken, None, None)]
+        )
+        runtime.normalize_final = normalize_asr_final
+        try:
+            await runtime.handle_utterance_start(UtteranceStartCommand())
+            await runtime.handle_utterance_end()
+            await asyncio.wait_for(streams[0].finish_started.wait(), 2)
+            streams[0].finish_gate.set()
+            await asyncio.wait_for(completed.wait(), 2)
+            transcripts = [e for e in events if isinstance(e, UserTranscriptEvent)]
+            assert len(transcripts) == 1
+            assert transcripts[0].text.startswith("叙华")
+            answers = [e for e in events if isinstance(e, AssistantDoneEvent)]
+            assert len(answers) == 1
+            assert answers[0].text == "我在。"
+            assert assistant.calls == []
+        finally:
             await runtime.close()
         assert admission._active["asr"] == 0
         assert admission._active["chat"] == 0

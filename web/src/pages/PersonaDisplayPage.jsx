@@ -118,11 +118,17 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
   }, [composerOpen]);
 
   const mode = realtime.isPlaying ? "speaking" : previewMode;
-  const lastUserIndex = conversation.messages.findLastIndex((message) => message.role === "user");
-  const userMessage = lastUserIndex < 0 ? null : conversation.messages[lastUserIndex];
-  const assistantMessage = lastUserIndex < 0
-    ? conversation.messages.findLast((message) => message.role === "assistant")
-    : conversation.messages.slice(lastUserIndex + 1).find((message) => message.role === "assistant");
+  const dialogueTurns = useMemo(() => {
+    const turns = [];
+    for (const message of conversation.messages) {
+      if (message.role !== "user" && message.role !== "assistant") continue;
+      if (message.role === "user" || turns.length === 0) {
+        turns.push({ id: message.id, user: null, assistant: null });
+      }
+      turns.at(-1)[message.role] = message;
+    }
+    return turns.slice(-2);
+  }, [conversation.messages]);
   const connecting = realtime.status === REALTIME_VOICE_STATUS.CONNECTING;
   const voiceControl = personaVoiceControlState({
     connected: realtime.isConnected,
@@ -175,16 +181,20 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
           <DigitalHuman mode={mode} showBrand={false} />
 
           <div className="persona-dialogue" aria-live="polite">
-            {userMessage && (
-              <div className="persona-bubble persona-bubble-user">
-                <Markdown text={userMessage.content} status={userMessage.status} />
+            {dialogueTurns.map((turn) => (
+              <div className="persona-dialogue-turn" key={turn.id}>
+                {turn.assistant && (
+                  <div className="persona-bubble persona-bubble-assistant" aria-label="叙华的话">
+                    <Markdown text={turn.assistant.content} status={turn.assistant.status} />
+                  </div>
+                )}
+                {turn.user && (
+                  <div className="persona-bubble persona-bubble-user" aria-label="用户的话">
+                    <Markdown text={turn.user.content} status={turn.user.status} />
+                  </div>
+                )}
               </div>
-            )}
-            {assistantMessage && (
-              <div className="persona-bubble persona-bubble-assistant">
-                <Markdown text={assistantMessage.content} status={assistantMessage.status} />
-              </div>
-            )}
+            ))}
           </div>
 
           {conversation.error && (

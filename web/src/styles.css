@@ -65,6 +65,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 
 .conversation-toolbar { flex: 0 0 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; border-bottom: 1px solid var(--line); }
 .conversation-title { color: #393630; font-size: var(--text-heading); font-weight: 600; line-height: 1.35; }
+.conversation-version { margin-left: 12px; color: var(--quiet); font-size: var(--text-meta); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .conversation-state { color: var(--quiet); font-size: var(--text-meta); font-weight: 400; }
 
 .chat-timeline { min-height: 0; flex: 1; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #c6bdad transparent; }

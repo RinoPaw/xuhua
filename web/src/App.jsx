@@ -268,6 +268,11 @@ function App() {
         <section className="center-panel">
           <div className="conversation-toolbar">
             <span className="conversation-title">与叙华对话</span>
+            {meta?.app_version && (
+              <span className="conversation-version" aria-label={`版本 ${meta.app_version}`}>
+                v{meta.app_version}
+              </span>
+            )}
           </div>
 
           <div className="chat-timeline">

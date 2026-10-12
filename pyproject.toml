@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xuhua"
-version = "0.2.0"
+version = "0.2.4"
 description = "叙华 — 以可核验资料为依据的非遗对话体验"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"

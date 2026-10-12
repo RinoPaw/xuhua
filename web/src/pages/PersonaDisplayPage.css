@@ -34,23 +34,30 @@
   bottom: max(16%, 104px);
   left: 4%;
   display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 16px;
+  flex-direction: column;
+  gap: 12px;
   pointer-events: none;
 }
 
+.persona-dialogue-turn {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+  gap: 8%;
+}
+
 .persona-bubble {
-  max-width: min(42%, 420px);
+  min-width: 0;
+  max-width: min(100%, 420px);
   max-height: min(14vh, 168px);
   overflow-y: auto;
   padding: 10px 16px;
   border: 1px solid rgba(231, 221, 200, .76);
   border-radius: 18px;
   color: #332b20;
-  background: rgba(251, 247, 238, .91);
+  background: rgba(251, 247, 238, .78);
   box-shadow: 0 8px 24px rgba(20, 15, 9, .12);
-  backdrop-filter: blur(10px);
+  backdrop-filter: blur(6px);
   pointer-events: auto;
 }
 
@@ -61,13 +68,17 @@
 }
 
 .persona-bubble-user {
-  align-self: flex-start;
-  border-bottom-left-radius: 4px;
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  border-bottom-right-radius: 4px;
 }
 
 .persona-bubble-assistant {
-  margin-left: auto;
-  border-bottom-right-radius: 4px;
+  grid-column: 1;
+  grid-row: 1;
+  justify-self: start;
+  border-bottom-left-radius: 4px;
 }
 
 .persona-error {
@@ -200,7 +211,6 @@
   }
 
   .persona-bubble {
-    max-width: 43%;
     padding: 9px 13px;
   }
 
@@ -228,7 +238,6 @@
   }
 
   .persona-bubble {
-    max-width: 46%;
     padding: 7px 10px;
   }
 

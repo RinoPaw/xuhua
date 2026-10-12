@@ -270,7 +270,7 @@ def test_health_aliases_and_meta_expose_stable_contract() -> None:
     for path in ("/healthz", "/api/health"):
         response = client.get(path)
         assert response.status_code == 200
-        assert response.json() == {"status": "ok", "version": "0.2.0"}
+        assert response.json() == {"status": "ok", "version": api_module.__version__}
 
     response = client.get("/api/meta")
     assert response.status_code == 200

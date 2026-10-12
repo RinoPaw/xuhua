@@ -16,6 +16,7 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
   right column for searchable project material and detail views.
 - Keep the composer at the bottom in a restrained GPT-like form. The realtime voice control sits to the
   right as a genuinely round button; do not turn it into a square or a speech-to-text-looking control.
+- Show the backend app version on the right of the conversation toolbar, beside “与叙华对话”.
 - Language and dialect support is automatic. Do not add a language selector, language button, or any
   other locale control; infer the current turn from speech/text with browser locale only as a hint.
 - Use restrained xuan-paper texture and a quiet light palette. Readable type and compact, consistent
@@ -28,6 +29,8 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
   full-screen main visual; its dialogue uses two small floating captions near the lower edge, and
   its text and voice buttons stay in the bottom corners. Do not use a large conversation panel that
   covers about half the person.
+- Persona captions show the latest two conversation turns, with the assistant on the left and the
+  user on the right. Align both bubbles at the top of each turn and use slightly transparent backgrounds.
 
 ## Supported voice path
 

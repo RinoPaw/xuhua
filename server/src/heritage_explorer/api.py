@@ -11,7 +11,7 @@ import ipaddress
 from typing import Literal
 from typing import Any
 
-import edge_tts
+from .providers import xfyun_tts
 from fastapi import FastAPI, HTTPException, Path as ApiPath, Query, Request, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from fastapi.responses import StreamingResponse
@@ -292,7 +292,7 @@ def create_app(
         first_chunk_logged = False
         bytes_sent = 0
         try:
-            communicate = edge_tts.Communicate(
+            communicate = xfyun_tts.Communicate(
                 ticket.text,
                 voice=language_profile.tts_voice,
                 rate="-2%",
@@ -369,7 +369,7 @@ def create_app(
 
         streaming = progressive and "tts_retry" not in request.query_params
         if streaming:
-            # The network/browser can start consuming this MP3 before Edge
+            # The network/browser can start consuming this MP3 before iFLYTEK
             # finishes its remaining chunks.
             try:
                 first = await anext(audio, None)

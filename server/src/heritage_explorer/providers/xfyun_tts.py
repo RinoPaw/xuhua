@@ -24,7 +24,7 @@ HOST = "tts-api.xfyun.cn"
 PATH = "/v2/tts"
 MAX_TEXT_BYTES = 7999
 MAX_AUDIO_BYTES = 16 * 1024 * 1024
-DEFAULT_MANDARIN_VOICE = "x4_lingxiaoyu_assist"  # 聆小瑜 (interactive Mandarin voice)
+DEFAULT_MANDARIN_VOICE = "x4_yezi"  # 讯飞小露 (Mandarin voice)
 FIRST_AUDIO_TIMEOUT = 12.0
 STREAM_TIMEOUT = 30.0
 

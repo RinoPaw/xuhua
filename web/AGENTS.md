@@ -35,9 +35,12 @@ The only supported voice architecture is:
 
 ```text
 browser VAD → /api/voice → Xunfei streaming ASR
-→ AssistantService / DeepSeek → Edge TTS
+→ AssistantService / DeepSeek → Xunfei TTS
 → interruptible browser playback
 ```
+
+- The confirmed Mandarin voice is 讯飞小露 (`x4_yezi`). Fixed acknowledgement audio must use the
+  same voice as ordinary Mandarin answers.
 
 Do not add or document an OpenAI Realtime/WebRTC path. Text chat and realtime voice must continue to
 share the same session, turn, cancellation, retrieval, and assistant core. Voice UI state should be

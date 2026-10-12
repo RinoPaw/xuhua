@@ -184,16 +184,16 @@ def test_unknown_dialect_voice_is_not_sent_as_edge_identifier(monkeypatch):
     ).vcn == "xiaoyan"
 
 
-def test_mandarin_defaults_to_lingxiaoyu_when_not_configured(monkeypatch) -> None:
+def test_mandarin_defaults_to_xiaolu_when_not_configured(monkeypatch) -> None:
     monkeypatch.delenv("XF_TTS_VOICE_ZH", raising=False)
-    assert tts.voice_for("zh-CN-XiaoxiaoNeural") == "x4_lingxiaoyu_assist"
+    assert tts.voice_for("zh-CN-XiaoxiaoNeural") == "x4_yezi"
     assert tts.Communicate(
         "你好，欢迎来到叙华。", voice="zh-CN-XiaoxiaoNeural", rate="-2%", pitch="+0Hz",
-    ).vcn == "x4_lingxiaoyu_assist"
+    ).vcn == "x4_yezi"
     monkeypatch.setenv("XF_TTS_VOICE_ZH", "  ")
-    assert tts.voice_for("zh-CN-XiaoxiaoNeural") == "x4_lingxiaoyu_assist"
+    assert tts.voice_for("zh-CN-XiaoxiaoNeural") == "x4_yezi"
 
 
-def test_explicit_mandarin_voice_still_overrides_lingxiaoyu(monkeypatch) -> None:
+def test_explicit_mandarin_voice_still_overrides_xiaolu(monkeypatch) -> None:
     monkeypatch.setenv("XF_TTS_VOICE_ZH", "other_authorized_voice")
     assert tts.voice_for("zh-CN-XiaoxiaoNeural") == "other_authorized_voice"

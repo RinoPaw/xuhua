@@ -21,7 +21,6 @@ from .language import (
     normalize_locale_hint,
 )
 from .sessions import SessionStore
-from .voice import VoiceProviderError
 from .voice_events import (
     AssistantCancelledEvent,
     AssistantDeltaEvent,

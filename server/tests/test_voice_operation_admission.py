@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
-import pytest
 
 from fastapi.testclient import TestClient
-from starlette.websockets import WebSocketDisconnect
 
 import heritage_explorer.api as api_module
 from heritage_explorer.admission import AdmissionController, AdmissionPolicy

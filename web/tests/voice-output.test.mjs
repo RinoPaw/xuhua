@@ -189,9 +189,9 @@ test("TTS scheduler receives a trace snapshot for each turn", () => {
     createTraceId: () => `trace-${++sequence}`,
   });
   output.begin();
-  output.append("旧回答。");
+  output.append("这是旧的回答。");
   output.begin();
-  output.append("新回答。");
+  output.append("这是新的回答。");
   const enqueueCalls = harness.calls.filter(([name]) => name === "enqueue");
   assert.equal(enqueueCalls.length, 2);
   assert.equal(enqueueCalls[0][2].traceId, "trace-1");

@@ -212,12 +212,11 @@ def test_asr_global_capacity_spans_multiple_voice_connections(monkeypatch) -> No
                 second.send_json({"type": "utterance.end"})
                 # Keep the socket, not the denied ASR lease.
                 assert len(StalledAsrStream.instances) == 1
-            # This connection survives capacity pressure and can answer
-            # after its competitor disconnects.
-            with client.websocket_connect("/api/voice") as third:
-                third.receive_json()
-                third.send_json({"type": "utterance.start"})
-                receive_until(third, lambda event: event.get("status") == "user_speaking")
+        # A fresh connection after the capacity holder leaves can start ASR.
+        with client.websocket_connect("/api/voice") as third:
+            third.receive_json()
+            third.send_json({"type": "utterance.start"})
+            receive_until(third, lambda event: event.get("status") == "user_speaking")
 
     assert len(StalledAsrStream.instances) == 2
     assert all(stream.closed for stream in StalledAsrStream.instances)

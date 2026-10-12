@@ -9,7 +9,6 @@ description = "叙华 — 以可核验资料为依据的非遗对话体验"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
-    "edge-tts>=7.2,<8",
     "fastapi>=0.141,<1",
     "httpx>=0.28,<1",
     "pypinyin>=0.51,<1",

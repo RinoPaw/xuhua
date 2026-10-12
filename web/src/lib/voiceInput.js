@@ -13,8 +13,12 @@ import {
 
 const TARGET_RATE = 16000;
 const NORMAL_VAD_POLICY = getVADOnsetPolicy(false);
-// A shorter endpoint reduces the fixed wait before remote ASR finalization.
-const SILENCE_MS = 340;
+// Short fragments are more likely to be a pause inside one question. Hold
+// them longer to avoid opening several costly ASR WebSockets for one sentence.
+// Longer utterances keep the low-latency endpoint.
+const SILENCE_MS = 420;
+const SHORT_SILENCE_MS = 720;
+const SHORT_UTTERANCE_MS = 1200;
 const MAX_UTTERANCE_MS = 20000;
 const SPECTRUM_INTERVAL_MS = 50;
 
@@ -144,7 +148,10 @@ export function processVoiceInputFrame(state, {
 
   const level = rms(samples);
   const shouldInterrupt = !state.utteranceActive && agentBusy;
-  const playbackOnset = !state.utteranceActive && playbackActive;
+  // An in-flight answer can trigger a speculative TTS clip before HTMLAudio
+  // reports "playing". Use the stricter barge-in onset policy for *all* busy
+  // states, not just while audio is already audible.
+  const playbackOnset = !state.utteranceActive && (playbackActive || agentBusy);
   const onsetPolicy = getVADOnsetPolicy(playbackOnset);
   const threshold = onsetPolicy.threshold;
   state.gate = advanceVADGate(state.gate, {
@@ -198,7 +205,9 @@ export function processVoiceInputFrame(state, {
   if (level >= NORMAL_VAD_POLICY.threshold) state.lastVoiceAt = now;
 
   const timedOut = now - state.utteranceStartedAt >= MAX_UTTERANCE_MS;
-  if (timedOut || now - state.lastVoiceAt > SILENCE_MS) {
+  const voicedMs = Math.max(0, state.lastVoiceAt - state.utteranceStartedAt);
+  const silenceMs = voicedMs < SHORT_UTTERANCE_MS ? SHORT_SILENCE_MS : SILENCE_MS;
+  if (timedOut || now - state.lastVoiceAt > silenceMs) {
     actions.push({ kind: "json", payload: { type: "utterance.end" } });
     state.utteranceActive = false;
     state.utteranceStartedAt = 0;
@@ -213,6 +222,8 @@ export function processVoiceInputFrame(state, {
 export const VOICE_INPUT_LIMITS = Object.freeze({
   targetRate: TARGET_RATE,
   silenceMs: SILENCE_MS,
+  shortSilenceMs: SHORT_SILENCE_MS,
+  shortUtteranceMs: SHORT_UTTERANCE_MS,
   maxUtteranceMs: MAX_UTTERANCE_MS,
   spectrumIntervalMs: SPECTRUM_INTERVAL_MS,
 });

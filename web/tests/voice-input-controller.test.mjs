@@ -151,3 +151,16 @@ test("voice input controller emits speaking and transcribing phases", () => {
   input.process(new Float32Array([0]), 48000, options);
   assert.deepEqual(phases, ["speaking", "transcribing"]);
 });
+
+
+test("in-flight TTS without active audio still uses strict interrupt onset", () => {
+  const input = new VoiceInputController({ now: () => 1000, processFrame(_state, options) {
+    assert.equal(options.agentBusy, true);
+    assert.equal(options.playbackActive, false);
+    return { actions: [], spectrum: null, started: null, nextStatus: null };
+  } });
+  input.process(new Float32Array([0.02]), 16000, {
+    connection: makeConnection(),
+    output: { pipelineActive: true, playing: false },
+  });
+});

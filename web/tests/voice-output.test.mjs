@@ -103,7 +103,7 @@ test("scheduler terminal preserves failure metadata and clears controller turn s
   assert.equal(controller.traceId, "");
   assert.equal(controller.locale, "zh-CN");
   assert.deepEqual(playing, [true]);
-  assert.deepEqual(terminal, [terminalResult]);
+  assert.deepEqual(terminal, [{ ...terminalResult, traceId: "trace-terminal" }]);
 });
 
 test("stop clears pipeline state and resets text plan", () => {
@@ -234,4 +234,21 @@ test("short Chinese greetings are not submitted as isolated first TTS requests",
   controller.finish("", "zh-CN");
   assert.equal(harness.calls.filter(([type]) => type === "enqueue").length, 1);
   assert.equal(harness.calls.at(-1)[0], "complete");
+});
+
+
+test("successful output completion retains its original trace after clearing state", () => {
+  const harness = makeSchedulerHarness();
+  const terminals = [];
+  const output = new VoiceOutputController({
+    createScheduler: (options) => harness.createScheduler(options),
+    createTraceId: () => "original-trace",
+    onTerminal: (result) => terminals.push(result),
+  });
+  output.begin("zh-CN");
+  harness.options.onTerminal({ generation: 7, failed: false });
+  assert.equal(output.traceId, "");
+  assert.deepEqual(terminals, [{ generation: 7, failed: false, traceId: "original-trace" }]);
+  harness.options.onTerminal({ generation: 7, failed: true });
+  assert.equal(terminals.length, 1);
 });

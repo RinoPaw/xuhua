@@ -167,10 +167,10 @@ export class BrowserVoiceSession {
     }
   }
 
-  handleOutputTerminal({ failed, reason } = {}) {
+  handleOutputTerminal({ failed, reason, traceId } = {}) {
     this.latency.finish(failed ? "failed" : "completed", { reason: failed ? reason : "" });
     this.recordDiagnostic(failed ? "voice.tts.failed" : "voice.tts.complete", {
-      trace: this.output?.traceId || "-",
+      trace: traceId || this.output?.traceId || "-",
     });
     this.input.blockFor(450);
     this.dispatchMany([

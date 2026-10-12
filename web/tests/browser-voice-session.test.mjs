@@ -648,3 +648,16 @@ test("ASR admission rejection ends only the local input, not the socket or exist
   assert.equal(h.connection.connected, true);
   assert.equal(h.calls.some(([name, ms]) => name === "input.block" && ms === 850), true);
 });
+
+
+test("voice terminal diagnostic uses scheduler's immutable trace snapshot", () => {
+  const h = createHarness();
+  const emitted = [];
+  h.session.recordDiagnostic = (event, details) => emitted.push({ event, details });
+  h.output.traceId = ""; // output clears this before notifying the session
+  h.session.handleOutputTerminal({ failed: true, reason: "tts_audio_failed", traceId: "failure-trace" });
+  assert.deepEqual(emitted[0], { event: "voice.tts.failed", details: { trace: "failure-trace" } });
+
+  h.session.handleOutputTerminal({ failed: false, traceId: "complete-trace" });
+  assert.deepEqual(emitted[1], { event: "voice.tts.complete", details: { trace: "complete-trace" } });
+});

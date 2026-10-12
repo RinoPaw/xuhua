@@ -59,8 +59,12 @@ export class VoiceOutputController {
       },
       onTerminal: (result = {}) => {
         if (result.generation !== this.activeGeneration) return;
+        // The scheduler clears turn state before the caller receives this
+        // callback. Snapshot trace identity first so local TTS diagnostics can
+        // still correlate playback completion/failure with provider logs.
+        const traceId = this.traceId;
         this.clearTurnState();
-        this.onTerminal(result);
+        this.onTerminal({ ...result, traceId });
       },
     });
   }

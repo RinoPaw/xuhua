@@ -193,6 +193,9 @@ class VoiceSessionRuntime:
         self.batch = VoiceBatchState()
         self.lifecycle = VoiceConnectionScope(connection_id=connection_id)
         self.utterance_sequence = 0
+        # PCM belonging to a capacity-rejected start must not leak into the
+        # preceding ASR stream. The flag is cleared by its matching end/cancel.
+        self._discarding_utterance = False
         self.batch_lock = asyncio.Lock()
 
     def update_context(self, command: ContextCommand) -> None:
@@ -697,23 +700,56 @@ class VoiceSessionRuntime:
         )
 
     async def handle_audio(self, data: bytes) -> None:
+        if self._discarding_utterance:
+            return
         stream = self.lifecycle.asr_stream
         if stream is not None:
             await stream.send_audio(data)
+
+    async def reject_asr_start(self, reason: str) -> None:
+        """Reject only this VAD segment without destroying the voice socket.
+
+        A prior active stream must be detached before rejecting the new one,
+        otherwise the rejected segment's PCM could contaminate that stream.
+        Previously admitted finalizers and their leases remain owned by the
+        connection and continue to completion.
+        """
+        if self.lifecycle.asr_stream is not None:
+            previous_id = self.utterance_sequence
+            previous_stream, previous_start = self.lifecycle.detach_asr()
+            if previous_start is not None:
+                self.schedule_finalize(previous_stream, previous_start, previous_id)
+            elif previous_stream is not None:
+                await self.lifecycle.release_asr(previous_stream, label="voice.asr.replaced")
+        self.utterance_sequence += 1
+        self._discarding_utterance = True
+        LOGGER.info(
+            "voice.asr.admission_rejected connection=%s utterance=%s reason=%s active=%s",
+            self.connection_id,
+            self.utterance_sequence,
+            reason,
+            self.lifecycle.active_asr_operations,
+        )
+        await self.send(UtteranceRejectedEvent(self.utterance_sequence, reason=reason))
 
     async def handle_utterance_start(
         self,
         command: UtteranceStartCommand,
     ) -> None:
         async with self.batch_lock:
+            # A new start supersedes any missing end from an earlier rejected
+            # attempt. No provider or lease was allocated to that attempt.
+            self._discarding_utterance = False
             if not self.lifecycle.can_start_asr():
-                raise VoiceProviderError("voice_asr_capacity")
+                await self.reject_asr_start("voice_asr_capacity")
+                return
             try:
                 # Budget is acquired before the provider stream is constructed;
                 # previous finalizers continue holding their own reservations.
                 asr_lease = await self.admission.acquire("asr", self.client_id)
             except AdmissionDenied as exc:
-                raise VoiceProviderError(f"voice_asr_{exc.reason}") from exc
+                await self.reject_asr_start(f"voice_asr_{exc.reason}")
+                return
             lease_transferred = False
             try:
                 emit_speaking_status = await self._begin_utterance(command, asr_lease)
@@ -812,9 +848,12 @@ class VoiceSessionRuntime:
         return utterance_id not in self.batch.pending_user_speaking
 
     async def handle_utterance_end(self) -> None:
-        if self.lifecycle.asr_stream is None:
-            return
         async with self.batch_lock:
+            if self._discarding_utterance:
+                self._discarding_utterance = False
+                return
+            if self.lifecycle.asr_stream is None:
+                return
             utterance_id = self.utterance_sequence
             LOGGER.info(
                 "voice.vad.utterance_end connection=%s utterance=%s",
@@ -835,6 +874,9 @@ class VoiceSessionRuntime:
 
     async def handle_utterance_cancel(self) -> None:
         async with self.batch_lock:
+            if self._discarding_utterance:
+                self._discarding_utterance = False
+                return
             self.batch.clear()
             await self.lifecycle.cancel_finalizers()
             await self.lifecycle.cancel_asr()
@@ -871,6 +913,8 @@ class VoiceSessionRuntime:
 
     async def handle_barge_in(self, command: BargeInCommand) -> None:
         async with self.batch_lock:
+            if self._discarding_utterance:
+                return
             LOGGER.info(
                 "voice.barge_in connection=%s utterance=%s",
                 self.connection_id,
@@ -931,6 +975,7 @@ class VoiceSessionRuntime:
             await self.handle_interrupt(command)
 
     async def close(self) -> None:
+        self._discarding_utterance = False
         self.batch.clear()
         self.log_answer_cancel("connection_closed")
         await self.lifecycle.close()

@@ -47,6 +47,7 @@ class UserTranscriptEvent:
 @dataclass(frozen=True, slots=True)
 class UtteranceRejectedEvent:
     utterance_id: int
+    reason: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,10 +149,13 @@ def encode_voice_event(event: VoiceServerEvent) -> dict[str, Any]:
             "asr_engine": event.asr_engine,
         }
     if isinstance(event, UtteranceRejectedEvent):
-        return {
+        payload = {
             "type": "utterance.rejected",
             "utterance_id": event.utterance_id,
         }
+        if event.reason:
+            payload["reason"] = event.reason
+        return payload
     if isinstance(event, AssistantDeltaEvent):
         return {
             "type": "assistant.delta",

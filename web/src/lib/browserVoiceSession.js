@@ -368,7 +368,15 @@ export class BrowserVoiceSession {
       this.latency.noteTurn(message);
       logFinalVoiceText(this.log, "叙华", message);
     } else if (accepted && message?.type === "utterance.rejected") {
-      this.latency.finish("rejected");
+      this.latency.finish("rejected", { reason: message.reason });
+      if (String(message.reason || "").startsWith("voice_asr_")) {
+        // Back off after provider admission rejects, rather than repeatedly
+        // opening new ASR streams on background noise.
+        this.input.blockFor(850);
+        this.log.warn?.(
+          `[叙华][voice] asr.admission_rejected reason=${message.reason} retry_after=850ms`,
+        );
+      }
     }
     return accepted;
   }

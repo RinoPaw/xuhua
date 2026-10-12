@@ -2,7 +2,7 @@ import { browserFetch } from "./browserFetch.js";
 import { requestTtsSource, resolveSpeechLocale } from "./voiceProtocol.js";
 
 const FIXED_CLIPS = new Map([
-  ["zh-CN\u0000我在。", "/assets/audio/ack-wozai-zh-cn.mp3"],
+  ["zh-CN\u0000我在。", "/assets/audio/ack-wozai-x4-yezi.mp3"],
 ]);
 
 function clipKey(text, locale) {

@@ -70,7 +70,7 @@ test("the fixed acknowledgement loads once without requesting a TTS ticket", asy
   const second = cache.prewarm({ text: "我在。", locale: "zh-CN" });
   assert.equal(await first, "blob:fixed-ack");
   assert.equal(await second, "blob:fixed-ack");
-  assert.deepEqual(calls, [["/assets/audio/ack-wozai-zh-cn.mp3", "GET"]]);
+  assert.deepEqual(calls, [["/assets/audio/ack-wozai-x4-yezi.mp3", "GET"]]);
 });
 
 test("a missing fixed acknowledgement allows the normal TTS path", async () => {

@@ -9,7 +9,7 @@
 - 连续会话：服务端维护 session / turn，并支持取消当前回答。
 - 实时语音：人物页休眠时通过本地 Sherpa-ONNX 检测唤醒词“叙华”，唤醒后再建立远端语音连接；浏览器 VAD 采集 PCM，经讯飞流式 ASR 转写后进入同一回答链路。
 - 中英语音识别：当前只使用讯飞“中英识别大模型”一条 ASR 链路，配置为 `zh_cn` / `mandarin` / `slm`。
-- Edge TTS：浏览器先向 `/api/tts` 换取短期、客户端绑定的 ticket；首播请求使用 `/api/tts/{token}?stream=1` 在收到第一块 MP3 后开始渐进传输，重试和旧客户端仍使用完整缓冲。支持中断与有界重试，不使用浏览器 `speechSynthesis` 降级。
+- 讯飞官方在线语音合成（流式版）：浏览器先向 `/api/tts` 换取短期、客户端绑定的 ticket；首播请求使用 `/api/tts/{token}?stream=1` 在收到第一块 MP3 后开始渐进传输，重试和旧客户端仍使用完整缓冲。支持中断与有界重试，不使用浏览器 `speechSynthesis` 降级；需要在讯飞控制台单独开通在线语音合成服务与所用音色。
 - 数字人界面：React / Vite Web 客户端，由 FastAPI 同源提供构建产物。
 
 ## 仓库结构
@@ -107,13 +107,13 @@ Copy-Item .env.example .env
 | `TTS_MAX_CONCURRENCY` | `12` | 单实例同时进行的 TTS 合成上限 |
 | `TTS_MAX_PER_MINUTE` | `240` | 单实例每分钟允许启动的 TTS 合成上限 |
 | `TTS_MAX_PER_CLIENT_PER_MINUTE` | `80` | 单客户端每分钟允许启动的 TTS 合成上限 |
-| `VOICE_MAX_CONCURRENCY` | `4` | 单实例同时保持的实时语音连接上限 |
+| `XF_TTS_APP_ID` / `XF_TTS_API_KEY` / `XF_TTS_API_SECRET` | 可留空并复用 ASR 的讯飞凭据 | 讯飞在线语音合成可能需要单独开通权限；凭据必须对应已开通 TTS 的应用 |\n| `XF_TTS_VOICE_ZH` | `xiaoyan` | 默认普通话音色；可换为控制台已授权的 `vcn` |\n| `VOICE_MAX_CONCURRENCY` | `4` | 单实例同时保持的实时语音连接上限 |
 | `VOICE_MAX_PER_MINUTE` | `30` | 单实例每分钟允许建立的实时语音连接上限 |
 | `VOICE_MAX_PER_CLIENT_PER_MINUTE` | `8` | 单客户端每分钟允许建立的实时语音连接上限 |
 
 文字回答、TTS 与实时语音分别使用独立预算。HTTP 超出速率预算时返回 `429`，并发容量耗尽时返回 `503`；实时语音握手被拒绝时使用 WebSocket `1013`。这些预算按应用进程 / 实例计算；当前服务显式以单 worker 运行。
 
-讯飞三个凭据为空时，文字功能仍可使用，页面会把实时语音能力标记为不可用。`AI_API_KEY` 为空时，文字链路使用本地降级回答。
+讯飞三个凭据为空时，文字功能仍可使用，页面会把实时语音能力标记为不可用。语音合成服务需另行确认权限：即使讯飞 ASR 已成功，也不代表 TTS 已开通。若日志显示 `tts.provider.failed` 或讯飞供应商错误码，先确认该应用已开通 **在线语音合成（流式版）** 并有有效调用次数、所选发音人。`AI_API_KEY` 为空时，文字链路使用本地降级回答。
 
 实际 `.env` 不应提交到 Git。
 
@@ -150,7 +150,7 @@ npm run dev
 | POST | `/api/chat/{session_id}/turn/{turn_id}/cancel` | 中断指定轮次 |
 | WS | `/api/voice` | VAD、讯飞 ASR、连续对话与抢话 |
 | POST | `/api/tts` | 提交朗读文本并获取短期、客户端绑定的 TTS token |
-| GET | `/api/tts/{token}` | 使用 token 获取完整 Edge TTS MP3；加 `?stream=1` 渐进传输首播音频，带 `tts_retry` 的请求始终完整缓冲 |
+| GET | `/api/tts/{token}` | 使用 token 获取完整讯飞 TTS MP3；加 `?stream=1` 渐进传输首播音频，带 `tts_retry` 的请求始终完整缓冲 |
 
 实时语音路径：
 

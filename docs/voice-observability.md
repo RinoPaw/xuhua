@@ -85,3 +85,12 @@ Windows `tools/dev/start.bat` 会对本地运行的服务设置 `XUHUA_LOCAL_VOI
 本地日志中，讯飞多次将独立呼叫“叙华”转写为“姓华。”、“玉华。”或仅“华。”；此前这些结果进入普通 LLM 提问。现在仅对**整个独立中文语音片段**执行受限的唤醒词恢复：这些精确写法在 ASR 最终结果里规范为“叙华”，回复固定的“我在。”，不调用 LLM。原始识别仍保留在 `user.transcript.raw_text` 与本地诊断日志中，修复原因标为 `isolated-voice-address-recovery`。用户打字提问、带其他内容的完整句子、“我姓华”、谈论“玉华”人名等均不触发这一恢复；孤立“华”会有歧义，应结合后续日志评估误触发率。
 
 这是对**远端讯飞识别结果**的补偿；离线 Sherpa-ONNX 唤醒模型在 WebSocket 尚未建立时不使用这些规则，不能据此宣称离线唤醒率也提高。
+
+
+## TTS 供应商（讯飞在线语音合成流式版）
+
+- 使用讯飞官方 WebSocket `wss://tts-api.xfyun.cn/v2/tts`，服务端签名握手，`aue=lame` 与 `sfl=1` 返回可逐块传输的 MP3。浏览器不直接接触讯飞 API 凭据，沿用短期 ticket 与首块预取保护。
+- 可在 `.env` 设置 `XF_TTS_APP_ID`、`XF_TTS_API_KEY`、`XF_TTS_API_SECRET`。留空时复用 `XF_APP_ID`、`XF_API_KEY`、`XF_API_SECRET`，但讯飞语音识别与合成服务权限是分别管理的。
+- 默认普通话发音人 `XF_TTS_VOICE_ZH=xiaoyan`，其他语种和粤语使用各自的 `XF_TTS_VOICE_*` 配置。只有在讯飞控制台获得对应的 `vcn` 使用权限时才应填写该值，不能使用原有 Edge Neural 音色 ID。
+- 供应商未开通、发音人无权限或鉴权失败会返回 HTTP 502，并记录 `tts.provider.failed`，具体应根据讯飞平台的服务授权与错误码排查。自动化测试模拟协议与失败路径，不包含真实供应商连通性验证。
+- 由于句段拆分，完整一轮回答最多生成两次独立 TTS 请求；多语种质量取决于发音人是否支持。固定“我在。”提示音仍可从浏览器本地预置素材播放，不依赖在线 TTS。

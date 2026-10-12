@@ -114,7 +114,7 @@ def test_first_audio_is_available_before_provider_finishes(monkeypatch) -> None:
 @pytest.mark.parametrize("bad", [
     json.dumps({"code": 11200, "message": "key=SECRET_DO_NOT_LOG", "data": None}),
     "invalid-json",
-    packet(b""),
+    packet(b"", status=2),
 ])
 def test_bad_provider_response_fails_without_exposing_secrets(monkeypatch, bad) -> None:
     configured(monkeypatch)

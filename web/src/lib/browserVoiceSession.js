@@ -15,6 +15,7 @@ import {
   VoiceTurnTracker,
 } from "./voiceProtocol.js";
 import { VoiceTranscriptPresenter } from "./voiceTranscriptPresenter.js";
+import { reportLocalVoiceDiagnostic } from "./voiceDiagnosticsClient.js";
 
 const ACKNOWLEDGEMENT_TEXT = "我在。";
 
@@ -86,12 +87,19 @@ export class BrowserVoiceSession {
     this.transcript = transcript || new VoiceTranscriptPresenter({ getCallbacks });
     this.microphoneEnabled = false;
     this.pendingInterrupt = null;
+    this.diagnosticConnectionId = "";
     this.output = createOutput({
       websocketPath,
       getRecognitionContext,
       onEvent: (event) => this.handleOutputEvent(event),
       onPlayingChange: (playing) => this.handlePlayingChange(playing),
       onTerminal: (result) => this.handleOutputTerminal(result),
+    });
+  }
+
+  recordDiagnostic(event, details = {}) {
+    return reportLocalVoiceDiagnostic(event, {
+      connection: this.diagnosticConnectionId || "-", ...details,
     });
   }
 
@@ -123,13 +131,21 @@ export class BrowserVoiceSession {
       if (event.segment === 0) this.latency.markFirstAudio();
       this.log.info?.(`[叙华][trace=${trace}] tts.first_audio_chunk segment=${event.segment} +${elapsed.toFixed(3)}s`);
     } else if (event?.type === "playing" || event?.type === "fallback.playing") {
-      if (event.segment === 0) this.latency.markPlaying(trace);
+      if (event.segment === 0) {
+        const metrics = this.latency.markPlaying(trace);
+        this.recordDiagnostic("voice.tts.playing", {
+          trace, segment: event.segment, elapsedMs: metrics?.totalMs || elapsed * 1000,
+        });
+      }
       this.log.info?.(`[叙华][trace=${trace}] tts.${event.type} segment=${event.segment} +${elapsed.toFixed(3)}s`);
       this.dispatchMany([
         { type: "turn.idle" },
         { type: "output.speaking" },
       ]);
     } else if (event?.type === "segment.complete") {
+      this.recordDiagnostic("voice.tts.segment_complete", {
+        trace, segment: event.segment, elapsedMs: elapsed * 1000,
+      });
       this.log.info?.(`[叙华][trace=${trace}] tts.segment.complete segment=${event.segment} +${elapsed.toFixed(3)}s`);
     } else if (event?.type === "request.failed") {
       // A terminal failure is also recorded in the per-utterance summary;
@@ -153,6 +169,9 @@ export class BrowserVoiceSession {
 
   handleOutputTerminal({ failed, reason } = {}) {
     this.latency.finish(failed ? "failed" : "completed", { reason: failed ? reason : "" });
+    this.recordDiagnostic(failed ? "voice.tts.failed" : "voice.tts.complete", {
+      trace: this.output?.traceId || "-",
+    });
     this.input.blockFor(450);
     this.dispatchMany([
       { type: "turn.idle" },
@@ -325,6 +344,7 @@ export class BrowserVoiceSession {
   }
 
   routeServerEvent(message) {
+    if (message?.connection_id) this.diagnosticConnectionId = String(message.connection_id);
     const recognition = compactRecognitionContext(this.getRecognitionContext());
     const machine = this.getMachine();
     const accepted = routeVoiceServerEvent(message, {
@@ -484,6 +504,7 @@ export class BrowserVoiceSession {
         onMessage: (message) => this.routeServerEvent(message),
         onSamples: (samples, inputRate) => this.processAudio(samples, inputRate),
         onClose: (event) => {
+          this.recordDiagnostic("wake.remote.failed");
           const statusBeforeClose = deriveVoiceStatus(this.getMachine());
           this.cleanup("disconnected");
           if (event.code !== 1000 && statusBeforeClose !== REALTIME_VOICE_STATUS.IDLE) {

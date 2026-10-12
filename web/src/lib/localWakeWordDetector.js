@@ -106,12 +106,17 @@ export class LocalWakeWordDetector {
     createResampler = (inputRate) => new StatefulPcmResampler(inputRate, TARGET_SAMPLE_RATE),
     modelBase = SHERPA_MODEL_BASE,
     log = console,
+    onDiagnostic = () => {},
   } = {}) {
     this.runtimeLoader = runtimeLoader;
     this.media = media;
     this.createResampler = createResampler;
     this.modelBase = modelBase.replace(/\/+$/u, "");
     this.log = log;
+    this.onDiagnostic = onDiagnostic;
+    this.voiceMs = 0;
+    this.silenceMs = 0;
+    this.peakLevel = 0;
     this.spotter = null;
     this.stream = null;
     this.resampler = null;
@@ -183,6 +188,31 @@ export class LocalWakeWordDetector {
     return this.initializing;
   }
 
+  observeUnmatchedVoice(waveform) {
+    // Sustained acoustic energy is only a potential missed wake, not proof
+    // that any specific word was spoken. No samples leave the browser.
+    if (!waveform.length) return;
+    let energy = 0;
+    for (const sample of waveform) energy += sample * sample;
+    const rms = Math.sqrt(energy / waveform.length);
+    const durationMs = waveform.length * 1000 / TARGET_SAMPLE_RATE;
+    if (rms >= 0.018) {
+      this.voiceMs += durationMs;
+      this.silenceMs = 0;
+      this.peakLevel = Math.max(this.peakLevel, rms);
+    } else if (this.voiceMs > 0) {
+      this.silenceMs += durationMs;
+      if (this.silenceMs >= 450) {
+        if (this.voiceMs >= 220) this.onDiagnostic?.("wake.local.speech_unmatched", {
+          elapsedMs: this.voiceMs, level: this.peakLevel,
+        });
+        this.voiceMs = 0;
+        this.silenceMs = 0;
+        this.peakLevel = 0;
+      }
+    }
+  }
+
   process(samples, inputRate) {
     if (!this.active || this.triggered || !this.spotter || !this.stream) return false;
     const rate = Number(inputRate);
@@ -194,6 +224,7 @@ export class LocalWakeWordDetector {
     const pcm = this.resampler.process(samples);
     if (!pcm.byteLength) return false;
     const waveform = pcm16ToFloat32(pcm);
+    this.observeUnmatchedVoice(waveform);
     this.stream.acceptWaveform(TARGET_SAMPLE_RATE, waveform);
     while (this.spotter.isReady(this.stream)) {
       this.spotter.decode(this.stream);
@@ -203,6 +234,10 @@ export class LocalWakeWordDetector {
       this.spotter.reset(this.stream);
       if (!keyword.includes(WAKE_WORD)) continue;
       this.triggered = true;
+      this.voiceMs = 0;
+      this.silenceMs = 0;
+      this.peakLevel = 0;
+      this.onDiagnostic?.("wake.local.detected");
       this.log.info?.(`[叙华][wake] detected: ${keyword}`);
       const callback = this.onWake;
       const pending = callback?.(keyword);
@@ -230,6 +265,9 @@ export class LocalWakeWordDetector {
       const initialized = await this.initialize();
       if (!initialized || this.disposed || generation !== this.startGeneration) return false;
       this.triggered = false;
+      this.voiceMs = 0;
+      this.silenceMs = 0;
+      this.peakLevel = 0;
       this.resampler = null;
       this.inputRate = 0;
       try {
@@ -238,6 +276,7 @@ export class LocalWakeWordDetector {
         await this.media.attachProcessor((samples, inputRate) => this.process(samples, inputRate));
         if (generation !== this.startGeneration) return false;
         this.active = true;
+        this.onDiagnostic?.("wake.local.listening");
         this.log.info?.("[叙华][wake] listening locally");
         return true;
       } catch (error) {
@@ -257,6 +296,10 @@ export class LocalWakeWordDetector {
     const wasActive = this.active;
     this.startGeneration += 1;
     this.active = false;
+    if (wasActive) this.onDiagnostic?.("wake.local.stopped");
+    this.voiceMs = 0;
+    this.silenceMs = 0;
+    this.peakLevel = 0;
     this.triggered = false;
     this.onWake = null;
     this.resampler?.reset?.();

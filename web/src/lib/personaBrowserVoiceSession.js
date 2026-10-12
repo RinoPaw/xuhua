@@ -8,6 +8,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     super(options);
     this.gate = gate || new PersonaVoiceGate({ log: this.log });
     this.wakeDetector = wakeDetector || new LocalWakeWordDetector({ log: this.log });
+    this.wakeDetector.onDiagnostic = (event, details) => this.recordDiagnostic(event, details);
     this.autoWakeEnabled = false;
     this.wakeListening = false;
     this.wakeStarting = false;
@@ -95,12 +96,14 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
         return false;
       }
       if (!started) {
+        this.recordDiagnostic("wake.remote.failed");
         this.gate.reset();
         return this.armWake();
       }
       // The provider is only contacted once the local wake phrase is heard.
       // This acknowledgement never starts an LLM turn on the server.
       if (!this.send({ type: "wake" })) return this.handleTransportFailure();
+      this.recordDiagnostic("wake.remote.connected");
       return true;
     } finally {
       this.waking = false;

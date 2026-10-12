@@ -935,7 +935,8 @@ class VoiceSessionRuntime:
             # That packet belongs to the prior answer, not the newly started
             # one. Acknowledge it without cancelling the new turn.
             if (
-                self._answer_source_utterance_id == self.utterance_sequence
+                self._answer_source_utterance_id > 0
+                and self._answer_source_utterance_id == self.utterance_sequence
                 and self.lifecycle.answer_task is not None
                 and not self.lifecycle.answer_task.done()
             ):

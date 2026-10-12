@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 import logging
+import re
 import time
 import uuid
 from typing import Any
@@ -63,9 +64,17 @@ def contains_spoken_text(value: object) -> bool:
 
 
 def is_assistant_address_only(value: object) -> bool:
-    """Return whether one final transcript only calls the assistant by name."""
+    """Handle short direct calls, repeated names and common spoken particles.
 
-    return str(value or "").strip(_ASSISTANT_ADDRESS_TRIM) == ASSISTANT_NAME
+    Do not consume real questions such as '叙华，请介绍汴绣'.
+    """
+    compact = str(value or "").strip().translate(
+        str.maketrans("", "", _ASSISTANT_ADDRESS_TRIM)
+    )
+    return re.fullmatch(
+        r"(?:叙华){1,3}(?:啊|呀|呢|哎|诶|在吗|你在吗)?",
+        compact,
+    ) is not None
 
 
 def build_voice_hotwords(
@@ -192,6 +201,9 @@ class VoiceSessionRuntime:
         self.batch = VoiceBatchState()
         self.lifecycle = VoiceConnectionScope(connection_id=connection_id)
         self.utterance_sequence = 0
+        # Source utterance of the current assistant turn: late barge_in for
+        # that same finished utterance must not cancel its new answer.
+        self._answer_source_utterance_id = 0
         # PCM belonging to a capacity-rejected start must not leak into the
         # preceding ASR stream. The flag is cleared by its matching end/cancel.
         self._discarding_utterance = False
@@ -440,8 +452,10 @@ class VoiceSessionRuntime:
         locale_hint: str = "",
         *,
         requested_turn_id: str = "",
+        source_utterance_id: int = 0,
     ) -> None:
         await self.stop_answer(reason)
+        self._answer_source_utterance_id = 0
         try:
             # HTTP /api/chat and voice turns share the same chat capacity and
             # rolling rate buckets. The long-lived voice socket is only a
@@ -465,6 +479,7 @@ class VoiceSessionRuntime:
                 name=f"voice-answer-{turn_id}",
                 lease=lease,
             )
+            self._answer_source_utterance_id = source_utterance_id
         except BaseException:
             await lease.release()
             raise
@@ -580,6 +595,7 @@ class VoiceSessionRuntime:
                 canonical_text,
                 "new_utterance",
                 resolved_locale,
+                source_utterance_id=committed_id,
             )
 
     async def finish_utterance(
@@ -913,6 +929,28 @@ class VoiceSessionRuntime:
     async def handle_barge_in(self, command: BargeInCommand) -> None:
         async with self.batch_lock:
             if self._discarding_utterance:
+                return
+            # ASR may finish and publish a new answer before the browser's
+            # speculative barge-in packet for the *same* utterance arrives.
+            # That packet belongs to the prior answer, not the newly started
+            # one. Acknowledge it without cancelling the new turn.
+            if (
+                self._answer_source_utterance_id == self.utterance_sequence
+                and self.lifecycle.answer_task is not None
+                and not self.lifecycle.answer_task.done()
+            ):
+                turn_id = self.lifecycle.active_turn_id or ""
+                LOGGER.info(
+                    "voice.barge_in.stale connection=%s utterance=%s turn=%s",
+                    self.connection_id, self.utterance_sequence, turn_id or "-",
+                )
+                await self.send(InterruptAckEvent(
+                    request_id=command.request_id,
+                    reason="barge_in",
+                    turn_id=turn_id,
+                    utterance_id=self.utterance_sequence,
+                    cancelled=False,
+                ))
                 return
             LOGGER.info(
                 "voice.barge_in connection=%s utterance=%s",

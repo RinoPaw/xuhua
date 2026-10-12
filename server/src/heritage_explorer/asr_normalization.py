@@ -59,7 +59,13 @@ class _Match:
 
 _CHINESE_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]+")
 _ASSISTANT_NAME = "叙华"
-_ASSISTANT_ASR_ALIASES = ("徐华",)
+# ASR commonly emits names with the same or adjacent pronunciation. Changes
+# remain constrained to direct-address positions; factual mentions of people
+# with these names are preserved.
+_ASSISTANT_ASR_ALIASES = (
+    "徐华", "许华", "续华", "旭华", "序华", "叙花", "絮花", "续话",
+)
+_ASSISTANT_VOCATIVES = ("啊", "呀", "呢", "哎", "诶", "在吗", "你在吗")
 _ASSISTANT_ADDRESS_FOLLOW = (
     "你",
     "请",
@@ -112,7 +118,10 @@ def _assistant_reference_normalization(text: str) -> tuple[str, tuple[Normalized
             left_boundary = start == 0 or (before and before[-1] in _ASSISTANT_BOUNDARY)
             greeted = any(before.endswith(prefix) for prefix in _ASSISTANT_ADDRESS_LEAD)
             right_boundary = not after or after[0] in _ASSISTANT_BOUNDARY
-            addressed = any(after.startswith(prefix) for prefix in _ASSISTANT_ADDRESS_FOLLOW)
+            vocative = after.strip(" \t，,。！!？?") in _ASSISTANT_VOCATIVES
+            addressed = vocative or any(
+                after.startswith(prefix) for prefix in _ASSISTANT_ADDRESS_FOLLOW
+            )
             if (left_boundary and (right_boundary or addressed)) or (
                 greeted and (right_boundary or addressed)
             ):

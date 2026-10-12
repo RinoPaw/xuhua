@@ -107,3 +107,14 @@ def test_does_not_rewrite_real_person_named_xuhua() -> None:
 
     assert result.canonical_text == result.raw_text
     assert result.spans == ()
+
+
+def test_common_asr_name_homophones_are_corrected_only_as_direct_address() -> None:
+    for raw in ("许华", "续华呀", "叙花。", "絮花，你在吗", "序华，讲讲汴绣"):
+        result = normalize_asr_final(raw, kb=_kb())
+        assert result.canonical_text.startswith("叙华"), raw
+        assert result.spans[0].reason == "assistant-name-asr-alias"
+    for raw in ("传承人许华的作品", "听说旭华是传承人", "续话是什么意思"):
+        result = normalize_asr_final(raw, kb=_kb())
+        assert result.canonical_text == raw, raw
+        assert result.spans == ()

@@ -75,3 +75,19 @@ def test_pure_assistant_address_is_distinct_from_a_real_question() -> None:
     assert is_assistant_address_only(" 叙华！ ")
     assert not is_assistant_address_only("叙华，讲讲汴绣")
     assert not is_assistant_address_only("循环")
+
+
+def test_repeated_name_and_spoken_particles_are_still_pure_address() -> None:
+    for spoken in (
+        "叙华呀", "叙华啊", "叙华你在吗？",
+        "叙华，叙华。", "叙华叙华！", "叙华，叙华，叙华",
+    ):
+        assert is_assistant_address_only(spoken), spoken
+
+
+def test_address_detection_does_not_consume_question_or_normal_words() -> None:
+    for spoken in (
+        "叙华，请介绍汴绣", "叙华在吗，给我讲讲", "传承人叙华",
+        "你叫叙华吗", "叙华叙华讲一下汴绣", "虚化",
+    ):
+        assert not is_assistant_address_only(spoken), spoken

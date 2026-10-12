@@ -472,7 +472,7 @@ def test_tts_maps_resolved_locales_to_allowlisted_voices(monkeypatch) -> None:
         async def stream(self):
             yield {"type": "audio", "data": b"audio"}
 
-    monkeypatch.setattr(api_module.edge_tts, "Communicate", FakeCommunicate)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", FakeCommunicate)
     client, _kb, _search, _assistant = build_client()
 
     def synthesize(text: str, locale: str) -> httpx.Response:

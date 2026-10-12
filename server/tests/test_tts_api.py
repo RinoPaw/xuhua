@@ -484,3 +484,57 @@ def test_tts_empty_provider_response_is_logged_as_failure(monkeypatch, caplog) -
     )
     assert not any("tts.complete" in record.getMessage() for record in caplog.records)
     assert not any("do-not-log-content" in record.getMessage() for record in caplog.records)
+
+
+def test_tts_handshake_status_is_logged_without_exposing_provider_url(monkeypatch, caplog) -> None:
+    class WSServerHandshakeError(RuntimeError):
+        status = 403
+
+    class FailedHandshake:
+        def __init__(self, _text: str, **_kwargs: str) -> None:
+            pass
+
+        async def stream(self):
+            raise WSServerHandshakeError(
+                "403 from wss://speech.example.invalid?token=SECRET_HANDSHAKE"
+            )
+            yield {"type": "audio", "data": b"unreachable"}
+
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", FailedHandshake)
+    app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
+    prepare, synthesize = _direct_tts_routes(app)
+
+    async def scenario() -> None:
+        scope = _tts_scope()
+        ticket = await prepare(
+            TtsRequest(text="问候内容", trace_id="trace-handshake"),
+            Request(scope),
+            Response(),
+        )
+        with pytest.raises(HTTPException) as failure:
+            await synthesize(Request(scope), ticket["token"], progressive=True)
+        assert failure.value.status_code == 502
+
+    import logging
+    with caplog.at_level(logging.INFO, logger="heritage_explorer.api"):
+        asyncio.run(scenario())
+
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "reason=WSServerHandshakeError status=403" in messages
+    assert "tts.finish outcome=failed" in messages
+    assert "trace-handshake" in messages
+    assert "SECRET_HANDSHAKE" not in messages
+    assert "speech.example.invalid" not in messages
+    assert "问候内容" not in messages
+
+
+def test_provider_http_status_rejects_non_numeric_and_out_of_range_values() -> None:
+    class FakeError(Exception):
+        def __init__(self, status) -> None:
+            self.status = status
+
+    assert api_module._provider_http_status(FakeError(403)) == "403"
+    assert api_module._provider_http_status(FakeError(429)) == "429"
+    assert api_module._provider_http_status(FakeError("403?token=SECRET")) == "-"
+    assert api_module._provider_http_status(FakeError(0)) == "-"
+    assert api_module._provider_http_status(FakeError(999)) == "-"

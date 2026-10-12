@@ -22,7 +22,7 @@ def diagnostics_enabled() -> bool:
     return os.getenv("XUHUA_LOCAL_VOICE_DIAGNOSTICS", "").lower() in _TRUE
 
 
-def safe_text(value: object, limit: int = 400) -> str:
+def safe_text(value: object, limit: int = 6000) -> str:
     """Use repr to keep each utterance on one log line."""
     return repr(str(value or "")[:limit])
 

@@ -172,3 +172,23 @@ test("disposing during a slow model load cannot allocate a late WASM spotter", a
   assert.equal(modelFreed, 1);
   assert.equal(await detector.start(() => {}), false);
 });
+
+
+test("local KWS reports sustained unmatched speech without recording PCM", () => {
+  const events = [];
+  const detector = new LocalWakeWordDetector({
+    log: { info() {} },
+    onDiagnostic: (event, details) => events.push([event, details]),
+  });
+  const speech = new Float32Array(1600).fill(0.10);
+  const silence = new Float32Array(1600);
+  for (let i = 0; i < 4; i += 1) detector.observeUnmatchedVoice(speech);
+  for (let i = 0; i < 5; i += 1) detector.observeUnmatchedVoice(silence);
+  assert.equal(events.length, 1);
+  assert.equal(events[0][0], "wake.local.speech_unmatched");
+  assert.equal(events[0][1].elapsedMs, 400);
+  assert.ok(events[0][1].level >= 0.09);
+  // No second report for the same burst.
+  detector.observeUnmatchedVoice(silence);
+  assert.equal(events.length, 1);
+});

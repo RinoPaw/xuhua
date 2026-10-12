@@ -15,7 +15,7 @@ import edge_tts
 from fastapi import FastAPI, HTTPException, Path as ApiPath, Query, Request, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import __version__
 from .admission import (
@@ -79,6 +79,8 @@ class ChatRequest(BaseModel):
 
 
 class BrowserVoiceDiagnostic(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     # No arbitrary user text, URLs, exceptions, audio samples or credentials.
     event: Literal[
         "wake.local.listening", "wake.local.detected", "wake.local.speech_unmatched",

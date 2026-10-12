@@ -82,3 +82,59 @@ def test_access_redaction_is_not_affected_by_preexisting_logging_handlers(monkey
     with TestClient(api.create_app()) as client:
         assert client.get("/healthz").status_code == 200
     assert calls == ["configured", "redacted"]
+
+
+def test_local_diagnostics_record_only_allowlisted_events(monkeypatch, caplog) -> None:
+    import heritage_explorer.voice_diagnostics as diagnostics
+    import pytest
+    from heritage_explorer.api import create_app
+
+    monkeypatch.setenv("XUHUA_LOCAL_VOICE_DIAGNOSTICS", "1")
+    with TestClient(create_app(), client=("127.0.0.1", 40321)) as client:
+        with caplog.at_level(logging.INFO, logger="heritage_explorer.voice_diagnostics"):
+            result = client.post("/api/voice/diagnostics", json={
+                "event": "wake.local.speech_unmatched",
+                "connection": "-", "trace": "-", "level": 0.085,
+                "elapsed_ms": 560,
+            })
+            assert result.status_code == 204
+            payload = "\n".join(record.getMessage() for record in caplog.records)
+            assert "voice.browser event=wake.local.speech_unmatched" in payload
+            assert "elapsed_ms=560.0 level=0.0850" in payload
+
+        for malicious in (
+            {"event": "arbitrary", "connection": "-"},
+            {"event": "wake.local.detected", "connection": "-", "text": "SECRET"},
+            {"event": "wake.local.detected", "connection": "token=SECRET"},
+            {"event": "wake.local.detected", "level": 1e309},
+        ):
+            assert client.post("/api/voice/diagnostics", json=malicious).status_code == 422
+        assert client.post("/api/voice/diagnostics", json={
+            "event": "wake.local.detected",
+        }, headers={"Origin": "http://malicious.example"}).status_code == 403
+
+    monkeypatch.delenv("XUHUA_LOCAL_VOICE_DIAGNOSTICS")
+    with TestClient(create_app(), client=("127.0.0.1", 40322)) as client:
+        assert client.post("/api/voice/diagnostics", json={
+            "event": "wake.local.detected",
+        }).status_code == 404
+    assert diagnostics.log_browser_diagnostic(event="wake.local.detected") is False
+
+
+def test_local_diagnostic_transcript_is_opt_in_and_single_line(monkeypatch, caplog) -> None:
+    from heritage_explorer.voice_diagnostics import log_voice_text
+
+    monkeypatch.delenv("XUHUA_LOCAL_VOICE_DIAGNOSTICS", raising=False)
+    with caplog.at_level(logging.INFO, logger="heritage_explorer.voice_diagnostics"):
+        log_voice_text("asr.segment", connection="conn1", utterance="1", text="PRIVATE")
+    assert not any("PRIVATE" in item.getMessage() for item in caplog.records)
+
+    monkeypatch.setenv("XUHUA_LOCAL_VOICE_DIAGNOSTICS", "1")
+    with caplog.at_level(logging.INFO, logger="heritage_explorer.voice_diagnostics"):
+        log_voice_text("asr.batch.canonical", connection="conn1", utterance="2",
+                       text="叙华\n你在吗")
+    lines = [item.getMessage() for item in caplog.records]
+    assert len(lines) == 1
+    assert "asr.batch.canonical" in lines[0]
+    assert "叙华\\n你在吗" in lines[0]
+    assert "\n" not in lines[0]

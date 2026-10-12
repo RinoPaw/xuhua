@@ -5,6 +5,9 @@ const COMMON_ABBREVIATION = /(?:^|\s)(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc)\.$/iu
 const INITIALISM = /(?:^|\s)(?:[a-z]\.){2,}$/iu;
 // Start synthesizing once a natural Chinese clause is long enough.
 const MIN_EARLY_CJK_CHARS = 8;
+// Do not send a two- or three-character standalone first sentence to Edge
+// while the rest of the answer is still arriving. Full answers remain valid.
+const MIN_EARLY_CJK_HARD_CHARS = 6;
 
 function isPeriodBoundary(text, index) {
   const previous = text[index - 1] || "";
@@ -42,6 +45,7 @@ function firstSpeakableSegment(text, locale) {
     const candidate = text.slice(0, end).trim();
     if (!candidate) continue;
     if (softBoundary && spokenLength(candidate) < MIN_EARLY_CJK_CHARS) continue;
+    if (allowSoftBoundary && hardBoundary && spokenLength(candidate) < MIN_EARLY_CJK_HARD_CHARS) continue;
     return { segment: candidate, remainder: text.slice(end) };
   }
   return { segment: null, remainder: text };
@@ -89,12 +93,16 @@ export class TtsTextPlan {
       }
     }
 
-    const split = splitCompletedSentences(this.buffer);
-    this.buffer = split.remainder;
-    if (split.sentences.length) {
-      const separator = isCjkLocale(this.locale) ? "" : " ";
-      const joined = split.sentences.join(separator);
-      this.remainder += this.remainder && separator ? `${separator}${joined}` : joined;
+    // Do not move short completed sentences into the remainder before
+    // the first segment has been committed: doing so would reorder speech.
+    if (this.firstCommitted) {
+      const split = splitCompletedSentences(this.buffer);
+      this.buffer = split.remainder;
+      if (split.sentences.length) {
+        const separator = isCjkLocale(this.locale) ? "" : " ";
+        const joined = split.sentences.join(separator);
+        this.remainder += this.remainder && separator ? `${separator}${joined}` : joined;
+      }
     }
     return first;
   }

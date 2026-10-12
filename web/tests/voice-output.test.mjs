@@ -216,3 +216,22 @@ test("voice output requests synthesis at an early Chinese comma before LLM compl
   controller.finish("这项技艺历史悠久，有着非常独特的传承背景。", "zh-CN");
   assert.equal(harness.calls.at(-1)[0], "complete");
 });
+
+
+test("short Chinese greetings are not submitted as isolated first TTS requests", () => {
+  const harness = makeSchedulerHarness();
+  const controller = new VoiceOutputController({
+    createScheduler: (options) => harness.createScheduler(options),
+    createTraceId: () => "short-first-phrase",
+  });
+  controller.begin("zh-CN");
+  controller.append("你好。", "zh-CN");
+  assert.equal(harness.calls.filter(([type]) => type === "enqueue").length, 0);
+  controller.append("今天来介绍豫剧。", "zh-CN");
+  assert.deepEqual(harness.calls.filter(([type]) => type === "enqueue").map(([, text]) => text), [
+    "你好。今天来介绍豫剧。",
+  ]);
+  controller.finish("", "zh-CN");
+  assert.equal(harness.calls.filter(([type]) => type === "enqueue").length, 1);
+  assert.equal(harness.calls.at(-1)[0], "complete");
+});

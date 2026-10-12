@@ -4,10 +4,10 @@ import { MIN_EARLY_CJK_CHARS, TtsTextPlan } from "../src/lib/ttsTextPlan.js";
 
 test("commits exactly one first sentence and one complete remainder", () => {
   const plan = new TtsTextPlan();
-  assert.equal(plan.append("第一句。第二"), "第一句。");
-  assert.equal(plan.append("句。第三句。尾"), null);
+  assert.equal(plan.append("第一句。第二"), null);
+  assert.equal(plan.append("句。第三句。尾"), "第一句。第二句。");
   assert.equal(plan.append("巴。"), null);
-  assert.equal(plan.finish(), "第二句。第三句。尾巴。");
+  assert.equal(plan.finish(), "第三句。尾巴。");
   assert.equal(plan.finish(), null);
   assert.equal(plan.append("迟到文本。"), null);
 });
@@ -74,4 +74,39 @@ test("short pauses still wait for a meaningful phrase rather than generating tin
   assert.equal(plan.append("朋友，"), null);
   assert.equal(plan.append("今天介绍木版年画。"), "你好，朋友，今天介绍木版年画。");
   assert.equal(plan.finish(), null);
+});
+
+
+test("three-character Chinese first sentence is combined with subsequent speech", () => {
+  const plan = new TtsTextPlan("zh-CN");
+  assert.equal(plan.append("你好。"), null);
+  assert.equal(plan.append("今天来介绍豫剧。"), "你好。今天来介绍豫剧。");
+  assert.equal(plan.finish(), null);
+});
+
+test("multiple tiny completed sentences keep original order and all punctuation", () => {
+  const plan = new TtsTextPlan("zh-CN");
+  const parts = ["是的。", "我在。", "可以。", "我们开始。", "后面还有一段。"];
+  const early = [];
+  for (const part of parts) {
+    const segment = plan.append(part);
+    if (segment) early.push(segment);
+  }
+  const final = plan.finish();
+  assert.equal([...early, final].filter(Boolean).join(""), parts.join(""));
+  assert.equal(early.length, 1);
+  assert.equal(early[0], "是的。我在。");
+});
+
+test("a single short reply still plays in full after the turn completes", () => {
+  const plan = new TtsTextPlan("zh-CN");
+  assert.equal(plan.append("好的。"), null);
+  assert.equal(plan.finish(), "好的。");
+  assert.equal(plan.finish(), null);
+});
+
+test("a normal six-character Chinese sentence still starts TTS early", () => {
+  const plan = new TtsTextPlan("zh-CN");
+  assert.equal(plan.append("这里非常美。后面继续"), "这里非常美。");
+  assert.equal(plan.finish(), "后面继续");
 });

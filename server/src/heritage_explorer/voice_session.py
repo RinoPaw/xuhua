@@ -36,6 +36,7 @@ from .voice_events import (
     VoiceStatusEvent,
 )
 from .voice_lifecycle import VoiceConnectionScope, close_resource
+from .voice_diagnostics import log_voice_text
 from .voice_protocol import (
     BargeInCommand,
     ContextCommand,
@@ -301,6 +302,10 @@ class VoiceSessionRuntime:
             self.connection_id,
             turn_id,
         )
+        log_voice_text(
+            "assistant.ack", connection=self.connection_id,
+            utterance=turn_id, text=ASSISTANT_ACKNOWLEDGEMENT,
+        )
         await self.send(
             AssistantDeltaEvent(
                 session_id=session_id,
@@ -385,6 +390,10 @@ class VoiceSessionRuntime:
                 elif event.type == "turn.completed":
                     outcome = "completed"
                     event_locale = str(event.payload.get("locale") or answer_locale)
+                    log_voice_text(
+                        "assistant.final", connection=self.connection_id,
+                        utterance=turn_id, text=event.payload.get("answer"),
+                    )
                     await self.send(
                         AssistantDoneEvent(
                             session_id=event.session_id,
@@ -521,6 +530,11 @@ class VoiceSessionRuntime:
                 if results[item_id].strip()
             )
             committed_id = ordered_ids[-1]
+            for item_id in ordered_ids:
+                log_voice_text(
+                    "asr.segment", connection=self.connection_id,
+                    utterance=str(item_id), text=results[item_id],
+                )
 
             if not raw_text:
                 # Even empty batches have ended; later ASR callbacks belong to
@@ -562,6 +576,14 @@ class VoiceSessionRuntime:
                 else NormalizedTranscript(raw_text, raw_text, ())
             )
             canonical_text = normalized.canonical_text
+            log_voice_text(
+                "asr.batch.raw", connection=self.connection_id,
+                utterance=str(committed_id), text=raw_text,
+            )
+            log_voice_text(
+                "asr.batch.canonical", connection=self.connection_id,
+                utterance=str(committed_id), text=canonical_text,
+            )
             normalizations = tuple(asdict(span) for span in normalized.spans)
             LOGGER.info(
                 "voice.asr.batch_complete connection=%s utterances=%s raw_chars=%s canonical_chars=%s replacements=%s",
@@ -589,8 +611,16 @@ class VoiceSessionRuntime:
                 )
             )
             if is_assistant_address_only(canonical_text):
+                LOGGER.info(
+                    "voice.address.classification connection=%s utterance=%s decision=ack",
+                    self.connection_id, committed_id,
+                )
                 await self.acknowledge_address(resolved_locale)
                 return
+            LOGGER.info(
+                "voice.address.classification connection=%s utterance=%s decision=question",
+                self.connection_id, committed_id,
+            )
             await self.start_answer(
                 canonical_text,
                 "new_utterance",
@@ -972,6 +1002,10 @@ class VoiceSessionRuntime:
     async def handle_text(self, command: TextCommand) -> None:
         if not command.text:
             return
+        log_voice_text(
+            "user.typed", connection=self.connection_id,
+            utterance=command.turn_id or "-", text=command.text,
+        )
         async with self.batch_lock:
             self.batch.clear()
             await self.lifecycle.cancel_finalizers()

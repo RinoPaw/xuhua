@@ -7,6 +7,9 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import logging
 import time
+import ipaddress
+import os
+from typing import Literal
 from typing import Any
 
 import edge_tts
@@ -50,6 +53,7 @@ from .logging_setup import configure_application_logging, redact_uvicorn_tts_acc
 from .request_limits import RequestBodyLimitMiddleware
 from .tts_tickets import TtsTicketCapacity, TtsTicketStore
 from .voice import XfyunStream
+from .voice_diagnostics import diagnostics_enabled, log_browser_diagnostic
 from .voice_transport import MAX_VOICE_FRAME_BYTES, register_voice_route
 
 
@@ -73,6 +77,21 @@ class ChatRequest(BaseModel):
     session_id: str | None = Field(default=None, max_length=MAX_SESSION_ID_CHARS)
     category: str = Field(default="", max_length=200)
     locale_hint: str = Field(default="", max_length=64)
+
+
+class BrowserVoiceDiagnostic(BaseModel):
+    # No arbitrary user text, URLs, exceptions, audio samples or credentials.
+    event: Literal[
+        "wake.local.listening", "wake.local.detected", "wake.local.speech_unmatched",
+        "wake.local.stopped", "wake.remote.connected", "wake.remote.failed",
+        "voice.tts.playing", "voice.tts.failed", "voice.tts.complete",
+        "voice.tts.segment_complete", "voice.outcome",
+    ]
+    connection: str = Field(default="-", max_length=72, pattern=r"^[A-Za-z0-9_-]{1,72}$")
+    trace: str = Field(default="-", max_length=72, pattern=r"^[A-Za-z0-9_-]{1,72}$")
+    segment: int = Field(default=-1, ge=-1, le=999)
+    elapsed_ms: float = Field(default=0, ge=0, le=300000, allow_inf_nan=False)
+    level: float = Field(default=0, ge=0, le=1, allow_inf_nan=False)
 
 
 class TtsRequest(BaseModel):
@@ -172,6 +191,30 @@ def create_app(
                 "voice_provider": "xfyun" if voice_available else "",
             },
         }
+
+    @app.post("/api/voice/diagnostics", status_code=204)
+    async def browser_voice_diagnostics(
+        request: Request, body: BrowserVoiceDiagnostic,
+    ) -> Response:
+        # This endpoint is used by the standalone local Windows launcher only.
+        # Public deployments must not become an untrusted log injection sink.
+        host = request.client.host if request.client else ""
+        try:
+            local = ipaddress.ip_address(host).is_loopback
+        except ValueError:
+            local = False
+        if not diagnostics_enabled() or not local:
+            raise HTTPException(status_code=404, detail="not_found")
+        # JSON requests from other sites require a CORS preflight. Additionally
+        # enforce the origin when present to prevent forged localhost logs.
+        origin = request.headers.get("origin")
+        if origin and origin.rstrip("/") != str(request.base_url).rstrip("/"):
+            raise HTTPException(status_code=403, detail="origin_forbidden")
+        log_browser_diagnostic(
+            event=body.event, connection=body.connection, trace=body.trace,
+            segment=body.segment, elapsed_ms=body.elapsed_ms, level=body.level,
+        )
+        return Response(status_code=204)
 
     @app.get("/api/categories")
     async def categories() -> list[dict[str, Any]]:

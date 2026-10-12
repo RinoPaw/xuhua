@@ -118,6 +118,11 @@ if /I "%~1"=="--check" (
     exit /b 0
 )
 
+rem Local diagnostics include recognized questions and generated replies.
+rem Never enable this in public deployments or share unredacted transcripts.
+set "XUHUA_LOCAL_VOICE_DIAGNOSTICS=1"
+echo [DIAGNOSTICS] Local voice dialogue and browser wake/playback events are logged.
+echo [DIAGNOSTICS] Logs contain spoken text; keep them private.
 echo Starting Xuhua at %LOCAL_URL%...
 echo Close this window to stop the service.
 start "" /b "%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%PROJECT_DIR%\tools\open_browser_when_ready.ps1" -Url "%LOCAL_URL%"

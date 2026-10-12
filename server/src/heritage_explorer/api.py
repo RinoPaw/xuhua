@@ -62,6 +62,12 @@ LOGGER = logging.getLogger(__name__)
 LOGGER.setLevel(logging.INFO)
 
 
+def _provider_http_status(error: Exception) -> str:
+    """Only expose a numeric handshake status, never an upstream URL or token."""
+    status = getattr(error, "status", None)
+    return str(status) if type(status) is int and 100 <= status <= 599 else "-"
+
+
 class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=MAX_CHAT_CHARS)
     session_id: str | None = Field(default=None, max_length=MAX_SESSION_ID_CHARS)
@@ -251,11 +257,12 @@ def create_app(
         except Exception as exc:
             await lease.release()
             LOGGER.warning(
-                "[trace=%s segment=%s] tts.provider.failed locale=%s reason=%s",
+                "[trace=%s segment=%s] tts.provider.failed locale=%s reason=%s status=%s",
                 ticket.trace_id or "-",
                 ticket.segment,
                 language_profile.code,
                 type(exc).__name__,
+                _provider_http_status(exc),
             )
             raise HTTPException(status_code=502, detail="tts_provider_unavailable") from None
 
@@ -327,11 +334,12 @@ def create_app(
             except Exception as exc:
                 await release_audio()
                 LOGGER.warning(
-                    "[trace=%s segment=%s] tts.provider.failed locale=%s reason=%s",
+                    "[trace=%s segment=%s] tts.provider.failed locale=%s reason=%s status=%s",
                     ticket.trace_id or "-",
                     ticket.segment,
                     language_profile.code,
                     type(exc).__name__,
+                    _provider_http_status(exc),
                 )
                 raise HTTPException(status_code=502, detail="tts_provider_unavailable") from None
             if not first:
@@ -347,11 +355,12 @@ def create_app(
                     raise
                 except Exception as exc:
                     LOGGER.warning(
-                        "[trace=%s segment=%s] tts.provider.interrupted locale=%s reason=%s",
+                        "[trace=%s segment=%s] tts.provider.interrupted locale=%s reason=%s status=%s",
                         ticket.trace_id or "-",
                         ticket.segment,
                         language_profile.code,
                         type(exc).__name__,
+                        _provider_http_status(exc),
                     )
                     # Never turn a partially spoken response into a successful
                     # short response. Abort the HTTP stream and let HTMLAudio
@@ -380,11 +389,12 @@ def create_app(
             raise
         except Exception as exc:
             LOGGER.warning(
-                "[trace=%s segment=%s] tts.provider.failed locale=%s reason=%s",
+                "[trace=%s segment=%s] tts.provider.failed locale=%s reason=%s status=%s",
                 ticket.trace_id or "-",
                 ticket.segment,
                 language_profile.code,
                 type(exc).__name__,
+                _provider_http_status(exc),
             )
             raise HTTPException(status_code=502, detail="tts_provider_unavailable") from None
         finally:

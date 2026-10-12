@@ -86,7 +86,6 @@ def test_access_redaction_is_not_affected_by_preexisting_logging_handlers(monkey
 
 def test_local_diagnostics_record_only_allowlisted_events(monkeypatch, caplog) -> None:
     import heritage_explorer.voice_diagnostics as diagnostics
-    import pytest
     from heritage_explorer.api import create_app
 
     monkeypatch.setenv("XUHUA_LOCAL_VOICE_DIAGNOSTICS", "1")

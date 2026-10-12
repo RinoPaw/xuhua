@@ -58,17 +58,19 @@ test("voice input holds short speech pauses but eventually finalizes", () => {
   assert.equal(state.utteranceActive, false);
 });
 
-test("busy agent marks onset as interruption without forcing user status", () => {
+test("busy agent requires sustained voice before marking interruption", () => {
   const state = createVoiceInputState();
-  const onset = processVoiceInputFrame(state, {
+  const frame = (now) => processVoiceInputFrame(state, {
     samples: constantSamples(960, 0.1),
     inputRate: 16000,
-    now: 1000,
+    now,
     transportReady: true,
     playbackActive: false,
     agentBusy: true,
   });
-
+  assert.equal(frame(1000).started, null);
+  assert.equal(frame(1060).started, null);
+  const onset = frame(1120);
   assert.equal(onset.started?.shouldInterrupt, true);
   assert.equal(onset.actions[0].payload.interrupt, true);
   assert.equal(onset.nextStatus, null);

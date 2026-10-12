@@ -14,12 +14,13 @@ from heritage_explorer.sessions import SessionStore
 from heritage_explorer.voice import VoiceProviderError
 from heritage_explorer.voice_events import (
     AssistantDoneEvent,
+    InterruptAckEvent,
     UserPartialEvent,
     UserTranscriptEvent,
     UtteranceRejectedEvent,
     VoiceErrorEvent,
 )
-from heritage_explorer.voice_protocol import TextCommand, UtteranceStartCommand
+from heritage_explorer.voice_protocol import BargeInCommand, TextCommand, UtteranceStartCommand
 from heritage_explorer.voice_session import VoiceSessionRuntime
 
 
@@ -357,6 +358,94 @@ def test_final_transcript_and_answer_do_not_wait_for_slow_asr_close() -> None:
         finally:
             if stream is not None:
                 stream.allow_close.set()
+            await runtime.close()
+        assert admission._active["asr"] == 0
+        assert admission._active["chat"] == 0
+
+    asyncio.run(scenario())
+
+
+class HoldingAssistant:
+    """Keep the newly admitted answer pending while its ASR interrupt arrives."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.allow = asyncio.Event()
+        self.cancelled = False
+
+    async def stream_turn(self, question: str, *, session_id=None, turn_id=None, **_kwargs):
+        self.started.set()
+        try:
+            await self.allow.wait()
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        yield AssistantEvent(
+            "turn.completed", session_id or "voice-session", turn_id or "turn-id",
+            0, payload={"answer": f"已回答{len(question)}字", "locale": "zh-CN"},
+        )
+
+
+def test_late_barge_in_from_committed_utterance_cannot_cancel_its_new_answer() -> None:
+    async def scenario() -> None:
+        runtime, streams, events, _assistant, completed, admission = make_runtime(
+            [("现在介绍汴绣", None, None)]
+        )
+        assistant = HoldingAssistant()
+        runtime.assistant = assistant  # type: ignore[assignment]
+        try:
+            await runtime.handle_utterance_start(UtteranceStartCommand(interrupt=True))
+            await runtime.handle_utterance_end()
+            await asyncio.wait_for(streams[0].finish_started.wait(), 2)
+            streams[0].finish_gate.set()
+            await asyncio.wait_for(assistant.started.wait(), 2)
+
+            # The browser's tentative barge-in belongs to the old turn. This
+            # packet can arrive *after* ASR published its own new answer.
+            await runtime.handle_barge_in(BargeInCommand("a" * 32))
+            acks = [e for e in events if isinstance(e, InterruptAckEvent)]
+            assert len(acks) == 1
+            assert acks[0].request_id == "a" * 32
+            assert acks[0].cancelled is False
+            assert assistant.cancelled is False
+
+            assistant.allow.set()
+            await asyncio.wait_for(completed.wait(), 2)
+            assert any(isinstance(e, AssistantDoneEvent) for e in events)
+        finally:
+            assistant.allow.set()
+            await runtime.close()
+        assert admission._active["asr"] == 0
+        assert admission._active["chat"] == 0
+
+    asyncio.run(scenario())
+
+
+def test_barge_in_from_a_later_utterance_still_cancels_an_older_answer() -> None:
+    async def scenario() -> None:
+        runtime, streams, events, _assistant, _completed, admission = make_runtime(
+            [("介绍汴绣", None, None), ("新的问题", None, None)]
+        )
+        assistant = HoldingAssistant()
+        runtime.assistant = assistant  # type: ignore[assignment]
+        try:
+            await runtime.handle_utterance_start(UtteranceStartCommand())
+            await runtime.handle_utterance_end()
+            await asyncio.wait_for(streams[0].finish_started.wait(), 2)
+            streams[0].finish_gate.set()
+            await asyncio.wait_for(assistant.started.wait(), 2)
+
+            # An actual later user utterance must still interrupt the older
+            # answer, even though an old self-originated packet must not.
+            await runtime.handle_utterance_start(UtteranceStartCommand(interrupt=True))
+            await runtime.handle_barge_in(BargeInCommand("b" * 32))
+            assert assistant.cancelled is True
+            acks = [e for e in events if isinstance(e, InterruptAckEvent)]
+            assert len(acks) == 1
+            assert acks[0].request_id == "b" * 32
+            assert acks[0].cancelled is True
+        finally:
+            assistant.allow.set()
             await runtime.close()
         assert admission._active["asr"] == 0
         assert admission._active["chat"] == 0

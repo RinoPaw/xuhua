@@ -11,12 +11,12 @@ export function wakeActivationCode(value) {
 export async function activateWakeDevice(value, { fetchImpl = globalThis.fetch, signal } = {}) {
   const code = wakeActivationCode(value);
   if (!code) throw new Error("wake_invalid_code");
-  const response = await fetchImpl("/api/wake/authorize", {
+  const response = await fetchImpl.call(globalThis, "/api/wake/authorize", {
     method: "POST", credentials: "same-origin", signal,
     headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }),
   });
   if (!response.ok) throw new Error(response.status === 429 ? "wake_rate_limited" : "wake_invalid_code");
-  const status = await fetchImpl("/api/wake/status", { credentials: "same-origin", cache: "no-store", signal });
+  const status = await fetchImpl.call(globalThis, "/api/wake/status", { credentials: "same-origin", cache: "no-store", signal });
   if (!status.ok) throw new Error("wake_activation_unavailable");
   if (!(await status.json()).authorized) throw new Error("wake_cookies_unavailable");
   return true;

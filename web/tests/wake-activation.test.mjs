@@ -15,7 +15,8 @@ test("activation accepts a pasted code, a complete link, or a fragment", () => {
 
 test("activation sends same-origin credentials and verifies that the browser retained the cookie", async () => {
   const requests = [];
-  await activateWakeDevice(link, { fetchImpl: async (url, options) => {
+  await activateWakeDevice(link, { fetchImpl: async function (url, options) {
+    assert.equal(this, globalThis);
     requests.push([url, options]);
     return { ok: true, json: async () => ({ authorized: true }) };
   } });

@@ -2,6 +2,7 @@ import { isVoiceAssistantPending, VOICE_INPUT_PHASE } from "../hooks/voiceState.
 import { BrowserVoiceSession } from "./browserVoiceSession.js";
 import { LocalWakeWordDetector } from "./localWakeWordDetector.js";
 import { PersonaVoiceGate } from "./personaVoiceGate.js";
+import { XfyunWakeWordDetector } from "./xfyunWakeWordDetector.js";
 
 export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
   constructor({ gate = null, wakeDetector = null, onWakeListeningChange = () => {}, onWakeStartingChange = () => {}, ...options } = {}) {
@@ -18,7 +19,67 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.armingWake = null;
     this.waking = false;
     this.disposed = false;
+    this.wakeRetries = 0;
     this.gate.setOnSleep?.(() => this.enterSleep());
+  }
+
+  configureWake(provider) {
+    if (provider !== "xfyun" || this.wakeDetector.remote) return;
+    this.wakeDetector.dispose();
+    this.wakeDetector = new XfyunWakeWordDetector({ onFailure: error => this.recoverWake(error) });
+    this.connection.media = this.wakeDetector.hub.createLease();
+  }
+
+  reportTiming(body) {
+    if (!this.wakeDetector.remote) return;
+    void globalThis.fetch?.("/api/wake/metrics", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body), keepalive: true,
+    })?.catch?.(() => {});
+  }
+
+  recoverWake(error) {
+    if (this.disposed || !this.autoWakeEnabled) return;
+    super.stop();
+    this.gate.reset();
+    this.setWakeListening(false);
+    if (["wake_busy", "wake_authorization_required"].includes(error.message) || this.wakeRetries >= 3) {
+      this.setWakeStarting(false);
+      this.reportInputError(error);
+      return;
+    }
+    this.setWakeStarting(true);
+    clearTimeout(this.wakeRetryTimer);
+    const generation = this.wakeGeneration;
+    this.wakeRetryTimer = setTimeout(() => {
+      this.wakeRetryTimer = null;
+      if (this.disposed || !this.autoWakeEnabled || generation !== this.wakeGeneration) return;
+      void this.armWake();
+    }, 1000 * 2 ** this.wakeRetries++);
+  }
+
+  handleOutputEvent(event) {
+    const acknowledgement = this.wakeAcknowledgementTrace && this.output.traceId === this.wakeAcknowledgementTrace;
+    if (!acknowledgement) return super.handleOutputEvent(event);
+    if (this.wakeTiming && ["playing", "fallback.playing"].includes(event?.type) && event.segment === 0) {
+      this.reportTiming({ kind: "wake", outcome: "completed", played: true,
+        elapsed_ms: performance.now() - this.wakeTiming.started, attempt: this.wakeTiming.attempt });
+      this.wakeTiming = null;
+    }
+  }
+
+  handlePlayingChange(playing) {
+    if (this.wakeAcknowledgementTrace && this.output.traceId === this.wakeAcknowledgementTrace) {
+      this.dispatchVoice({ type: playing ? "output.speaking" : "output.idle" });
+      return;
+    }
+    super.handlePlayingChange(playing);
+  }
+
+  recordLatency(result) {
+    if (!this.wakeDetector?.remote) return;
+    this.reportTiming({ kind: "conversation", outcome: result.outcome, played: result.played,
+      elapsed_ms: result.elapsedMs, attempt: result.attempt });
   }
 
   setWakeListening(value) {
@@ -44,9 +105,10 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.autoWakeEnabled = true;
     const generation = ++this.wakeGeneration;
     this.setWakeStarting(true);
+    if (this.wakeDetector.remote) this.prewarmAcknowledgement();
     const pending = (async () => {
       try {
-        const started = await this.wakeDetector.start((keyword) => this.handleLocalWake(keyword));
+        const started = await this.wakeDetector.start((keyword, details) => this.handleLocalWake(keyword, details));
         // A stale operation never stops a detector owned by a newer attempt.
         if (generation !== this.wakeGeneration) return false;
         if (!started || this.disposed || !this.autoWakeEnabled || !this.gate.sleeping) {
@@ -55,6 +117,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
           return false;
         }
         this.setWakeListening(true);
+        this.wakeRetries = 0;
         // The remote socket may have failed, but successfully restored local
         // wake capture is an operational idle state, not a fatal UI fault.
         this.clearError();
@@ -63,7 +126,11 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
       } catch (error) {
         if (generation === this.wakeGeneration && this.autoWakeEnabled && !this.disposed) {
           this.setWakeListening(false);
-          this.reportInputError(error);
+          if (this.wakeDetector.remote) {
+            this.wakeDetector.stop();
+            this.recoverWake(error);
+          }
+          else this.reportInputError(error);
         }
         return false;
       }
@@ -74,15 +141,16 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     } finally {
       if (this.armingWake === pending) {
         this.armingWake = null;
-        this.setWakeStarting(false);
+        if (!this.wakeRetryTimer) this.setWakeStarting(false);
       }
     }
   }
 
-  async handleLocalWake(keyword) {
+  async handleLocalWake(keyword, details) {
     if (this.disposed || !this.autoWakeEnabled || !this.gate.sleeping || this.waking) {
       return false;
     }
+    if (this.wakeDetector.remote) return this.handleCloudWake(keyword, details);
     const generation = ++this.wakeGeneration;
     this.waking = true;
     this.setWakeStarting(false);
@@ -116,6 +184,39 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     void this.armWake();
   }
 
+  async handleCloudWake(keyword, details = {}) {
+    const generation = ++this.wakeGeneration;
+    this.waking = true;
+    this.cloudHandoff = true;
+    this.setWakeListening(false);
+    this.setWakeStarting(true);
+    this.gate.wake(keyword);
+    this.output.append("我在。", "zh-CN");
+    this.wakeAcknowledgementTrace = this.output.traceId;
+    this.wakeTiming = { started: details.wordEndAt ?? details.detectedAt ?? performance.now(), trace: this.output.traceId,
+      attempt: globalThis.crypto?.randomUUID?.() || `wake-${Date.now()}` };
+    this.output.finish("我在。", "zh-CN");
+    try {
+      const started = await super.start();
+      if (this.disposed || !this.autoWakeEnabled || generation !== this.wakeGeneration) return false;
+      if (!started) throw new Error("wake_unavailable");
+      this.cloudHandoff = false;
+      this.input.unblock();
+      this.wakeDetector.finishHandoff((samples, rate) => this.processAudio(samples, rate));
+      this.wakeRetries = 0;
+      return true;
+    } catch (error) {
+      this.wakeDetector.stop();
+      this.recoverWake(error);
+      return false;
+    } finally {
+      this.cloudHandoff = false;
+      this.waking = false;
+      if (!this.wakeRetryTimer) this.setWakeStarting(false);
+      this.scheduleSleepIfIdle();
+    }
+  }
+
   handleTransportFailure() {
     const shouldRecover = this.autoWakeEnabled && !this.disposed;
     const result = super.handleTransportFailure();
@@ -145,6 +246,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
   }
 
   pauseMicrophone() {
+    if (this.wakeDetector.remote) return this.stop();
     const paused = super.pauseMicrophone();
     if (paused) {
       this.autoWakeEnabled = false;
@@ -160,6 +262,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
   }
 
   processAudio(samples, inputRate) {
+    if (this.cloudHandoff) return false;
     const result = super.processAudio(samples, inputRate);
     const started = result?.actions?.some(
       (action) => action?.kind === "json" && action?.payload?.type === "utterance.start",
@@ -204,6 +307,18 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
   }
 
   handleOutputTerminal(result = {}) {
+    if (this.wakeTiming && result.traceId === this.wakeTiming.trace) {
+      this.reportTiming({ kind: "wake", outcome: "failed", played: false,
+        elapsed_ms: performance.now() - this.wakeTiming.started, attempt: this.wakeTiming.attempt });
+      this.wakeTiming = null;
+    }
+    if (result.traceId && result.traceId === this.wakeAcknowledgementTrace) {
+      this.wakeAcknowledgementTrace = null;
+      this.dispatchVoice({ type: "output.idle" });
+      if (result.failed) this.reportOutputError(result.reason || "speech_output_failed");
+      this.scheduleSleepIfIdle();
+      return;
+    }
     super.handleOutputTerminal(result);
     this.scheduleSleepIfIdle();
   }
@@ -228,6 +343,15 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
   }
 
   stop() {
+    clearTimeout(this.wakeRetryTimer);
+    this.wakeRetryTimer = null;
+    this.wakeRetries = 0;
+    this.wakeAcknowledgementTrace = null;
+    if (this.wakeTiming) {
+      this.reportTiming({ kind: "wake", outcome: "cancelled", played: false,
+        elapsed_ms: performance.now() - this.wakeTiming.started, attempt: this.wakeTiming.attempt });
+      this.wakeTiming = null;
+    }
     this.autoWakeEnabled = false;
     this.wakeGeneration += 1;
     this.armingWake = null;
@@ -238,6 +362,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
   }
 
   destroy() {
+    clearTimeout(this.wakeRetryTimer);
     this.disposed = true;
     this.autoWakeEnabled = false;
     this.wakeGeneration += 1;

@@ -25,6 +25,8 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
   const [composerOpen, setComposerOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [voiceAvailable, setVoiceAvailable] = useState(null);
+  const [cloudWake, setCloudWake] = useState(false);
+  const [wakeAuthorized, setWakeAuthorized] = useState(false);
   const personaSessionRef = useRef(null);
   const realtimeRef = useRef(null);
   const inputRef = useRef(null);
@@ -95,11 +97,25 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
         if (!response.ok) throw new Error("voice_metadata_unavailable");
         return response.json();
       })
-      .then((meta) => {
+      .then(async (meta) => {
         if (controller.signal.aborted) return;
         const available = meta?.capabilities?.realtime_voice === true;
         setVoiceAvailable(available);
-        if (available) void personaSessionRef.current?.armWake();
+        if (meta?.capabilities?.wake_provider === "xfyun") {
+          personaSessionRef.current?.configureWake("xfyun");
+          setCloudWake(true);
+          const fragment = new URLSearchParams(globalThis.location.hash.slice(1));
+          const code = fragment.get("wake");
+          if (code) {
+            globalThis.history.replaceState(null, "", globalThis.location.pathname + globalThis.location.search);
+            const response = await fetch("/api/wake/authorize", { method: "POST",
+              headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }), signal: controller.signal });
+            if (!response.ok) throw new Error("wake_authorization_required");
+          }
+          const response = await fetch("/api/wake/status", { signal: controller.signal });
+          const state = await response.json();
+          if (!controller.signal.aborted) setWakeAuthorized(state.authorized === true);
+        } else if (available) void personaSessionRef.current?.armWake();
       })
       .catch((error) => {
         if (!controller.signal.aborted) {
@@ -138,10 +154,21 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
     available: voiceAvailable !== false,
   });
   const voiceActive = voiceControl.active;
+  const voiceHint = !cloudWake ? "" : !wakeAuthorized ? "请使用展示终端链接开启语音"
+    : realtime.isWakeListening ? "叫我叙华"
+      : realtime.isWakeStarting ? "正在准备语音…"
+        : connecting ? "我在，正在连接…"
+          : realtime.isPlaying ? "正在回答"
+            : realtime.status === REALTIME_VOICE_STATUS.THINKING ? "正在思考"
+              : realtime.isConnected ? "我在听" : "点击开启语音";
 
   const handleVoice = () => {
     dispatch({ type: "clear.error" });
     if (voiceAvailable === false) return;
+    if (cloudWake && !wakeAuthorized) {
+      dispatch({ type: "error", message: "当前设备未授权唤醒，请使用展示终端链接。" });
+      return;
+    }
     if (realtime.isConnected) {
       void realtime.toggleMicrophone();
       return;
@@ -156,6 +183,7 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
     if (["retrieving", "composing", "streaming"].includes(conversation.phase)) {
       dispatch({ type: "cancel" });
     }
+    personaSessionRef.current?.output?.scheduler?.unlock();
     void personaSessionRef.current?.armWake();
   };
 
@@ -227,13 +255,14 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
             className={`persona-action persona-voice-action ${voiceActive ? "is-active" : ""}`}
             type="button"
             onClick={handleVoice}
-            disabled={connecting || voiceAvailable === false}
-            aria-label={voiceControl.label}
+            disabled={voiceAvailable === null || voiceAvailable === false}
+            aria-label={cloudWake ? (voiceActive || realtime.isWakeStarting || connecting ? "关闭语音" : "开启唤醒监听") : voiceControl.label}
             aria-pressed={voiceActive}
           >{connecting || voiceControl.preparing ? <SpinnerGap className="spin" /> : realtime.isConnected && !voiceActive
             ? <MicrophoneSlash /> : <Microphone />}</button>
+          {voiceHint && <p className="persona-wake-status" role="status" aria-live="polite">{voiceHint}</p>}
           <p className="sr-only" role="status" aria-live="polite">
-            {realtime.isWakeListening ? "正在本地监听唤醒词叙华"
+            {realtime.isWakeListening ? "正在监听唤醒词叙华"
               : realtime.isWakeStarting ? "正在准备本地唤醒监听" : conversation.announcement}
           </p>
         </section>

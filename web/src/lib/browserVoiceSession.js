@@ -83,7 +83,7 @@ export class BrowserVoiceSession {
     this.input = input;
     this.turns = turns;
     this.log = log;
-    this.latency = latency || new VoiceLatencyTrace({ log });
+    this.latency = latency || new VoiceLatencyTrace({ log, onFinish: result => this.recordLatency(result) });
     this.transcript = transcript || new VoiceTranscriptPresenter({ getCallbacks });
     this.microphoneEnabled = false;
     this.pendingInterrupt = null;
@@ -107,6 +107,8 @@ export class BrowserVoiceSession {
     this.websocketPath = String(path || "/api/voice");
     this.output.setWebsocketPath(this.websocketPath);
   }
+
+  recordLatency() {}
 
   setMicrophoneEnabled(value) {
     const enabled = Boolean(value);

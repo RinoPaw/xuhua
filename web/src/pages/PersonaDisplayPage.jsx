@@ -11,6 +11,7 @@ import { conversationReducer, initialConversationState } from "../lib/conversati
 import { personaDisplayState, personaVoiceControlState } from "../lib/displayMode.js";
 import { getLocaleHint, getPreferredLocales } from "../lib/locale.js";
 import { PersonaBrowserVoiceSession } from "../lib/personaBrowserVoiceSession.js";
+import { activateWakeDevice, activationErrorMessage, consumeWakeActivationLink } from "../lib/wakeActivation.js";
 import "./PersonaDisplayPage.css";
 
 const LOCALE_HINT = getLocaleHint();
@@ -27,6 +28,11 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
   const [voiceAvailable, setVoiceAvailable] = useState(null);
   const [cloudWake, setCloudWake] = useState(false);
   const [wakeAuthorized, setWakeAuthorized] = useState(false);
+  const [activationOpen, setActivationOpen] = useState(false);
+  const [activationInput, setActivationInput] = useState("");
+  const [activationBusy, setActivationBusy] = useState(false);
+  const [activationError, setActivationError] = useState("");
+  const activationRequestRef = useRef(null);
   const personaSessionRef = useRef(null);
   const realtimeRef = useRef(null);
   const inputRef = useRef(null);
@@ -100,22 +106,16 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
       .then(async (meta) => {
         if (controller.signal.aborted) return;
         const available = meta?.capabilities?.realtime_voice === true;
-        setVoiceAvailable(available);
         if (meta?.capabilities?.wake_provider === "xfyun") {
           personaSessionRef.current?.configureWake("xfyun");
-          setCloudWake(true);
-          const fragment = new URLSearchParams(globalThis.location.hash.slice(1));
-          const code = fragment.get("wake");
-          if (code) {
-            globalThis.history.replaceState(null, "", globalThis.location.pathname + globalThis.location.search);
-            const response = await fetch("/api/wake/authorize", { method: "POST",
-              headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }), signal: controller.signal });
-            if (!response.ok) throw new Error("wake_authorization_required");
-          }
-          const response = await fetch("/api/wake/status", { signal: controller.signal });
+          const response = await fetch("/api/wake/status", { signal: controller.signal, credentials: "same-origin", cache: "no-store" });
+          if (!response.ok) throw new Error("wake_status_unavailable");
           const state = await response.json();
-          if (!controller.signal.aborted) setWakeAuthorized(state.authorized === true);
+          if (controller.signal.aborted) return;
+          setWakeAuthorized(state.authorized === true);
+          setCloudWake(true);
         } else if (available) void personaSessionRef.current?.armWake();
+        setVoiceAvailable(available);
       })
       .catch((error) => {
         if (!controller.signal.aborted) {
@@ -128,6 +128,44 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
       personaSessionRef.current?.stop();
     };
   }, []);
+
+  const activateDevice = useCallback(async (value) => {
+    activationRequestRef.current?.abort();
+    const controller = new AbortController();
+    activationRequestRef.current = controller;
+    setActivationBusy(true);
+    setActivationError("");
+    try {
+      await activateWakeDevice(value, { signal: controller.signal });
+      if (controller.signal.aborted) return false;
+      setWakeAuthorized(true);
+      setActivationOpen(false);
+      setActivationInput("");
+      dispatch({ type: "clear.error" });
+      return true;
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setActivationOpen(true);
+        setActivationInput(value);
+        setActivationError(activationErrorMessage(error));
+      }
+      return false;
+    } finally {
+      if (activationRequestRef.current === controller && !controller.signal.aborted) setActivationBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!cloudWake) return;
+    const consume = () => { void consumeWakeActivationLink({
+      location: globalThis.location, history: globalThis.history, activate: activateDevice,
+    }); };
+    globalThis.addEventListener("hashchange", consume);
+    consume();
+    return () => globalThis.removeEventListener("hashchange", consume);
+  }, [cloudWake, activateDevice]);
+
+  useEffect(() => () => activationRequestRef.current?.abort(), []);
 
   useEffect(() => {
     if (composerOpen) inputRef.current?.focus();
@@ -154,7 +192,8 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
     available: voiceAvailable !== false,
   });
   const voiceActive = voiceControl.active;
-  const voiceHint = !cloudWake ? "" : !wakeAuthorized ? "请使用展示终端链接开启语音"
+  const voiceHint = !cloudWake ? "" : activationBusy ? "正在启用语音…"
+    : !wakeAuthorized ? "点击麦克风，首次启用语音"
     : realtime.isWakeListening ? "叫我叙华"
       : realtime.isWakeStarting ? "正在准备语音…"
         : connecting ? "我在，正在连接…"
@@ -166,7 +205,7 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
     dispatch({ type: "clear.error" });
     if (voiceAvailable === false) return;
     if (cloudWake && !wakeAuthorized) {
-      dispatch({ type: "error", message: "当前设备未授权唤醒，请使用展示终端链接。" });
+      setActivationOpen(true);
       return;
     }
     if (realtime.isConnected) {
@@ -229,6 +268,27 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
             <div className="persona-error" role="alert">{conversation.error}</div>
           )}
 
+          {activationOpen && !wakeAuthorized && (
+            <form className="persona-activation" aria-label="首次启用语音" onSubmit={(event) => {
+              event.preventDefault();
+              void activateDevice(activationInput);
+            }}>
+              <div className="persona-activation-heading">
+                <strong>首次启用语音</strong>
+                <button type="button" aria-label="关闭语音激活" onClick={() => setActivationOpen(false)}><X /></button>
+              </div>
+              <p>粘贴激活码或完整链接，这个浏览器只需启用一次。</p>
+              <label className="sr-only" htmlFor="wake-activation">语音激活码或完整链接</label>
+              <input id="wake-activation" type="password" autoComplete="off" maxLength={2048}
+                placeholder="激活码或完整链接" value={activationInput}
+                onChange={(event) => setActivationInput(event.target.value)} disabled={activationBusy} />
+              <button className="persona-activation-submit" type="submit" disabled={activationBusy || !activationInput.trim()}>
+                {activationBusy ? "正在启用…" : "启用此浏览器"}
+              </button>
+              {activationError && <p className="persona-activation-error" role="alert">{activationError}</p>}
+            </form>
+          )}
+
           {composerOpen && (
             <form className="persona-composer" onSubmit={submitText}>
               <button className="persona-composer-close" type="button" onClick={() => setComposerOpen(false)} aria-label="关闭文字输入"><X /></button>
@@ -255,12 +315,12 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
             className={`persona-action persona-voice-action ${voiceActive ? "is-active" : ""}`}
             type="button"
             onClick={handleVoice}
-            disabled={voiceAvailable === null || voiceAvailable === false}
+            disabled={voiceAvailable === null || voiceAvailable === false || activationBusy}
             aria-label={cloudWake ? (voiceActive || realtime.isWakeStarting || connecting ? "关闭语音" : "开启唤醒监听") : voiceControl.label}
             aria-pressed={voiceActive}
           >{connecting || voiceControl.preparing ? <SpinnerGap className="spin" /> : realtime.isConnected && !voiceActive
             ? <MicrophoneSlash /> : <Microphone />}</button>
-          {voiceHint && <p className="persona-wake-status" role="status" aria-live="polite">{voiceHint}</p>}
+          {voiceHint && !conversation.error && !activationOpen && <p className="persona-wake-status" role="status" aria-live="polite">{voiceHint}</p>}
           <p className="sr-only" role="status" aria-live="polite">
             {realtime.isWakeListening ? "正在监听唤醒词叙华"
               : realtime.isWakeStarting ? "正在准备本地唤醒监听" : conversation.announcement}

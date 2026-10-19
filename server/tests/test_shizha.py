@@ -23,6 +23,19 @@ def test_case_data_uses_shared_models_and_preserves_source_fields():
     assert "资料来源" in payload["content"]
 
 
+def test_case_entry_serves_shared_html_without_redirects(tmp_path, monkeypatch):
+    html = '<html><div id="root"></div><script src="/assets/shared.js"></script></html>'
+    (tmp_path / "index.html").write_text(html, encoding="utf-8")
+    monkeypatch.setattr(api, "FRONTEND_DIR", tmp_path)
+    with TestClient(api.create_app()) as client:
+        for path in ("/shizha", "/shizha/"):
+            response = client.get(path, follow_redirects=False)
+            assert response.status_code == 200
+            assert response.text == html
+            assert response.headers["content-type"].startswith("text/html")
+        assert client.get("/shizha/api/meta").json()["item_count"] == 86
+
+
 def test_shared_app_mounts_independent_case_apis_and_sessions():
     app = api.create_app()
     with TestClient(app) as client:

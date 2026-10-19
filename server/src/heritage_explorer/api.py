@@ -15,7 +15,7 @@ from typing import Any
 from .providers import xfyun_tts
 from fastapi import FastAPI, HTTPException, Path as ApiPath, Query, Request, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import __version__
@@ -574,9 +574,16 @@ def create_app(
         case_app = create_app(assistant=case_assistant, admission=admission,
                               agent_name="识诈", include_shizha=False, voice_normalizer=normalize_case_asr)
         app.state.shizha = case_app
+        # The frontend adapter serves files at the process root. Serve its
+        # entry before the API sub-app mount, avoiding nested static redirects.
+        if FRONTEND_DIR.is_dir():
+            @app.get("/shizha", include_in_schema=False)
+            @app.get("/shizha/", include_in_schema=False)
+            async def shizha_page():
+                return FileResponse(FRONTEND_DIR / "index.html", media_type="text/html")
         app.mount("/shizha", case_app)
 
-    if FRONTEND_DIR.is_dir():
+    if FRONTEND_DIR.is_dir() and include_shizha:
         app.frontend("/", directory=FRONTEND_DIR, fallback="index.html")
 
     return app

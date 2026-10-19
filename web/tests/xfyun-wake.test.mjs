@@ -134,7 +134,7 @@ test("two cloud wake/ack/sleep cycles play one local acknowledgement and never s
   try {
     await session.armWake();
     for (let cycle = 0; cycle < 2; cycle++) {
-      assert.equal(await detector.callback("叙华", { detectedAt: performance.now() }), true);
+      assert.equal(await detector.callback("叙华", { detectedAt: performance.now(), wordEndAt: performance.now() }), true);
       await tick();
       assert.equal(audios.length, cycle + 1);
       audios.at(-1).emit("playing");

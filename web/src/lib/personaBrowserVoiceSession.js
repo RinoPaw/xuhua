@@ -40,6 +40,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
 
   recoverWake(error) {
     if (this.disposed || !this.autoWakeEnabled) return;
+    this.finishWakeTiming("failed");
     super.stop();
     this.gate.reset();
     this.setWakeListening(false);
@@ -62,10 +63,15 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     const acknowledgement = this.wakeAcknowledgementTrace && this.output.traceId === this.wakeAcknowledgementTrace;
     if (!acknowledgement) return super.handleOutputEvent(event);
     if (this.wakeTiming && ["playing", "fallback.playing"].includes(event?.type) && event.segment === 0) {
-      this.reportTiming({ kind: "wake", outcome: "completed", played: true,
-        elapsed_ms: performance.now() - this.wakeTiming.started, attempt: this.wakeTiming.attempt });
-      this.wakeTiming = null;
+      this.finishWakeTiming("completed", true);
     }
+  }
+
+  finishWakeTiming(outcome, played = false) {
+    if (!this.wakeTiming) return;
+    this.reportTiming({ kind: this.wakeTiming.kind, outcome, played,
+      elapsed_ms: performance.now() - this.wakeTiming.started, attempt: this.wakeTiming.attempt });
+    this.wakeTiming = null;
   }
 
   handlePlayingChange(playing) {
@@ -194,6 +200,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.output.append("我在。", "zh-CN");
     this.wakeAcknowledgementTrace = this.output.traceId;
     this.wakeTiming = { started: details.wordEndAt ?? details.detectedAt ?? performance.now(), trace: this.output.traceId,
+      kind: details.wordEndAt == null ? "wake_detected" : "wake",
       attempt: globalThis.crypto?.randomUUID?.() || `wake-${Date.now()}` };
     this.output.finish("我在。", "zh-CN");
     try {
@@ -308,9 +315,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
 
   handleOutputTerminal(result = {}) {
     if (this.wakeTiming && result.traceId === this.wakeTiming.trace) {
-      this.reportTiming({ kind: "wake", outcome: "failed", played: false,
-        elapsed_ms: performance.now() - this.wakeTiming.started, attempt: this.wakeTiming.attempt });
-      this.wakeTiming = null;
+      this.finishWakeTiming("failed");
     }
     if (result.traceId && result.traceId === this.wakeAcknowledgementTrace) {
       this.wakeAcknowledgementTrace = null;
@@ -348,9 +353,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
     this.wakeRetries = 0;
     this.wakeAcknowledgementTrace = null;
     if (this.wakeTiming) {
-      this.reportTiming({ kind: "wake", outcome: "cancelled", played: false,
-        elapsed_ms: performance.now() - this.wakeTiming.started, attempt: this.wakeTiming.attempt });
-      this.wakeTiming = null;
+      this.finishWakeTiming("cancelled");
     }
     this.autoWakeEnabled = false;
     this.wakeGeneration += 1;
@@ -362,6 +365,7 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
   }
 
   destroy() {
+    this.finishWakeTiming("cancelled");
     clearTimeout(this.wakeRetryTimer);
     this.disposed = true;
     this.autoWakeEnabled = false;

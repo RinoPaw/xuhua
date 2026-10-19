@@ -30,7 +30,7 @@ class Authorization(BaseModel):
 
 class Timing(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: str = Field(pattern=r"^(wake|conversation)$")
+    kind: str = Field(pattern=r"^(wake|wake_detected|conversation)$")
     outcome: str = Field(pattern=r"^(completed|failed|cancelled|interrupted|disconnected|superseded|rejected)$")
     elapsed_ms: float = Field(ge=0, le=300000, allow_inf_nan=False)
     played: bool = False
@@ -108,7 +108,7 @@ def register_wake_routes(app: FastAPI) -> bool:
         if not authorized(request.cookies):
             raise HTTPException(403, "wake_authorization_required")
         result = {}
-        for kind in ("wake", "conversation"):
+        for kind in ("wake", "wake_detected", "conversation"):
             items = [item for stamp, item in records if stamp > time.time() - 86400 and item.kind == kind]
             values = sorted(item.elapsed_ms for item in items if item.played)
             def percentile(fraction):

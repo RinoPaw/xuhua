@@ -84,7 +84,7 @@ export function routeVoiceServerEvent(message, {
     if (!state.turns.accept(message)) return false;
     const locale = assistantEventLocale(message, state.localeHint);
     callbacks.onAssistantTranscript?.(message.text || "", { done: false, locale });
-    actions.appendSpeechDelta(message.text || "", locale);
+    actions.appendSpeechDelta(message.text || "", locale, { acknowledgement: message.acknowledgement === true });
     return true;
   }
 
@@ -92,7 +92,7 @@ export function routeVoiceServerEvent(message, {
     if (!state.turns.accept(message)) return false;
     const locale = assistantEventLocale(message, state.localeHint);
     callbacks.onAssistantTranscript?.(message.text || "", { done: true, locale });
-    actions.finishSpeechStream(message.text || "", locale);
+    actions.finishSpeechStream(message.text || "", locale, { acknowledgement: message.acknowledgement === true });
     const turnId = normalizeVoiceId(message.turn_id);
     if (turnId) state.turns.ignore(turnId);
     return true;

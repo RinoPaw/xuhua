@@ -348,6 +348,7 @@ class VoiceSessionRuntime:
                 turn_id=turn_id,
                 text=ASSISTANT_ACKNOWLEDGEMENT,
                 locale=locale,
+                acknowledgement=True,
             )
         )
         await self.send(
@@ -356,6 +357,7 @@ class VoiceSessionRuntime:
                 turn_id=turn_id,
                 text=ASSISTANT_ACKNOWLEDGEMENT,
                 locale=locale,
+                acknowledgement=True,
             )
         )
 

@@ -123,6 +123,12 @@ export class BrowserVoiceSession {
     if (pending?.catch) void pending.catch(() => {});
   }
 
+  // Call synchronously from the microphone button's user gesture, before
+  // permission prompts or socket setup consume browser audio activation.
+  unlockOutput() {
+    this.output?.unlock?.();
+  }
+
   handleOutputEvent(event) {
     const trace = this.output?.traceId || "-";
     const elapsed = Number(event?.elapsedMs || 0) / 1000;
@@ -170,11 +176,15 @@ export class BrowserVoiceSession {
   }
 
   handleOutputTerminal({ failed, reason, traceId } = {}) {
+    const acknowledgement = Boolean(traceId && traceId === this.addressAcknowledgementTrace);
+    if (acknowledgement) this.addressAcknowledgementTrace = null;
     this.latency.finish(failed ? "failed" : "completed", { reason: failed ? reason : "" });
     this.recordDiagnostic(failed ? "voice.tts.failed" : "voice.tts.complete", {
       trace: traceId || this.output?.traceId || "-",
     });
-    this.input.blockFor(450);
+    // A short name acknowledgement is immediately followed by the user's
+    // question. Keep that onset instead of applying the normal echo cooldown.
+    if (!acknowledgement) this.input.blockFor(450);
     this.dispatchMany([
       { type: "turn.idle" },
       { type: "output.idle" },
@@ -283,6 +293,7 @@ export class BrowserVoiceSession {
     this.input.clearBargeInCandidate();
     this.turns.ignoreActive();
     this.output?.stop();
+    this.addressAcknowledgementTrace = null;
     this.dispatchMany([
       { type: "output.idle" },
       { type: "turn.idle" },
@@ -322,26 +333,27 @@ export class BrowserVoiceSession {
     return true;
   }
 
-  beginSpeechStream(locale = "") {
+  beginSpeechStream(locale = "", { acknowledgement = false } = {}) {
     this.dispatchMany([
       { type: "input.idle" },
       { type: "turn.thinking" },
       { type: "output.pending" },
     ]);
     const generation = this.output?.begin(locale);
+    this.addressAcknowledgementTrace = acknowledgement ? this.output?.traceId : null;
     this.input.resetOnset();
     return generation;
   }
 
-  appendSpeechDelta(text, locale = "") {
+  appendSpeechDelta(text, locale = "", options = {}) {
     const delta = String(text || "");
     if (!delta) return false;
-    if (!this.output?.pipelineActive) this.beginSpeechStream(locale);
+    if (!this.output?.pipelineActive) this.beginSpeechStream(locale, options);
     return this.output?.append(delta, locale) ?? false;
   }
 
-  finishSpeechStream(fallbackText = "", locale = "") {
-    if (!this.output?.pipelineActive) this.beginSpeechStream(locale);
+  finishSpeechStream(fallbackText = "", locale = "", options = {}) {
+    if (!this.output?.pipelineActive) this.beginSpeechStream(locale, options);
     return this.output?.finish(fallbackText, locale) ?? false;
   }
 

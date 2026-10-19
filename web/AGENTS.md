@@ -44,6 +44,9 @@ browser VAD → /api/voice → Xunfei streaming ASR
 
 - The confirmed Mandarin voice is 讯飞小露 (`x4_yezi`). Fixed acknowledgement audio must use the
   same voice as ordinary Mandarin answers.
+- On the chat page, an enabled microphone stays in continuous conversation mode. Isolated calls
+  of “叙华” receive the same cached “我在。” acknowledgement as Persona; calls with a real question
+  continue through normal answers. Do not add Persona's idle sleep gate to the chat page.
 
 Do not add or document an OpenAI Realtime/WebRTC path. Text chat and realtime voice must continue to
 share the same session, turn, cancellation, retrieval, and assistant core. Voice UI state should be

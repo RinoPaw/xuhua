@@ -222,7 +222,7 @@ export function PersonaDisplayPage({ search = globalThis.location?.search || "" 
     if (["retrieving", "composing", "streaming"].includes(conversation.phase)) {
       dispatch({ type: "cancel" });
     }
-    personaSessionRef.current?.output?.scheduler?.unlock();
+    realtime.unlockOutput();
     void personaSessionRef.current?.armWake();
   };
 

@@ -17,6 +17,10 @@ export const VOICE_COPY = {
 export function friendlyVoiceError(error, available) {
   if (!available) return "实时语音暂未就绪。";
   const message = String(error?.message || "");
+  if (/wake_busy/u.test(message)) return "语音服务正在另一终端使用，请关闭另一页面后重试。";
+  if (/wake_authorization_required/u.test(message)) return "当前设备未授权唤醒，请使用展示终端链接。";
+  if (/wake_handoff_overflow/u.test(message)) return "语音连接较慢，请听到提示后重新提问。";
+  if (/wake_network_slow/u.test(message)) return "网络较慢，唤醒监听已暂停，请重试。";
   if (/notallowed|permission|denied/i.test(message)) return "请允许浏览器使用麦克风。";
   if (/notfound|device|microphone/i.test(message)) return "没有找到可用的麦克风。";
   if (/生成等待过久|first.token.timeout/i.test(message)) return "回答生成超时，请再试一次。";

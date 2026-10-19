@@ -68,6 +68,18 @@ export class TtsScheduler {
     return this.playing;
   }
 
+  unlock() {
+    if (this.unlockedAudio) return;
+    const audio = this.createAudio("/assets/audio/ack-wozai-x4-yezi.mp3");
+    audio.muted = true;
+    void audio.play().then(() => {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+      this.unlockedAudio = audio;
+    }).catch(() => {});
+  }
+
   get isTentativePaused() {
     return this.tentativePaused;
   }
@@ -166,7 +178,9 @@ export class TtsScheduler {
     entry.prepareController = null;
     let audio;
     try {
-      audio = this.createAudio(source, entry.segment, 0);
+      audio = this.unlockedAudio || this.createAudio(source, entry.segment, 0);
+      this.unlockedAudio = null;
+      audio.src = source;
       if (!audio) throw new Error("tts_audio_unavailable");
       audio.preload = "auto";
     } catch (error) {

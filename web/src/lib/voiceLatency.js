@@ -24,9 +24,10 @@ const TERMINAL_OUTCOMES = new Set([
 ]);
 
 export class VoiceLatencyTrace {
-  constructor({ now = defaultNow, log = console } = {}) {
+  constructor({ now = defaultNow, log = console, onFinish = () => {} } = {}) {
     this.now = now;
     this.log = log;
+    this.onFinish = onFinish;
     this.clear();
   }
 
@@ -126,6 +127,9 @@ export class VoiceLatencyTrace {
     this.finished = true;
     const result = TERMINAL_OUTCOMES.has(outcome) ? outcome : "failed";
     const terminalMs = elapsed(this.marks.speechEnd, this.now());
+    this.onFinish({ outcome: result, played: this.marks.playing !== null,
+      elapsedMs: this.marks.playing !== null ? elapsed(this.marks.speechEnd, this.marks.playing) : terminalMs,
+      attempt: `${this.context.connectionId || "voice"}_${this.marks.speechEnd}`.replace(/[^A-Za-z0-9_-]/gu, "_").slice(-72) });
     this.log.info?.(
       `[叙华][voice.outcome connection=${this.context.connectionId || "-"} `
       + `utterance=${this.context.utteranceId ?? "-"} turn=${this.context.turnId || "-"}] `

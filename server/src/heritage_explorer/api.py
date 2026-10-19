@@ -54,6 +54,7 @@ from .tts_tickets import TtsTicketCapacity, TtsTicketStore
 from .voice import XfyunStream
 from .voice_diagnostics import diagnostics_enabled, log_browser_diagnostic
 from .voice_transport import MAX_VOICE_FRAME_BYTES, register_voice_route
+from .wake import register_wake_routes
 
 
 MAX_CHAT_CHARS = 4000
@@ -165,6 +166,7 @@ def create_app(
     app = FastAPI(title="叙华", version=__version__, lifespan=lifespan)
     app.add_middleware(AdmissionMiddleware, controller=admission)
     app.add_middleware(RequestBodyLimitMiddleware)
+    wake_available = register_wake_routes(app)
 
     @app.get("/healthz")
     @app.get("/api/health")
@@ -190,6 +192,7 @@ def create_app(
                 "text_chat": True,
                 "realtime_voice": voice_available,
                 "voice_provider": "xfyun" if voice_available else "",
+                **({"wake_provider": "xfyun"} if wake_available else {}),
             },
         }
 

@@ -472,7 +472,38 @@ def test_short_name_call_from_asr_acks_without_starting_llm(spoken: str) -> None
             answers = [e for e in events if isinstance(e, AssistantDoneEvent)]
             assert len(answers) == 1
             assert answers[0].text == "我在。"
+            assert answers[0].acknowledgement is True
             assert assistant.calls == []
+        finally:
+            await runtime.close()
+        assert admission._active["asr"] == 0
+        assert admission._active["chat"] == 0
+
+    asyncio.run(scenario())
+
+
+def test_continuous_chat_accepts_repeated_name_calls_then_questions() -> None:
+    async def scenario() -> None:
+        spoken = ["叙华", "你好叙华", "叙华，介绍一下剪纸", "剪纸怎么做"]
+        runtime, streams, events, assistant, completed, admission = make_runtime(
+            [(text, None, None) for text in spoken]
+        )
+        runtime.normalize_final = normalize_asr_final
+        try:
+            for index, text in enumerate(spoken):
+                completed.clear()
+                await runtime.handle_utterance_start(UtteranceStartCommand())
+                await runtime.handle_utterance_end()
+                await asyncio.wait_for(streams[index].finish_started.wait(), 2)
+                streams[index].finish_gate.set()
+                await asyncio.wait_for(completed.wait(), 2)
+                await asyncio.wait_for(streams[index].closed.wait(), 2)
+                answers = [event for event in events if isinstance(event, AssistantDoneEvent)]
+                assert len(answers) == index + 1
+                assert answers[-1].acknowledgement is (index < 2)
+                assert len(assistant.calls) == max(0, index - 1)
+                assert runtime.sessions._sessions == {}, "name calls must not add model history"
+            assert assistant.calls == spoken[2:]
         finally:
             await runtime.close()
         assert admission._active["asr"] == 0

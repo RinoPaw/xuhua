@@ -177,10 +177,12 @@ function App() {
     interruptText();
     if (interruptedTextTurn) dispatch({ type: "cancel" });
     dispatch({ type: "clear.error" });
+    realtime.unlockOutput();
     await realtime.start();
   };
 
   const toggleVoiceMicrophone = () => {
+    if (!microphoneEnabled) realtime.unlockOutput();
     void realtime.toggleMicrophone();
     dispatch({ type: "clear.error" });
   };

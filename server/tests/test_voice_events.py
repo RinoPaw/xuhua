@@ -130,6 +130,14 @@ def test_legacy_chinese_engine_label_is_normalized_to_the_single_slm_path() -> N
     assert encode_voice_event(event)["asr_engine"] == "xfyun_slm"
 
 
+def test_name_acknowledgement_is_explicit_and_normal_answers_are_unchanged() -> None:
+    for event_class in (AssistantDeltaEvent, AssistantDoneEvent):
+        event = event_class("session", "ack-turn", "我在。", "zh-CN", acknowledgement=True)
+        assert encode_voice_event(event)["acknowledgement"] is True
+        ordinary = event_class("session", "answer-turn", "我在。", "zh-CN")
+        assert "acknowledgement" not in encode_voice_event(ordinary)
+
+
 
 def test_interruption_ack_encodes_actual_cancellation_details() -> None:
     from heritage_explorer.voice_events import InterruptAckEvent

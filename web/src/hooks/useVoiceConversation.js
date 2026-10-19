@@ -91,6 +91,7 @@ export function useVoiceConversation({
   sessionRef.current.setWebsocketPath(websocketPath);
 
   const start = useCallback(() => sessionRef.current.start(), []);
+  const unlockOutput = useCallback(() => sessionRef.current.unlockOutput(), []);
   const stop = useCallback(() => sessionRef.current.stop(), []);
   const toggleMicrophone = useCallback(() => sessionRef.current.toggleMicrophone(), []);
   const pauseMicrophone = useCallback(() => sessionRef.current.pauseMicrophone(), []);
@@ -125,6 +126,7 @@ export function useVoiceConversation({
     isSpeechPending,
     spectrum,
     start,
+    unlockOutput,
     stop,
     toggleMicrophone,
     pauseMicrophone,

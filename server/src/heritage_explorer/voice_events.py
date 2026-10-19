@@ -56,6 +56,7 @@ class AssistantDeltaEvent:
     turn_id: str
     text: str
     locale: str
+    acknowledgement: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,7 @@ class AssistantDoneEvent:
     turn_id: str
     text: str
     locale: str
+    acknowledgement: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,6 +165,7 @@ def encode_voice_event(event: VoiceServerEvent) -> dict[str, Any]:
             "turn_id": event.turn_id,
             "text": event.text,
             "locale": event.locale,
+            **({"acknowledgement": True} if event.acknowledgement else {}),
         }
     if isinstance(event, SourcesEvent):
         return {
@@ -178,6 +181,7 @@ def encode_voice_event(event: VoiceServerEvent) -> dict[str, Any]:
             "turn_id": event.turn_id,
             "text": event.text,
             "locale": event.locale,
+            **({"acknowledgement": True} if event.acknowledgement else {}),
         }
     if isinstance(event, AssistantCancelledEvent):
         return {

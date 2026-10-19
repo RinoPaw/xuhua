@@ -73,6 +73,10 @@ export class VoiceOutputController {
     this.websocketPath = String(path || "/api/voice");
   }
 
+  unlock() {
+    this.scheduler.unlock?.();
+  }
+
   async prepareSource({ text, segment, reason, locale, traceId, signal }) {
     const cached = await this.clipCache.sourceFor(text, locale);
     // Cancellation during an awaited cache/prewarm must not launch a ticket

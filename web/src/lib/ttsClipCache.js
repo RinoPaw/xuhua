@@ -1,12 +1,14 @@
 import { browserFetch } from "./browserFetch.js";
 import { requestTtsSource, resolveSpeechLocale } from "./voiceProtocol.js";
+import { acknowledgementAudio } from "./speechProfile.js";
 
-const FIXED_CLIPS = new Map([
-  ["zh-CN\u0000我在。", "/assets/audio/ack-wozai-x4-yezi.mp3"],
-]);
+function clipKey(text, locale, websocketPath) {
+  return `${acknowledgementAudio(websocketPath)}\u0000${resolveSpeechLocale(locale)}\u0000${String(text || "").trim()}`;
+}
 
-function clipKey(text, locale) {
-  return `${resolveSpeechLocale(locale)}\u0000${String(text || "").trim()}`;
+function fixedClip(text, locale, websocketPath) {
+  return resolveSpeechLocale(locale) === "zh-CN" && String(text || "").trim() === "我在。"
+    ? acknowledgementAudio(websocketPath) : "";
 }
 
 function defaultCreateObjectUrl(blob) {
@@ -41,16 +43,16 @@ export class TtsClipCache {
     this.disposed = false;
   }
 
-  get(text, locale = "") {
-    return this.urls.get(clipKey(text, locale)) || "";
+  get(text, locale = "", websocketPath = "") {
+    return this.urls.get(clipKey(text, locale, websocketPath)) || "";
   }
 
-  async sourceFor(text, locale = "") {
-    const key = clipKey(text, locale);
+  async sourceFor(text, locale = "", websocketPath = "") {
+    const key = clipKey(text, locale, websocketPath);
     const cached = this.urls.get(key);
     if (cached) return cached;
     const pending = this.pending.get(key)?.promise
-      || (FIXED_CLIPS.has(key) ? this.prewarm({ text, locale }) : null);
+      || (fixedClip(text, locale, websocketPath) ? this.prewarm({ text, locale, websocketPath }) : null);
     if (!pending) return "";
     try {
       await pending;
@@ -64,7 +66,7 @@ export class TtsClipCache {
     const content = String(text || "").trim();
     if (!content || this.disposed) return Promise.resolve("");
     const resolvedLocale = resolveSpeechLocale(locale);
-    const key = clipKey(content, resolvedLocale);
+    const key = clipKey(content, resolvedLocale, websocketPath);
     const cached = this.urls.get(key);
     if (cached) return Promise.resolve(cached);
     const existing = this.pending.get(key);
@@ -72,7 +74,7 @@ export class TtsClipCache {
 
     const controller = new AbortController();
     const promise = (async () => {
-      const source = FIXED_CLIPS.get(key) || await requestTtsSource({
+      const source = fixedClip(content, resolvedLocale, websocketPath) || await requestTtsSource({
         websocketPath,
         text: content,
         traceId: "voice-prewarm",

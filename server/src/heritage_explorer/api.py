@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import logging
 import json
+import edge_tts
 import time
 import ipaddress
 from typing import Literal
@@ -147,6 +148,8 @@ def create_app(
     sessions = assistant.sessions
     admission = admission or create_default_admission_controller()
     kb = search.knowledge_base
+    speech_profile = getattr(assistant, "domain_policy", None)
+    use_edge_tts = getattr(speech_profile, "tts_provider", "xfyun") == "edge"
     children = []
     case_records = [json.loads(item.record_json) for item in kb.items if item.record_json]
     tts_tickets = TtsTicketStore()
@@ -208,6 +211,8 @@ def create_app(
                 "text_chat": True,
                 "realtime_voice": voice_available,
                 "voice_provider": "xfyun" if voice_available else "",
+                "tts_provider": "edge" if use_edge_tts else "xfyun",
+                "tts_voice": getattr(speech_profile, "tts_voice_zh", "") or xfyun_tts.voice_for("zh-CN-XiaoxiaoNeural"),
                 **({"wake_provider": "xfyun"} if wake_available else {}),
             },
         }
@@ -298,6 +303,12 @@ def create_app(
         language_profile = get_language_profile(
             normalize_locale_hint(ticket.locale) or detect_locale(ticket.text)
         )
+        speech_voice = (
+            getattr(speech_profile, "tts_voice_zh", "")
+            if use_edge_tts and language_profile.code in ("zh-CN", "zh-CN-sichuan", "zh-CN-henan")
+            else language_profile.tts_voice
+        )
+        resolved_speech_voice = speech_voice if use_edge_tts else xfyun_tts.voice_for(speech_voice)
         started = time.perf_counter()
         LOGGER.info(
             "[trace=%s segment=%s] tts.request.start reason=%s chars=%s locale=%s",
@@ -311,9 +322,9 @@ def create_app(
         first_chunk_logged = False
         bytes_sent = 0
         try:
-            communicate = xfyun_tts.Communicate(
+            communicate = (edge_tts if use_edge_tts else xfyun_tts).Communicate(
                 ticket.text,
-                voice=language_profile.tts_voice,
+                voice=speech_voice,
                 rate="-2%",
                 pitch="+0Hz",
             )
@@ -440,6 +451,7 @@ def create_app(
                     "Cache-Control": "no-store",
                     "Accept-Ranges": "none",
                     "X-Speech-Locale": language_profile.code,
+                    "X-Speech-Voice": resolved_speech_voice,
                 },
             )
 
@@ -474,6 +486,7 @@ def create_app(
                 "Cache-Control": "no-store",
                 "Content-Length": str(len(payload)),
                 "X-Speech-Locale": language_profile.code,
+                "X-Speech-Voice": resolved_speech_voice,
             },
         )
 

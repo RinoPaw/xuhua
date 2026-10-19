@@ -70,6 +70,8 @@ class CaseSearchService(SearchService):
 
 class CaseProfile:
     spoken_names = SPOKEN_NAMES
+    tts_provider = "edge"
+    tts_voice_zh = "zh-CN-YunxiaNeural"
 
     @staticmethod
     def is_greeting(question, locale):

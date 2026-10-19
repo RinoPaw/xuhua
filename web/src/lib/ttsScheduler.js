@@ -68,9 +68,9 @@ export class TtsScheduler {
     return this.playing;
   }
 
-  unlock() {
+  unlock(source = "/assets/audio/ack-wozai-x4-yezi.mp3") {
     if (this.unlockedAudio) return;
-    const audio = this.createAudio("/assets/audio/ack-wozai-x4-yezi.mp3");
+    const audio = this.createAudio(source);
     audio.muted = true;
     void audio.play().then(() => {
       audio.pause();

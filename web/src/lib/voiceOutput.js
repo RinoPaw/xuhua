@@ -2,6 +2,7 @@ import { DEFAULT_LOCALE } from "./locale.js";
 import { TtsClipCache } from "./ttsClipCache.js";
 import { TtsScheduler } from "./ttsScheduler.js";
 import { TtsTextPlan } from "./ttsTextPlan.js";
+import { acknowledgementAudio } from "./speechProfile.js";
 import {
   compactRecognitionContext,
   requestTtsSource,
@@ -74,11 +75,11 @@ export class VoiceOutputController {
   }
 
   unlock() {
-    this.scheduler.unlock?.();
+    this.scheduler.unlock?.(acknowledgementAudio(this.websocketPath));
   }
 
   async prepareSource({ text, segment, reason, locale, traceId, signal }) {
-    const cached = await this.clipCache.sourceFor(text, locale);
+    const cached = await this.clipCache.sourceFor(text, locale, this.websocketPath);
     // Cancellation during an awaited cache/prewarm must not launch a ticket
     // request under the next turn's identity.
     if (signal?.aborted) return "";

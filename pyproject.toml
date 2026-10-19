@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "xuhua"
-version = "0.2.10"
+version = "0.2.11"
 description = "叙华 — 以可核验资料为依据的非遗对话体验"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [
+    "edge-tts>=7.2,<8",
     "fastapi>=0.141,<1",
     "httpx>=0.28,<1",
     "pypinyin>=0.51,<1",
@@ -25,6 +26,10 @@ dev = [
 
 [project.scripts]
 xuhua = "heritage_explorer.api:main"
+
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true
 
 [tool.setuptools.packages.find]
 where = ["server/src"]

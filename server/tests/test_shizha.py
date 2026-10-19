@@ -36,6 +36,35 @@ def test_case_entry_serves_shared_html_without_redirects(tmp_path, monkeypatch):
         assert client.get("/shizha/api/meta").json()["item_count"] == 86
 
 
+def test_case_yunxia_provider_is_separate_from_heritage_xfyun(monkeypatch):
+    calls = []
+    class Edge:
+        def __init__(self, text, **kwargs):
+            calls.append(("edge", kwargs["voice"]))
+        async def stream(self):
+            yield {"type": "audio", "data": b"yunxia-audio"}
+    class Xfyun:
+        def __init__(self, text, **kwargs):
+            calls.append(("xfyun", kwargs["voice"]))
+        async def stream(self):
+            yield {"type": "audio", "data": b"xiaolu-audio"}
+    monkeypatch.setattr(api.edge_tts, "Communicate", Edge)
+    monkeypatch.setattr(api.xfyun_tts, "Communicate", Xfyun)
+    with TestClient(api.create_app()) as client:
+        case_meta = client.get("/shizha/api/meta").json()["capabilities"]
+        assert case_meta["tts_provider"] == "edge"
+        assert case_meta["tts_voice"] == "zh-CN-YunxiaNeural"
+        for prefix, expected in (("/shizha", b"yunxia-audio"), ("", b"xiaolu-audio")):
+            token = client.post(prefix + "/api/tts", json={"text": "测试", "locale": "zh-CN"}).json()["token"]
+            response = client.get(prefix + "/api/tts/" + token + "?stream=1")
+            assert response.status_code == 200
+            assert response.content == expected
+            if prefix:
+                assert response.headers["x-speech-voice"] == "zh-CN-YunxiaNeural"
+    assert calls[0] == ("edge", "zh-CN-YunxiaNeural")
+    assert calls[1][0] == "xfyun"
+
+
 def test_shared_app_mounts_independent_case_apis_and_sessions():
     app = api.create_app()
     with TestClient(app) as client:

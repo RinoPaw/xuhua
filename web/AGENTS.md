@@ -38,12 +38,13 @@ The only supported voice architecture is:
 
 ```text
 browser VAD → /api/voice → Xunfei streaming ASR
-→ AssistantService / DeepSeek → Xunfei TTS
+→ AssistantService / DeepSeek → agent-configured TTS (Xuhua: Xunfei, Shizha: Edge Yunxia)
 → interruptible browser playback
 ```
 
-- The confirmed Mandarin voice is 讯飞小露 (`x4_yezi`). Fixed acknowledgement audio must use the
-  same voice as ordinary Mandarin answers.
+- Xuhua's confirmed Mandarin voice is 讯飞小露 (`x4_yezi`). Shizha uses Edge TTS 云夏
+  (`zh-CN-YunxiaNeural`) as explicitly requested. Fixed acknowledgements must match each agent's
+  ordinary Mandarin voice; keep clips and caches separate by speech profile.
 - On the chat page, an enabled microphone stays in continuous conversation mode. Isolated calls
   of “叙华” receive the same cached “我在。” acknowledgement as Persona; calls with a real question
   continue through normal answers. Do not add Persona's idle sleep gate to the chat page.

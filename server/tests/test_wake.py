@@ -61,6 +61,11 @@ def test_metrics_separate_acknowledgements_failures_and_successful_playback(monk
     assert report['wake']['mean_ms'] == 200
     assert report['conversation'] == {'attempts': 2, 'played': 1, 'not_played': 1,
                                       'mean_ms': 2500, 'p50_ms': 2500, 'p95_ms': 2500}
+    client.post('/api/wake/metrics', json=dict(attempt='d', kind='conversation', outcome='completed',
+                                             played=True, elapsed_ms=3500))
+    report = client.get('/api/wake/metrics').json()
+    assert report['conversation']['p95_ms'] == 3500
+    assert report['conversation']['mean_ms'] == 3000
 
 
 def test_bridge_keeps_private_token_server_side_and_releases_owner(monkeypatch):

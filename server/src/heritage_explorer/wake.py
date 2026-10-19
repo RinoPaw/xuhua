@@ -8,11 +8,12 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import time
 
 from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from websockets.asyncio.client import connect
 
 from .admission import AdmissionController, AdmissionDenied, AdmissionPolicy, client_key_from_scope
@@ -28,6 +29,7 @@ class Authorization(BaseModel):
 
 
 class Timing(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     kind: str = Field(pattern=r"^(wake|conversation)$")
     outcome: str = Field(pattern=r"^(completed|failed|cancelled|interrupted|disconnected|superseded|rejected)$")
     elapsed_ms: float = Field(ge=0, le=300000, allow_inf_nan=False)
@@ -110,7 +112,7 @@ def register_wake_routes(app: FastAPI) -> bool:
             items = [item for stamp, item in records if stamp > time.time() - 86400 and item.kind == kind]
             values = sorted(item.elapsed_ms for item in items if item.played)
             def percentile(fraction):
-                return round(values[max(0, int((len(values) - 1) * fraction))], 1) if values else None
+                return round(values[max(0, math.ceil(len(values) * fraction) - 1)], 1) if values else None
             result[kind] = {"attempts": len(items), "played": len(values), "not_played": len(items) - len(values),
                             "mean_ms": round(sum(values) / len(values), 1) if values else None,
                             "p50_ms": percentile(.5), "p95_ms": percentile(.95)}

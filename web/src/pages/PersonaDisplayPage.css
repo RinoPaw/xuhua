@@ -112,6 +112,28 @@
   pointer-events: none;
 }
 
+.persona-activation {
+  position: absolute;
+  z-index: 11;
+  right: max(20px, 4%);
+  bottom: max(100px, 12%);
+  box-sizing: border-box;
+  width: min(340px, calc(100% - 40px));
+  padding: 18px;
+  border: 1px solid rgba(231, 221, 200, .76);
+  border-radius: 18px;
+  color: #332b20;
+  background: rgba(251, 247, 238, .96);
+  box-shadow: 0 8px 24px rgba(20, 15, 9, .2);
+}
+.persona-activation-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.persona-activation-heading button { display: grid; place-items: center; padding: 7px; border: 0; background: transparent; color: inherit; }
+.persona-activation p { margin: 9px 0 12px; font-size: 13px; line-height: 1.5; }
+.persona-activation input { box-sizing: border-box; width: 100%; min-height: 42px; padding: 9px 11px; border: 1px solid #b8b1a5; border-radius: 9px; background: #fffdf7; color: inherit; font: inherit; }
+.persona-activation-submit { width: 100%; min-height: 42px; margin-top: 10px; border: 0; border-radius: 9px; background: #405d4c; color: white; font: inherit; }
+.persona-activation-submit:disabled { opacity: .55; }
+.persona-activation .persona-activation-error { margin-bottom: 0; color: #873c31; }
+
 .persona-action {
   position: absolute;
   z-index: 10;

@@ -11,9 +11,10 @@ export function normalizeEndpoint(value = "") {
   return raw.replace(/\/{2,}/gu, "/");
 }
 
-export function apiEndpoint(_base, path) {
+export function apiEndpoint(base, path) {
   const normalizedPath = `/${String(path || "").replace(/^\/+/, "")}`;
-  return normalizeEndpoint(normalizedPath);
+  const prefix = normalizeApiBase(base) === "/shizha" ? "/shizha" : "";
+  return normalizeEndpoint(`${prefix}${normalizedPath}`);
 }
 
 export default apiEndpoint;

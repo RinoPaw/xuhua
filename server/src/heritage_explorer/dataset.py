@@ -50,6 +50,7 @@ class HeritageItem:
     # ── display ──
     display_forms: tuple[str, ...] = ()
     suitable_scenarios: tuple[str, ...] = ()
+    record_json: str = ""
 
 
 @lru_cache(maxsize=1)
@@ -101,6 +102,7 @@ class KnowledgeBase:
                 district=str(item.get("district") or ""),
                 display_forms=_parse_tuple(item.get("display_forms")),
                 suitable_scenarios=_parse_tuple(item.get("suitable_scenarios")),
+                record_json=str(item.get("record_json") or ""),
             )
             for item in payload.get("items", [])
         ]
@@ -139,8 +141,11 @@ def item_to_dict(
         "display_forms": list(item.display_forms),
         "suitable_scenarios": list(item.suitable_scenarios),
     }
-    if include_enrichment:
+    if include_enrichment and not item.record_json:
         data.update(get_ai_fields(item.id))
     if include_content:
         data["content"] = item.content
+    if item.record_json:
+        data.update(json.loads(item.record_json))
+        data.update(id=item.id, category=item.category)
     return data

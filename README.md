@@ -12,6 +12,17 @@
 - 讯飞官方在线语音合成（流式版）：浏览器先向 `/api/tts` 换取短期、客户端绑定的 ticket；首播请求使用 `/api/tts/{token}?stream=1` 在收到第一块 MP3 后开始渐进传输，重试和旧客户端仍使用完整缓冲。支持中断与有界重试，不使用浏览器 `speechSynthesis` 降级；需要在讯飞控制台单独开通在线语音合成服务与所用音色。
 - 数字人界面：React / Vite Web 客户端，由 FastAPI 同源提供构建产物。
 
+## 识诈入口
+
+`/shizha`（也支持 `/shizha/`）使用同一个 React App 与 FastAPI 应用工厂，复用叙华的检索算法、流式问答、取消与打断、会话管理、讯飞 ASR/TTS 及播放控制。仅迁入识诈的 86 条案例数据和熊猫警官图片，以小型数据/角色适配器接入；没有迁入旧识诈前端、检索/embedding 引擎或语音实现。
+
+- 数据：`data/processed/shizha_cases.json`；资产：`web/public/assets/portraits/panda-officer.jpg`。
+- 业务配置：`server/src/heritage_explorer/shizha.py`，包含案例字段映射、角色提示和紧急场景短回应。
+- 独立 API：`/shizha/api/meta`、`/shizha/api/items`、`/shizha/api/chat`、`/shizha/api/voice`、`/shizha/api/tts`；浏览器、文字与语音使用同一识诈会话核心。
+- 识诈资料和会话与根路径的非遗智能体隔离；两者共用服务容量和速率限制。
+- 麦克风开启后保持连续对话，单独叫“识诈”或“熊猫警官”会回应“我在。”。这使用现有 ASR 短呼叫处理，不占用 Persona 的独立原生唤醒终端。
+- 案例保留原始来源字段与链接；部署和自动测试不等同于完成案例真实性或回答准确率的人工审核。
+
 ## 仓库结构
 
 ```text

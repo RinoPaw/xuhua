@@ -6,6 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import logging
+import json
 import time
 import ipaddress
 from typing import Literal
@@ -137,12 +138,17 @@ def create_app(
     *,
     assistant: AssistantService | None = None,
     admission: AdmissionController | None = None,
+    agent_name: str = "叙华",
+    include_shizha: bool = True,
+    voice_normalizer=None,
 ) -> FastAPI:
     assistant = assistant or AssistantService()
     search = assistant.search
     sessions = assistant.sessions
     admission = admission or create_default_admission_controller()
     kb = search.knowledge_base
+    children = []
+    case_records = [json.loads(item.record_json) for item in kb.items if item.record_json]
     tts_tickets = TtsTicketStore()
     voice_available = bool(
         XF_APP_ID.strip()
@@ -162,11 +168,15 @@ def create_app(
         close = getattr(assistant, "aclose", None)
         if close is not None:
             await close()
+        for child in children:
+            await child.aclose()
 
-    app = FastAPI(title="叙华", version=__version__, lifespan=lifespan)
+    app = FastAPI(title=agent_name, version=__version__, lifespan=lifespan)
+    app.state.assistant = assistant
+    app.state.admission = admission
     app.add_middleware(AdmissionMiddleware, controller=admission)
     app.add_middleware(RequestBodyLimitMiddleware)
-    wake_available = register_wake_routes(app)
+    wake_available = register_wake_routes(app) if agent_name == "叙华" else False
 
     @app.get("/healthz")
     @app.get("/api/health")
@@ -181,6 +191,7 @@ def create_app(
             key=lambda value: (level_order.get(value, 99), value),
         )
         return {
+            "agent_name": agent_name,
             "app_version": __version__,
             "schema_version": kb.schema_version,
             "generated_at": kb.generated_at,
@@ -188,6 +199,11 @@ def create_app(
             "item_count": len(kb.items),
             "category_count": len(kb.categories),
             "levels": levels,
+            **({
+                "risk_levels": sorted({row.get("risk_level", "") for row in case_records} - {""}),
+                "entry_channels": sorted({value for row in case_records for value in row.get("entry_channels", [])}),
+                "victim_groups": sorted({row.get("victim_group", "") for row in case_records} - {""}),
+            } if case_records else {}),
             "capabilities": {
                 "text_chat": True,
                 "realtime_voice": voice_available,
@@ -469,6 +485,9 @@ def create_app(
         level: str = Query(default="", max_length=100),
         district: str = Query(default="", max_length=200),
         keywords: str = Query(default="", max_length=MAX_SEARCH_CHARS),
+        risk_level: str = Query(default="", max_length=100),
+        entry_channel: str = Query(default="", max_length=200),
+        victim_group: str = Query(default="", max_length=200),
         limit: int = Query(default=30, ge=1, le=100),
         offset: int = Query(default=0, ge=0, le=100000),
     ) -> dict[str, Any]:
@@ -482,6 +501,7 @@ def create_app(
             keywords=keywords,
             limit=limit,
             offset=offset,
+            **({"risk_level": risk_level, "entry_channel": entry_channel, "victim_group": victim_group} if case_records else {}),
         )
         return {
             "total": result.total,
@@ -541,11 +561,20 @@ def create_app(
         api_key=XF_API_KEY,
         api_secret=XF_API_SECRET,
         asr_host=XF_ASR_HOST,
-        normalize_final=normalize_asr_final,
+        normalize_final=voice_normalizer or normalize_asr_final,
         stream_factory=XfyunStream,
         max_session_id_chars=MAX_SESSION_ID_CHARS,
         admission=admission,
     )
+
+    if include_shizha:
+        from .shizha import create_assistant, normalize_asr_final as normalize_case_asr
+        case_assistant = create_assistant()
+        children.append(case_assistant)
+        case_app = create_app(assistant=case_assistant, admission=admission,
+                              agent_name="识诈", include_shizha=False, voice_normalizer=normalize_case_asr)
+        app.state.shizha = case_app
+        app.mount("/shizha", case_app)
 
     if FRONTEND_DIR.is_dir():
         app.frontend("/", directory=FRONTEND_DIR, fallback="index.html")

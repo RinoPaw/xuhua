@@ -194,6 +194,9 @@ class AdmissionMiddleware:
         scope_type = str(scope.get("type") or "")
         method = str(scope.get("method") or "").upper() if scope_type == "http" else ""
         path = str(scope.get("path") or "")
+        root = str(scope.get("root_path") or "").rstrip("/")
+        if root and path.startswith(root + "/"):
+            path = path[len(root):]
         return scope_type, method, path
 
     @classmethod

@@ -5,6 +5,7 @@ import { PersonaDisplayPage } from "./pages/PersonaDisplayPage.jsx";
 import { isLegacyPersonaDisplayPath, isPersonaDisplayPath, PERSONA_DISPLAY_PATH } from "./lib/displayMode.js";
 import "./styles.css";
 import "./viewportGuard.css";
+import { agentProfile } from "./lib/agentProfile.js";
 
 if (isLegacyPersonaDisplayPath(globalThis.location?.pathname)) {
   globalThis.history?.replaceState(
@@ -16,7 +17,7 @@ if (isLegacyPersonaDisplayPath(globalThis.location?.pathname)) {
 
 const page = isPersonaDisplayPath(globalThis.location?.pathname)
   ? <PersonaDisplayPage />
-  : <App />;
+  : <App profile={agentProfile(globalThis.location?.pathname)} />;
 
 createRoot(document.getElementById("root")).render(
   <React.StrictMode>

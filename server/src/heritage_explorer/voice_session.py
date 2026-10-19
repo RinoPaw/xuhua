@@ -68,7 +68,7 @@ def contains_spoken_text(value: object) -> bool:
     return any(character.isalnum() for character in str(value or ""))
 
 
-def is_assistant_address_only(value: object) -> bool:
+def is_assistant_address_only(value: object, names: tuple[str, ...] = (ASSISTANT_NAME,)) -> bool:
     """Handle short direct calls, repeated names and common spoken particles.
 
     Do not consume real questions such as '叙华，请介绍汴绣'.
@@ -77,7 +77,7 @@ def is_assistant_address_only(value: object) -> bool:
         str.maketrans("", "", _ASSISTANT_ADDRESS_TRIM)
     )
     return re.fullmatch(
-        r"(?:你好|您好|喂|嗨)?(?:叙华){1,3}(?:啊|呀|呢|哎|诶|在吗|你在吗)?",
+        rf"(?:你好|您好|喂|嗨)?(?:{'|'.join(re.escape(name) for name in names)}){{1,3}}(?:啊|呀|呢|哎|诶|在吗|你在吗)?",
         compact,
     ) is not None
 
@@ -118,12 +118,13 @@ def build_voice_hotwords(
     category: str,
     titles: list[str] | tuple[str, ...],
     recent_titles: list[str] | tuple[str, ...],
+    names: tuple[str, ...] = (ASSISTANT_NAME,),
 ) -> tuple[str, ...]:
     """Keep the assistant name in every ASR request before contextual terms."""
 
-    hotwords = [ASSISTANT_NAME]
-    seen = {ASSISTANT_NAME}
-    limit = 1 + MAX_VOICE_CONTEXT_TITLES + MAX_VOICE_RECENT_ITEMS
+    hotwords = list(names)
+    seen = set(names)
+    limit = len(names) + MAX_VOICE_CONTEXT_TITLES + MAX_VOICE_RECENT_ITEMS
     for value in (category, *titles, *recent_titles):
         title = str(value or "").strip()
         if title and title not in seen:
@@ -222,6 +223,7 @@ class VoiceSessionRuntime:
         self.emit = emit
         self.connection_id = connection_id
         self.assistant = assistant
+        self.spoken_names = getattr(assistant, "spoken_names", (ASSISTANT_NAME,))
         self.sessions = sessions
         self.knowledge_base = knowledge_base
         self.app_id = app_id
@@ -276,6 +278,7 @@ class VoiceSessionRuntime:
             self.context.category,
             self.context.titles,
             recent_titles,
+            self.spoken_names,
         )
         return self.stream_factory(
             app_id=self.app_id,
@@ -613,7 +616,7 @@ class VoiceSessionRuntime:
                 if is_chinese_locale(resolved_locale)
                 else NormalizedTranscript(raw_text, raw_text, ())
             )
-            if is_chinese_locale(resolved_locale):
+            if is_chinese_locale(resolved_locale) and self.spoken_names == (ASSISTANT_NAME,):
                 normalized = recover_isolated_spoken_address(normalized)
             canonical_text = normalized.canonical_text
             log_voice_text(
@@ -650,7 +653,7 @@ class VoiceSessionRuntime:
                     asr_engine="chinese",
                 )
             )
-            if is_assistant_address_only(canonical_text):
+            if is_assistant_address_only(canonical_text, self.spoken_names):
                 LOGGER.info(
                     "voice.address.classification connection=%s utterance=%s decision=ack",
                     self.connection_id, committed_id,

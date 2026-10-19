@@ -24,6 +24,7 @@ def candidate_context(items: Sequence[HeritageItem], max_chars: int) -> str:
                 f"[{payload['id']}] {payload['title']}",
                 f"类别：{payload.get('category', '')}；地区：{payload.get('province', '')} {payload.get('city', '')}",
                 f"简介：{str(payload.get('summary') or '')[:320]}",
+                f"来源：{payload['source_name']}" if payload.get("source_name") else "",
                 f"正文：{str(payload.get('content') or '')[:600]}",
             )
             if part.strip()

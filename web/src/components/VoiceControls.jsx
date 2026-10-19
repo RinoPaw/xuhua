@@ -89,7 +89,7 @@ export function VoiceSpectrum({ values }) {
   );
 }
 
-export function VoiceStatusRow({ status, connected, hasUserPartial, hasAssistantBubble }) {
+export function VoiceStatusRow({ status, connected, hasUserPartial, hasAssistantBubble, assistantName = "叙华" }) {
   const copy = VOICE_COPY[status];
   const disconnectedActionableStatus = status === REALTIME_VOICE_STATUS.CONNECTING;
   if ((!connected && !disconnectedActionableStatus)
@@ -102,9 +102,9 @@ export function VoiceStatusRow({ status, connected, hasUserPartial, hasAssistant
 
   return (
     <article className={`message-row ${copy.owner} thinking-row voice-status-row`} aria-live="polite">
-      {copy.owner === "assistant" && <span className="chat-avatar">叙</span>}
+      {copy.owner === "assistant" && <span className="chat-avatar">{assistantName.slice(0, 1)}</span>}
       <div className="message-content">
-        {copy.owner === "assistant" && <span className="message-author">叙华</span>}
+        {copy.owner === "assistant" && <span className="message-author">{assistantName}</span>}
         <div className="thinking-status">
           <span>{copy.label}</span>
           <i /><i /><i />

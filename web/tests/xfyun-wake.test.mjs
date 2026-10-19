@@ -11,6 +11,37 @@ import { createVoiceMachineState, reduceVoiceMachine } from "../src/hooks/voiceS
 const tick = async () => { for (let n = 0; n < 20; n++) await Promise.resolve(); };
 const log = { info() {}, error() {} };
 
+test("stop and immediate re-enable isolate two overlapping wake handshakes", async () => {
+  const pending = [];
+  const detector = { remote: true,
+    async start(callback) { this.callback = callback; return true; },
+    stop() {}, dispose() {}, finishHandoff() {},
+  };
+  const session = new PersonaBrowserVoiceSession({ log, wakeDetector: detector,
+    connection: { connected: false, start: () => new Promise(resolve => pending.push(resolve)), stop() {} },
+    createOutput: () => ({ append() { this.traceId = "ack"; }, finish() {}, stop() {}, dispose() {}, prewarm() {} }),
+  });
+  session.reportTiming = () => {};
+  try {
+    await session.armWake();
+    const old = detector.callback("叙华", {});
+    session.stop();
+    assert.equal(session.waking, false);
+    assert.equal(session.cloudHandoff, false);
+    await session.armWake();
+    const current = detector.callback("叙华", {});
+    assert.equal(session.waking, true);
+    pending[0](false);
+    await old;
+    assert.equal(session.waking, true, "old finally must not end the newer wake transition");
+    assert.equal(session.cloudHandoff, true);
+    session.stop();
+    pending[1](false);
+    await current;
+    assert.equal(session.autoWakeEnabled, false);
+  } finally { session.destroy(); }
+});
+
 function media() {
   return { requests: 0, stops: 0,
     async requestStream() { this.requests++; this.stream = {}; return this.stream; },

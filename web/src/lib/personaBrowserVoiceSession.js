@@ -180,12 +180,17 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
       this.recordDiagnostic("wake.remote.connected");
       return true;
     } finally {
-      this.waking = false;
+      if (generation === this.wakeGeneration) this.waking = false;
     }
   }
 
   handleConnectionClosed(event) {
     if (this.disposed || !this.autoWakeEnabled) return;
+    if (this.wakeDetector.remote) {
+      this.wakeDetector.stop();
+      this.recoverWake(new Error("wake_unavailable"));
+      return;
+    }
     this.log.info?.(`[叙华][persona] remote connection closed code=${event?.code ?? "-"}; restoring local wake`);
     void this.armWake();
   }
@@ -217,10 +222,12 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
       this.recoverWake(error);
       return false;
     } finally {
-      this.cloudHandoff = false;
-      this.waking = false;
-      if (!this.wakeRetryTimer) this.setWakeStarting(false);
-      this.scheduleSleepIfIdle();
+      if (generation === this.wakeGeneration) {
+        this.cloudHandoff = false;
+        this.waking = false;
+        if (!this.wakeRetryTimer) this.setWakeStarting(false);
+        this.scheduleSleepIfIdle();
+      }
     }
   }
 
@@ -348,6 +355,8 @@ export class PersonaBrowserVoiceSession extends BrowserVoiceSession {
   }
 
   stop() {
+    this.waking = false;
+    this.cloudHandoff = false;
     clearTimeout(this.wakeRetryTimer);
     this.wakeRetryTimer = null;
     this.wakeRetries = 0;

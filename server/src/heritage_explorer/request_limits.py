@@ -84,6 +84,9 @@ class RequestBodyLimitMiddleware:
 
         method = str(scope.get("method") or "").upper()
         path = str(scope.get("path") or "")
+        root = str(scope.get("root_path") or "").rstrip("/")
+        if root and path.startswith(root + "/"):
+            path = path[len(root):]
         if (method, path) not in self.routes:
             await self.app(scope, receive, send)
             return

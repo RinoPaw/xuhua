@@ -32,19 +32,20 @@ class _TtsTicketAccessLogFilter(logging.Filter):
     Keep the rest of the record intact, especially method/status/timing.
     """
 
-    _PREFIX = "/api/tts/"
+    _PREFIXES = ("/api/tts/", "/shizha/api/tts/")
 
     def filter(self, record: logging.LogRecord) -> bool:
         args = record.args
         if not isinstance(args, tuple) or len(args) < 3:
             return True
         path = args[2]
-        if isinstance(path, str) and path.startswith(self._PREFIX):
-            ticket = path[len(self._PREFIX):].split("?", 1)[0]
+        prefix = next((value for value in self._PREFIXES if isinstance(path, str) and path.startswith(value)), "")
+        if prefix:
+            ticket = path[len(prefix):].split("?", 1)[0]
             if ticket:
                 # Omit the query string too; there is no diagnostic benefit
                 # in preserving arbitrary parameters on an authenticated URL.
-                record.args = (*args[:2], "/api/tts/<redacted>", *args[3:])
+                record.args = (*args[:2], prefix + "<redacted>", *args[3:])
         return True
 
 

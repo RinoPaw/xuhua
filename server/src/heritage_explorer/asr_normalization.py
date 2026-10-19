@@ -342,6 +342,7 @@ def normalize_asr_final(
     recent_items: Iterable[Any] = (),
     asr_candidates: Iterable[Any] = (),
     language: str = "zh",
+    normalize_assistant: bool = True,
 ) -> NormalizedTranscript:
     """Conservatively correct likely Chinese ASR errors in a transcript.
 
@@ -356,7 +357,10 @@ def normalize_asr_final(
     if language_code not in {"zh", "cn", "zh_cn", "cn_cbm", "chinese"}:
         return NormalizedTranscript(original_text, original_text, ())
 
-    text, assistant_spans = _assistant_reference_normalization(original_text)
+    text, assistant_spans = (
+        _assistant_reference_normalization(original_text)
+        if normalize_assistant else (original_text, ())
+    )
     index = _get_index(kb)
     if not text or not index.entries:
         return NormalizedTranscript(original_text, text, assistant_spans)

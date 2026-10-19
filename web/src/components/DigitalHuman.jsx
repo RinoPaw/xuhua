@@ -27,7 +27,7 @@ function stopVideo(video) {
   video.onerror = null;
 }
 
-export function DigitalHuman({ mode = "idle", showBrand = true }) {
+export function DigitalHuman({ mode = "idle", showBrand = true, shizha = false }) {
   const normalizedMode = mode === "speaking" ? "speaking" : "idle";
   const videosRef = useRef([]);
   const activeSlotRef = useRef(0);
@@ -100,8 +100,8 @@ export function DigitalHuman({ mode = "idle", showBrand = true }) {
 
   return (
     <div className="human-stage">
-      <img className="human-poster" src="/assets/portraits/xuhua-guide.webp" alt="" />
-      {[0, 1].map((slot) => (
+      <img className="human-poster" src={shizha ? "/assets/portraits/panda-officer.jpg" : "/assets/portraits/xuhua-guide.webp"} alt={shizha ? "熊猫警官" : ""} />
+      {!shizha && [0, 1].map((slot) => (
         <video
           key={slot}
           ref={(node) => { videosRef.current[slot] = node; }}
@@ -118,10 +118,10 @@ export function DigitalHuman({ mode = "idle", showBrand = true }) {
       {showBrand && (
         <div className="human-caption">
           <div className="human-brand">
-            <img src="/assets/brand/xuhua-seal.png" alt="" />
+            {!shizha && <img src="/assets/brand/xuhua-seal.png" alt="" />}
             <div>
-              <strong>叙华</strong>
-              <small>非遗资料助手</small>
+              <strong>{shizha ? "熊猫警官" : "叙华"}</strong>
+              <small>{shizha ? "识诈安全助手" : "非遗资料助手"}</small>
             </div>
           </div>
         </div>

@@ -154,6 +154,9 @@ export class HeritageBrowserSession {
       this.state.searchQuery,
       this.state.filters.category,
       this.state.filters.level,
+      this.state.filters.risk_level || "",
+      this.state.filters.entry_channel || "",
+      this.state.filters.victim_group || "",
     ]);
   }
 
@@ -167,7 +170,8 @@ export class HeritageBrowserSession {
 
     const initialBrowse = !this.state.searchQuery
       && !this.state.filters.category
-      && !this.state.filters.level;
+      && !this.state.filters.level
+      && !this.state.filters.risk_level && !this.state.filters.entry_channel && !this.state.filters.victim_group;
     const itemCount = Math.max(0, Number(this.state.meta?.item_count) || 0);
     const startOffset = initialBrowse && itemCount > PROJECT_PAGE_SIZE
       ? this.promptSeed % (itemCount - PROJECT_PAGE_SIZE + 1)
@@ -204,6 +208,9 @@ export class HeritageBrowserSession {
       limit: String(limit),
       offset: String(offset),
     });
+    for (const key of ["risk_level", "entry_channel", "victim_group"]) {
+      if (this.state.filters[key]) query.set(key, this.state.filters[key]);
+    }
 
     try {
       const response = await this.fetchFn(this.url(`/api/items?${query}`), {
@@ -300,6 +307,11 @@ export class HeritageBrowserSession {
       filters: {
         category: String(next?.category || ""),
         level: String(next?.level || ""),
+        ...(this.apiBase === "/shizha" ? {
+          risk_level: String(next?.risk_level || ""),
+          entry_channel: String(next?.entry_channel || ""),
+          victim_group: String(next?.victim_group || ""),
+        } : {}),
       },
     };
     this.emit();

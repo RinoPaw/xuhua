@@ -104,6 +104,7 @@ class AssistantService:
         sessions: SessionStore | None = None,
         llm: LLMProvider | None = None,
         max_candidates: int = 12,
+        domain_policy=None,
     ) -> None:
         self.search = search or SearchService()
         self.sessions = sessions or SessionStore()
@@ -114,6 +115,11 @@ class AssistantService:
             timeout=AI_TIMEOUT,
         )
         self.max_candidates = max(1, min(max_candidates, 20))
+        self.domain_policy = domain_policy
+        self.spoken_names = getattr(domain_policy, "spoken_names", ("叙华",))
+
+    def _policy(self, name, default):
+        return getattr(self.domain_policy, name, default)
 
     async def aclose(self) -> None:
         close = getattr(self.llm, "aclose", None)
@@ -148,13 +154,13 @@ class AssistantService:
         _, turn_id, cancel_event = self.sessions.begin_turn(session.session_id, turn_id)
         sequence = EventSequence(session.session_id, turn_id)
         history = self.sessions.history(session.session_id)
-        reply_mode = short_reply_mode(question)
+        reply_mode = self._policy("short_reply_mode", short_reply_mode)(question)
         basis = (
             "conversation_reply"
             if reply_mode
-            else retrieval_basis(self.search, question, category, locale=locale)
+            else self._policy("retrieval_basis", retrieval_basis)(self.search, question, category, locale=locale)
         )
-        retrieval_query = localized_search_query(question, locale, basis)
+        retrieval_query = self._policy("localized_search_query", localized_search_query)(question, locale, basis)
         answer_parts: list[str] = []
         candidates: tuple[HeritageItem, ...] = ()
 
@@ -162,8 +168,9 @@ class AssistantService:
             yield sequence.make("turn.started", question=question, locale=locale)
             self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
 
-            if is_greeting(question, locale):
-                answer = localized_copy(locale, "greeting")
+            immediate = self._policy("immediate_answer", lambda *_: "")(question, locale)
+            if immediate or self._policy("is_greeting", is_greeting)(question, locale):
+                answer = immediate or self._policy("localized_copy", localized_copy)(locale, "greeting")
                 yield sequence.make("response.text.delta", delta=answer, locale=locale)
                 self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
                 yield sequence.make("response.sources", sources=[])
@@ -187,7 +194,7 @@ class AssistantService:
                     "turn.completed",
                     answer=answer,
                     confidence=1.0,
-                    suggested_questions=localized_greeting_suggestions(locale),
+                    suggested_questions=self._policy("localized_greeting_suggestions", localized_greeting_suggestions)(locale),
                     locale=locale,
                 )
                 return
@@ -214,7 +221,7 @@ class AssistantService:
                 and result.total > candidate_limit_value
                 and (
                     basis == "multilingual_catalogue"
-                    or is_scope_browse(self.search, question, category)
+                    or self._policy("is_scope_browse", is_scope_browse)(self.search, question, category)
                 )
             ):
                 offset = exploration_offset(
@@ -417,17 +424,18 @@ class AssistantService:
                     return
 
             self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
-            answer = "".join(answer_parts).strip() or fallback_answer(
+            answer = "".join(answer_parts).strip() or self._policy("fallback_answer", fallback_answer)(
                 question, candidates, history=history, locale=locale
             )
             if not answer_parts:
                 yield sequence.make("response.text.delta", delta=answer, locale=locale)
                 self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
 
-            source_items = used_sources(answer, candidates)
-            answer_confidence = confidence(source_items, answer)
+            source_items = self._policy("used_sources", used_sources)(answer, candidates)
+            answer_confidence = self._policy("confidence", confidence)(source_items, answer)
             source_ids = tuple(item.id for item in source_items)
-            source_payload = [item_to_dict(item) for item in source_items]
+            serialize = self._policy("item_to_dict", item_to_dict)
+            source_payload = [serialize(item) for item in source_items]
             yield sequence.make("response.sources", sources=source_payload)
             self._raise_if_cancelled(session.session_id, turn_id, cancel_event)
             committed = self.sessions.append(
@@ -456,7 +464,7 @@ class AssistantService:
                 "turn.completed",
                 answer=answer,
                 confidence=answer_confidence,
-                suggested_questions=suggestions(source_items, locale=locale),
+                suggested_questions=self._policy("suggestions", suggestions)(source_items, locale=locale),
                 locale=locale,
             )
         except _TurnCancelled as exc:
@@ -484,7 +492,7 @@ class AssistantService:
         )
 
     def _candidate_limit(self, question: str, category: str = "") -> int:
-        return candidate_limit(self.search, question, category, self.max_candidates)
+        return self._policy("candidate_limit", candidate_limit)(self.search, question, category, self.max_candidates)
 
     def _messages(
         self,
@@ -496,6 +504,9 @@ class AssistantService:
         retrieval_basis: str | None = None,
         locale: str = DEFAULT_LOCALE,
     ) -> list[dict[str, str]]:
+        if self.domain_policy is not None:
+            return self.domain_policy.build_messages(question, candidates, history, reply_mode=reply_mode,
+                                                      retrieval_basis=retrieval_basis, locale=locale)
         return build_messages(
             question,
             candidates,

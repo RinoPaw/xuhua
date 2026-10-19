@@ -63,6 +63,12 @@ def test_uvicorn_access_log_redacts_tts_ticket_and_query_without_dropping_status
     assert "ANOTHER_SECRET" not in output.getvalue()
     logger.info(
         '%s - "%s %s HTTP/%s" %d',
+        "127.0.0.1:51000", "GET", "/shizha/api/tts/CASE_SECRET?stream=1", "1.1", 200,
+    )
+    assert "GET /shizha/api/tts/<redacted>" in output.getvalue()
+    assert "CASE_SECRET" not in output.getvalue()
+    logger.info(
+        '%s - "%s %s HTTP/%s" %d',
         "127.0.0.1:51000", "POST", "/api/tts", "1.1", 200,
     )
     assert 'POST /api/tts HTTP/1.1" 200' in output.getvalue()

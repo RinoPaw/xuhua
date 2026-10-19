@@ -22,12 +22,15 @@ import {
 } from "./lib/conversationState.js";
 import { composerAction, effectiveVoiceStatus } from "./lib/conversationUiState.js";
 import { getLocaleHint, getPreferredLocales } from "./lib/locale.js";
+import { agentProfile } from "./lib/agentProfile.js";
 
-const API_BASE = import.meta.env.VITE_API_BASE || "";
 const LOCALE_HINT = getLocaleHint();
 const PREFERRED_LOCALES = getPreferredLocales();
 
-function App() {
+function App({ profile = agentProfile() }) {
+  const API_BASE = profile.apiBase;
+  const name = profile.name;
+  const isShizha = profile.shizha;
   const [pageSessionId] = useState(createConversationSessionId);
   const [state, dispatch] = useReducer(
     conversationReducer,
@@ -37,6 +40,7 @@ function App() {
   const [leftOpen, setLeftOpen] = useState(false);
   const [rightOpen, setRightOpen] = useState(false);
   const [promptSeed] = useState(() => getSessionSeed());
+  useEffect(() => { document.title = `${name} · ${profile.library}`; }, [name, profile.library]);
 
   const chatEnd = useRef(null);
   const realtimeRef = useRef(null);
@@ -159,6 +163,7 @@ function App() {
   const showLevelFilter = levels.length > 1;
   const personaMode = realtime.isPlaying ? "speaking" : "idle";
   const welcomePrompts = useMemo(() => {
+    if (isShizha) return ["刷单返利有哪些风险信号？", "遇到冒充客服该怎么办？"];
     const visibleItems = items.filter((item) => item?.title);
     const category = categories.length ? categories[promptSeed % categories.length] : null;
     const item = visibleItems.length ? visibleItems[(promptSeed * 7) % visibleItems.length] : null;
@@ -166,7 +171,7 @@ function App() {
       category ? `有哪些${category.name}项目值得了解？` : "按类别浏览国家级非遗项目",
       item ? `${item.title}有什么特点？` : "查找一个非遗项目",
     ];
-  }, [categories, items, promptSeed]);
+  }, [categories, items, promptSeed, isShizha]);
 
   const startVoice = async () => {
     if (!available) {
@@ -248,12 +253,12 @@ function App() {
           type="button"
           aria-expanded={leftOpen}
           onClick={() => setLeftOpen((value) => !value)}
-        >叙华</button>
+        >{name}</button>
         <button
           type="button"
           aria-expanded={rightOpen}
           onClick={() => setRightOpen((value) => !value)}
-        >项目库</button>
+        >{isShizha ? "案例库" : "项目库"}</button>
       </div>
 
       <div className="workspace">
@@ -262,14 +267,14 @@ function App() {
             className="panel-dismiss"
             type="button"
             onClick={() => setLeftOpen(false)}
-            aria-label="关闭叙华人物面板"
+            aria-label={`关闭${name}人物面板`}
           ><X /></button>
-          <DigitalHuman mode={personaMode} />
+          <DigitalHuman mode={personaMode} shizha={isShizha} />
         </aside>
 
         <section className="center-panel">
           <div className="conversation-toolbar">
-            <span className="conversation-title">与叙华对话</span>
+            <span className="conversation-title">与{name}对话</span>
             {meta?.app_version && (
               <span className="conversation-version" aria-label={`版本 ${meta.app_version}`}>
                 v{meta.app_version}
@@ -281,7 +286,7 @@ function App() {
             <div className={`message-stack ${showConversationEmpty ? "is-empty" : ""} ${showVoiceStatusOnly ? "is-status-only" : ""}`}>
               {showConversationEmpty && (
                 <section className="conversation-empty" aria-label="开始对话">
-                  <h1>想从哪项非遗开始？</h1>
+                  <h1>{isShizha ? "遇到了什么可疑情况？" : "想从哪项非遗开始？"}</h1>
                   <PromptChips
                     prompts={welcomePrompts}
                     rotationSeed={promptSeed}
@@ -294,6 +299,7 @@ function App() {
                 <ConversationMessage
                   key={message.id}
                   message={message}
+                  assistantName={name}
                   onOpen={openItem}
                   onAsk={submitQuestion}
                   rotationSeed={promptSeed + Number(String(message.id).replace(/\D/g, ""))}
@@ -301,9 +307,9 @@ function App() {
               ))}
               {waitingForFirstToken && (
                 <article className="message-row assistant thinking-row" aria-live="polite">
-                  <span className="chat-avatar">叙</span>
+                  <span className="chat-avatar">{name.slice(0, 1)}</span>
                   <div className="message-content">
-                    <span className="message-author">叙华</span>
+                    <span className="message-author">{name}</span>
                     <div className="thinking-status">
                       <span>{state.phase === "retrieving" ? "查找资料中" : "生成回答中"}</span>
                       <i /><i /><i />
@@ -312,6 +318,7 @@ function App() {
                 </article>
               )}
               <VoiceStatusRow
+                assistantName={name}
                 status={voiceStatus}
                 connected={connected}
                 hasUserPartial={hasUserPartial}
@@ -343,7 +350,7 @@ function App() {
                     maxLength="500"
                     value={questionDraft}
                     onChange={(event) => setQuestionDraft(event.target.value)}
-                    placeholder="向叙华提问"
+                    placeholder={`向${name}提问`}
                     aria-label="输入问题"
                   />
                 )}
@@ -376,7 +383,7 @@ function App() {
             className="panel-dismiss"
             type="button"
             onClick={() => setRightOpen(false)}
-            aria-label="关闭项目库"
+            aria-label={`关闭${profile.library}`}
           ><X /></button>
           {selected ? (
             <ItemDetail
@@ -389,8 +396,8 @@ function App() {
             <>
               <div className="right-tools">
                 <div className="right-heading">
-                  <h2>非遗项目</h2>
-                  <span>{levels.length === 1 ? `${levels[0]}名录` : "资料库"}</span>
+                  <h2>{profile.library}</h2>
+                  <span>{isShizha ? "案例库" : levels.length === 1 ? `${levels[0]}名录` : "资料库"}</span>
                 </div>
                 <form
                   className="search-form"
@@ -402,8 +409,8 @@ function App() {
                   <input
                     value={searchDraft}
                     onChange={(event) => updateSearchDraft(event.target.value)}
-                    placeholder="搜索项目、地区或关键词"
-                    aria-label="搜索非遗项目"
+                    placeholder={isShizha ? "搜索案例、手法或关键词" : "搜索项目、地区或关键词"}
+                    aria-label={`搜索${profile.library}`}
                   />
                   <button type="submit">搜索</button>
                 </form>
@@ -421,7 +428,7 @@ function App() {
                     </label>
                   )}
                   <label className="filter-select">
-                    <span className="sr-only">非遗类别</span>
+                    <span className="sr-only">{isShizha ? "诈骗类别" : "非遗类别"}</span>
                     <select
                       value={filters.category}
                       onChange={(event) => applyFilters({ ...filters, category: event.target.value })}
@@ -435,6 +442,21 @@ function App() {
                     </select>
                   </label>
                 </div>
+                {isShizha && (
+                  <div className="filter-row case-filters">
+                    {[["risk_level", "风险等级", meta?.risk_levels], ["entry_channel", "入口渠道", meta?.entry_channels],
+                      ["victim_group", "受害人群", meta?.victim_groups]].map(([key, label, options]) => (
+                        <label className="filter-select" key={key}>
+                          <span className="sr-only">{label}</span>
+                          <select aria-label={label} value={filters[key] || ""}
+                            onChange={event => applyFilters({ ...filters, [key]: event.target.value })}>
+                            <option value="">全部{label}</option>
+                            {(options || []).map(value => <option key={value} value={value}>{value}</option>)}
+                          </select>
+                        </label>
+                      ))}
+                  </div>
+                )}
                 <div className="result-head">
                   <span>{loading && items.length === 0 ? "检索中" : `共 ${total} 项`}</span>
                   <span>{loading && items.length === 0 ? "载入中" : `已载入 ${items.length}`}</span>
@@ -451,7 +473,7 @@ function App() {
                     <SourceItem key={item.id} item={item} onOpen={openItem} />
                   ))}
                   {!loading && !searchError && items.length === 0 && (
-                    <div className="empty-state">没有匹配项目</div>
+                    <div className="empty-state">没有匹配{profile.noun}</div>
                   )}
                   {loading && items.length > 0 && (
                     <div className="source-list-status" aria-live="polite">继续加载中</div>

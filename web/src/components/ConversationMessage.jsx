@@ -42,7 +42,7 @@ function CitationCards({ sources, onOpen }) {
         {sources.map((item) => (
           <button key={item.id} type="button" className="citation-card" onClick={() => onOpen(item)}>
             <span className="citation-title">{item.title || "未命名项目"}</span>
-            <span className="citation-meta">{item.level || "级别未注明"} · {formatRegion(item)}</span>
+            <span className="citation-meta">{item.case_id ? `${item.risk_level || "风险未标注"} · ${item.source_name || "来源未注明"}` : `${item.level || "级别未注明"} · ${formatRegion(item)}`}</span>
             <CaretRight aria-hidden="true" />
           </button>
         ))}
@@ -66,13 +66,13 @@ export function PromptChips({ prompts, onAsk, className = "", rotationSeed = 0 }
   );
 }
 
-export function ConversationMessage({ message, onOpen, onAsk, rotationSeed = 0 }) {
+export function ConversationMessage({ message, onOpen, onAsk, rotationSeed = 0, assistantName = "叙华" }) {
   const compact = isCompactMessage(message);
   return (
     <article className={`message-row ${message.role}`}>
-      {message.role === "assistant" && <span className="chat-avatar">叙</span>}
+      {message.role === "assistant" && <span className="chat-avatar">{assistantName.slice(0, 1)}</span>}
       <div className="message-content">
-        {message.role === "assistant" && <span className="message-author">叙华</span>}
+        {message.role === "assistant" && <span className="message-author">{assistantName}</span>}
         <div className={`message-bubble ${compact ? "compact" : ""}`}>
           <Markdown text={message.content} status={message.status} />
         </div>

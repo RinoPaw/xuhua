@@ -47,6 +47,10 @@ browser VAD → /api/voice → Xunfei streaming ASR
 - On the chat page, an enabled microphone stays in continuous conversation mode. Isolated calls
   of “叙华” receive the same cached “我在。” acknowledgement as Persona; calls with a real question
   continue through normal answers. Do not add Persona's idle sleep gate to the chat page.
+- `/shizha` uses the same Xuhua app, retrieval engine, conversation lifecycle and voice pipeline.
+  Only migrate Shizha's case data and panda-officer assets, with small data/identity adapters.
+  Keep its `/shizha/api` routes, knowledge base and sessions separate from the heritage agent.
+  Do not bring back the old Shizha frontend, retrieval/embedding engine or voice implementation.
 
 Do not add or document an OpenAI Realtime/WebRTC path. Text chat and realtime voice must continue to
 share the same session, turn, cancellation, retrieval, and assistant core. Voice UI state should be

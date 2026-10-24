@@ -23,6 +23,8 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
   conversation bubbles take priority over decorative chrome, large empty states, or redundant labels.
 - Project imagery is intentionally not displayed for now; do not add empty image regions, “待上传” text,
   or visual placeholders. The digital human itself remains a real video surface.
+- Xuhua uses the existing videos in both Persona and chat. Do not restore the static
+  `xuhua-guide.webp` portrait or its image fallback.
 - Treat `.superdesign/references/xuhua-high-fidelity-direction.png` as historical exploration, not a
   license to restore the superseded dark-wood/high-decoration treatment.
 - The standalone persona page is commonly shown at 9:16. Keep the digital human as the nearly

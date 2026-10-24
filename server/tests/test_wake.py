@@ -102,6 +102,10 @@ def test_bridge_keeps_private_token_server_side_and_releases_owner(monkeypatch):
             ws.send_bytes(bytes(640))
             ws.send_json({'type': 'ping'})
             assert ws.receive_json() == {'type': 'pong'}
+            # Wait for the normal disconnect cleanup before reconnecting.
+            # Exiting TestClient's context immediately cancels the ASGI task.
+            ws.close()
+            assert ws.receive()['type'] == 'websocket.close'
     assert json.loads(received[0])['token'] == 'private-service-secret'
     assert bytes(640) in received
 

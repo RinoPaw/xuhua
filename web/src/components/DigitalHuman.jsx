@@ -100,7 +100,7 @@ export function DigitalHuman({ mode = "idle", showBrand = true, shizha = false }
 
   return (
     <div className="human-stage">
-      <img className="human-poster" src={shizha ? "/assets/portraits/panda-officer.jpg" : "/assets/portraits/xuhua-guide.webp"} alt={shizha ? "熊猫警官" : ""} />
+      {shizha && <img className="human-poster" src="/assets/portraits/panda-officer.jpg" alt="熊猫警官" />}
       {!shizha && [0, 1].map((slot) => (
         <video
           key={slot}

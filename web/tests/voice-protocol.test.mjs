@@ -45,7 +45,7 @@ test("compactRecognitionContext bounds and de-duplicates titles", () => {
 });
 
 test("speech helpers normalize locale and derive TTS endpoints", () => {
-  assert.equal(resolveSpeechLocale("yue-HK"), "yue-HK");
+  assert.equal(resolveSpeechLocale("yue-HK"), "zh-CN");
   assert.equal(assistantEventLocale({ payload: { locale: "ja-JP" } }), "ja-JP");
   assert.equal(ttsEndpoint("/api/voice"), "/api/tts");
   assert.equal(

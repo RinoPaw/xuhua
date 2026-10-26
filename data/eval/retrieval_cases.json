@@ -1,0 +1,166 @@
+{
+  "schema_version": 1,
+  "description": "Unreviewed candidate prompts only. No gold labels are asserted until evidence-based human review.",
+  "cases": [
+    {
+      "id": "zh-01",
+      "language": "zh-CN",
+      "task": "item_lookup",
+      "question": "请介绍昆曲的历史与艺术特色。",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "zh-02",
+      "language": "zh-CN",
+      "task": "region_lookup",
+      "question": "河南省的豫剧有哪些代表性特点？",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "zh-03",
+      "language": "zh-CN",
+      "task": "item_lookup",
+      "question": "汴绣的工艺特点是什么？",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "zh-04",
+      "language": "zh-CN",
+      "task": "category_browse",
+      "question": "请推荐三项适合中学生了解的传统美术项目。",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "zh-05",
+      "language": "zh-CN",
+      "task": "education_task",
+      "question": "准备一次十分钟的非遗课堂讲解，有哪些传统技艺适合介绍？",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "en-01",
+      "language": "en-US",
+      "task": "multilingual_lookup",
+      "question": "Tell me about the Chinese intangible cultural heritage project Kunqu opera.",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "en-02",
+      "language": "en-US",
+      "task": "multilingual_lookup",
+      "question": "What is traditional Chinese paper cutting?",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "en-03",
+      "language": "en-US",
+      "task": "multilingual_lookup",
+      "question": "Introduce Peking opera and its cultural significance.",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "en-04",
+      "language": "en-US",
+      "task": "category_browse",
+      "question": "Recommend traditional Chinese crafts to explore at school.",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "en-05",
+      "language": "en-US",
+      "task": "education_task",
+      "question": "Which traditional Chinese performing arts would suit a school presentation?",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "ja-01",
+      "language": "ja-JP",
+      "task": "multilingual_lookup",
+      "question": "中国の無形文化遺産「昆曲」を紹介してください。",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "ja-02",
+      "language": "ja-JP",
+      "task": "multilingual_lookup",
+      "question": "中国の京劇について教えてください。",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "ja-03",
+      "language": "ja-JP",
+      "task": "category_browse",
+      "question": "中国の伝統工芸にはどのようなものがありますか。",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "ja-04",
+      "language": "ja-JP",
+      "task": "region_lookup",
+      "question": "河南省の伝統芸能を紹介してください。",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "ja-05",
+      "language": "ja-JP",
+      "task": "education_task",
+      "question": "学校で紹介する中国の無形文化遺産を三つ選んでください。",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "ko-01",
+      "language": "ko-KR",
+      "task": "multilingual_lookup",
+      "question": "중국의 곤곡이라는 무형문화유산을 소개해 주세요.",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "ko-02",
+      "language": "ko-KR",
+      "task": "multilingual_lookup",
+      "question": "중국의 경극에 대해 알려 주세요.",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "ko-03",
+      "language": "ko-KR",
+      "task": "category_browse",
+      "question": "중국의 전통 공예에는 어떤 종류가 있나요?",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "ko-04",
+      "language": "ko-KR",
+      "task": "region_lookup",
+      "question": "중국 허난성의 전통 공연 예술을 소개해 주세요.",
+      "status": "draft",
+      "expected_item_ids": []
+    },
+    {
+      "id": "ko-05",
+      "language": "ko-KR",
+      "task": "education_task",
+      "question": "학교 발표에 적합한 중국 무형문화유산 세 가지를 추천해 주세요.",
+      "status": "draft",
+      "expected_item_ids": []
+    }
+  ]
+}

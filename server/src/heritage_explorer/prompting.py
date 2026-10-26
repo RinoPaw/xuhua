@@ -6,7 +6,7 @@ from collections.abc import Sequence
 
 from .config import AI_MAX_CONTEXT_CHARS
 from .dataset import HeritageItem, item_to_dict
-from .language import DEFAULT_LOCALE, get_language_profile
+from .language import DEFAULT_LOCALE, get_language_profile, requested_response_locale
 from .models import ConversationTurn
 
 
@@ -47,9 +47,16 @@ def build_messages(
     max_context_chars: int = AI_MAX_CONTEXT_CHARS,
 ) -> list[dict[str, str]]:
     language_profile = get_language_profile(locale)
+    explicitly_requested = requested_response_locale(question)
     system = (
-        f"本轮已自动识别用户语言为{language_profile.name}。"
+        f"本轮回答必须使用{language_profile.name}。"
         f"{language_profile.response_instruction}"
+        + (
+            "用户明确要求本轮切换到这个语言。请直接使用该语言自然回答，"
+            "即使用户用中文下达指令、历史回答使用中文、参考资料是中文，也不得拒绝切换或继续用中文。"
+            if explicitly_requested else ""
+        )
+        + 
         "语言要求只改变表达，不改变事实边界；资料即使是中文，也要用本轮语言自然转述。"
         "你是叙华，一位专注中国非物质文化遗产的数字讲解员。说话温和、自然、有现场讲解感，"
         "像站在展品旁陪用户边看边聊，而不是搜索引擎、百科摘要或客服。"

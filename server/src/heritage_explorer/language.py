@@ -149,9 +149,71 @@ def _latin_locale(text: str, hint: str | None) -> str:
     return "en-US"
 
 
+
+# A request to *speak* a language overrides the script used to ask for it.
+# Keep this narrow: mentioning English/Japanese/Korean as a heritage topic
+# must never silently switch the language of an unrelated answer.
+_REQUESTED_LANGUAGE = {
+    "英语": "en-US", "英文": "en-US",
+    "日语": "ja-JP", "日文": "ja-JP",
+    "韩语": "ko-KR", "韩文": "ko-KR",
+    "中文": "zh-CN", "汉语": "zh-CN", "普通话": "zh-CN",
+    "english": "en-US", "japanese": "ja-JP",
+    "korean": "ko-KR", "chinese": "zh-CN",
+}
+_CN_LANGUAGE = r"(?:英语|英文|日语|日文|韩语|韩文|中文|汉语|普通话)"
+_CN_REQUEST_PREFIX = (
+    r"^\s*(?:(?:叙华[，,、]?\s*|请你|请|麻烦|帮我|能不能|可以|"
+    r"给我|你|现在|接下来|先|再|试着|我想|我希望|就|都)\s*)*"
+)
+_CN_LANGUAGE_COMMANDS = (
+    re.compile(
+        _CN_REQUEST_PREFIX
+        + rf"(?:用|改用|换成|切换到|切换成)\s*(?P<language>{_CN_LANGUAGE})"
+    ),
+    re.compile(
+        _CN_REQUEST_PREFIX
+        + rf"(?:说|讲|念|读)\s*(?:一|两|几|三)?\s*(?:句|段|点|些|句话)?\s*"
+        + rf"(?P<language>{_CN_LANGUAGE})(?=$|[\s，,。！!？?；;、]|吧|看看|试试)"
+    ),
+)
+_EN_LANGUAGE_COMMAND = re.compile(
+    r"^\s*(?:please\s+)?(?:speak|answer|reply|respond|talk|say\s+(?:something|"
+    r"a\s+sentence))\s+(?:(?:to\s+me)\s+)?(?:in\s+)?"
+    r"(?P<language>english|japanese|korean|chinese)\b",
+    re.IGNORECASE,
+)
+_JA_LANGUAGE_COMMAND = re.compile(
+    r"^\s*(?P<language>英語|日本語|韓国語|中国語)で(?:話|答|説明|紹介|言)"
+)
+_KO_LANGUAGE_COMMAND = re.compile(
+    r"^\s*(?P<language>영어|일본어|한국어|중국어)로(?:\s|$)"
+)
+_ADDITIONAL_LANGUAGE_NAMES = {
+    "英語": "en-US", "日本語": "ja-JP", "韓国語": "ko-KR", "中国語": "zh-CN",
+    "영어": "en-US", "일본어": "ja-JP",
+    "한국어": "ko-KR", "중국어": "zh-CN",
+}
+
+
+def requested_response_locale(text: object) -> str | None:
+    """Return a locale only when the user clearly asks to speak that language."""
+    content = str(text or "").strip()
+    for pattern in (*_CN_LANGUAGE_COMMANDS, _EN_LANGUAGE_COMMAND,
+                    _JA_LANGUAGE_COMMAND, _KO_LANGUAGE_COMMAND):
+        match = pattern.search(content)
+        if match:
+            name = match.group("language")
+            return _REQUESTED_LANGUAGE.get(name.casefold()) or _ADDITIONAL_LANGUAGE_NAMES.get(name)
+    return None
+
+
 def detect_locale(text: object, *, hint: object = None) -> str:
     """Detect a response/TTS locale, using the browser locale only as a tie-breaker."""
 
+    requested = requested_response_locale(text)
+    if requested:
+        return requested
     content = str(text or "").strip()
     normalized_hint = normalize_locale_hint(hint)
     if not content:
@@ -204,4 +266,5 @@ __all__ = [
     "is_chinese_locale",
     "locale_from_provider_language",
     "normalize_locale_hint",
+    "requested_response_locale",
 ]

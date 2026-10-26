@@ -56,3 +56,36 @@ def test_chinese_is_the_only_chinese_language_profile() -> None:
     assert not is_chinese_locale("ja-JP")
     assert not is_chinese_locale("ko-KR")
     assert get_language_profile("yue-CN").code == "zh-CN"
+
+
+def test_explicit_language_commands_override_the_script_and_provider_hint() -> None:
+    requests = {
+        "说一句英文。": "en-US",
+        "给我说一句英语": "en-US",
+        "请用英文回答": "en-US",
+        "用日语介绍一下苏绣": "ja-JP",
+        "说一句日文。": "ja-JP",
+        "请说一句韩文": "ko-KR",
+        "用韩语跟我聊": "ko-KR",
+        "换成中文回答": "zh-CN",
+        "Speak Korean.": "ko-KR",
+        "Please answer in Japanese": "ja-JP",
+        "英語で話してください": "en-US",
+        "영어로 대답해 주세요": "en-US",
+    }
+    for text, expected in requests.items():
+        assert detect_locale(text, hint="zh-CN") == expected, text
+
+
+def test_mentioning_languages_does_not_force_a_response_language() -> None:
+    from heritage_explorer.language import requested_response_locale
+
+    for text in (
+        "英语和日语分别有哪些特点？",
+        "英文怎么说？",
+        "介绍一下日语中的非遗词汇",
+        "帮我解释“说一句韩文”是什么意思",
+        "What is the Japanese name of this craft?",
+    ):
+        assert requested_response_locale(text) is None, text
+    assert detect_locale("英语和日语分别有哪些特点？") == "zh-CN"

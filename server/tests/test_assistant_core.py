@@ -343,3 +343,22 @@ def test_invalid_input_has_one_explicit_terminal_event():
     assert empty[0].payload == {"code": "empty_question"}
     assert [event.type for event in too_long] == ["turn.failed"]
     assert too_long[0].payload == {"code": "question_too_long", "max_chars": 4000}
+
+
+def test_chinese_language_switch_commands_set_reply_locale_and_prompt() -> None:
+    for command, expected, phrase in (
+        ("说一句英文。", "en-US", "Reply in natural English"),
+        ("说一句日文。", "ja-JP", "日本語で答えて"),
+        ("说一句韩文。", "ko-KR", "한국어로 답하세요"),
+    ):
+        llm = FakeLLM(("Hello, I'm Xuhua.",))
+        service = AssistantService(
+            search=RecordingSearch(), sessions=SessionStore(), llm=llm
+        )
+        events = collect(service.stream_turn(command, locale_hint="zh-CN"))
+        assert events[-1].payload["locale"] == expected
+        assert llm.messages, command
+        system = llm.messages[0][0]["content"]
+        assert phrase in system
+        assert "用户明确要求本轮切换到这个语言" in system
+        assert "即使用户用中文下达指令" in system

@@ -50,12 +50,14 @@ jobs:
           key: wake-assets-${{ runner.os }}-${{ hashFiles('web/scripts/prepare-wake-assets.mjs') }}
       - run: uv lock --check
       - run: uv sync --frozen --group dev
+      - name: Prepare evaluation reports
+        run: mkdir -p reports
       - name: Audit heritage knowledge base
-        run: uv run python tools/audit_heritage.py --strict
+        run: uv run python tools/audit_heritage.py --strict --output reports/data-audit.json
       - name: Measure corpus-derived retrieval sanity
-        run: uv run python tools/evaluate_retrieval.py
+        run: uv run python tools/evaluate_retrieval.py --output reports/retrieval-smoke.json
       - name: Validate four-language evaluation candidates (unreviewed)
-        run: uv run python tools/evaluate_labeled.py --summary
+        run: uv run python tools/evaluate_labeled.py --summary --output reports/retrieval-review.json
       - run: uv run pytest -q
       - run: uv run ruff check server/src tools server/tests
       - run: uv run python -m compileall -q server/src tools
@@ -112,3 +114,11 @@ jobs:
               html = response.read().decode("utf-8")
           assert 'id="root"' in html
           PY
+      - name: Upload evaluation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: evaluation-reports
+          path: reports/*.json
+          if-no-files-found: warn
+          retention-days: 30

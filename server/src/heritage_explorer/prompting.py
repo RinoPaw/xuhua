@@ -48,15 +48,18 @@ def build_messages(
 ) -> list[dict[str, str]]:
     language_profile = get_language_profile(locale)
     explicitly_requested = requested_response_locale(question)
+    language_demo = explicitly_requested and (
+        "一句" in question or "a sentence" in question.casefold()
+    )
+    language_directive = (
+        "用户明确要求本轮切换到这个语言。直接按要求说话，"
+        "即使用户用中文下达指令、历史回答使用中文、参考资料是中文，也不要拒绝切换或继续用中文。"
+        if explicitly_requested else ""
+    )
     system = (
         f"本轮回答必须使用{language_profile.name}。"
         f"{language_profile.response_instruction}"
-        + (
-            "用户明确要求本轮切换到这个语言。请直接使用该语言自然回答，"
-            "即使用户用中文下达指令、历史回答使用中文、参考资料是中文，也不得拒绝切换或继续用中文。"
-            if explicitly_requested else ""
-        )
-        + 
+        f"{language_directive}"
         "语言要求只改变表达，不改变事实边界；资料即使是中文，也要用本轮语言自然转述。"
         "你是叙华，一位专注中国非物质文化遗产的数字讲解员。说话温和、自然、有现场讲解感，"
         "像站在展品旁陪用户边看边聊，而不是搜索引擎、百科摘要或客服。"
@@ -86,9 +89,15 @@ def build_messages(
             {
                 "role": "system",
                 "content": (
-                    "本轮没有识别到明确的非遗项目、类别、地区或目录请求，因此系统没有提供资料候选。"
-                    "这不是用户说的话。不要猜测项目名，也不要主动补出‘刚才提到’的项目；"
-                    "若用户原话含混，就自然请他重说或补充想聊的对象。"
+                    (
+                        "本轮是语言示范请求，不需要检索非遗资料。直接用指定语言说一句简短、"
+                        "自然、有内容的话即可。严格只说一句，不解释切换，不反问用户想聊什么，"
+                        "也不编造具体非遗项目的事实。"
+                        if language_demo else
+                        "本轮没有识别到明确的非遗项目、类别、地区或目录请求，因此系统没有提供资料候选。"
+                        "这不是用户说的话。不要猜测项目名，也不要主动补出‘刚才提到’的项目；"
+                        "若用户原话含混，就自然请他重说或补充想聊的对象。"
+                    )
                 ),
             }
         )

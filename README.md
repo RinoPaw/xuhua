@@ -8,7 +8,7 @@
 - 流式问答：FastAPI SSE 输出，回答与资料来源共用同一检索核心。
 - 连续会话：服务端维护 session / turn，并支持取消当前回答。
 - 实时语音：人物页休眠时通过本地 Sherpa-ONNX 检测唤醒词“叙华”，唤醒后再建立远端语音连接；浏览器 VAD 采集 PCM，经讯飞流式 ASR 转写后进入同一回答链路。
-- 中英语音识别：当前只使用讯飞“中英识别大模型”一条 ASR 链路，配置为 `zh_cn` / `mandarin` / `slm`。
+- 多语种语音识别：使用讯飞“大模型多语种语音识别”单路 ASR，配置为 `mul_cn` / `mandarin` / `slm`；不传 `ln`，自动识别中文、英文、日文、韩文等语种。多语种识别的方言表现需要实测，不能沿用中英模型的 202 种方言能力承诺。
 - 讯飞官方在线语音合成（流式版）：浏览器先向 `/api/tts` 换取短期、客户端绑定的 ticket；首播请求使用 `/api/tts/{token}?stream=1` 在收到第一块 MP3 后开始渐进传输，重试和旧客户端仍使用完整缓冲。支持中断与有界重试，不使用浏览器 `speechSynthesis` 降级；需要在讯飞控制台单独开通在线语音合成服务与所用音色。
 - 数字人界面：React / Vite Web 客户端，由 FastAPI 同源提供构建产物。
 
@@ -112,7 +112,7 @@ Copy-Item .env.example .env
 | `XF_APP_ID` | 空 | 讯飞应用 ID |
 | `XF_API_KEY` | 空 | 讯飞 API Key |
 | `XF_API_SECRET` | 空 | 讯飞 API Secret |
-| `XF_ASR_HOST` | `iat.xf-yun.com` | 当前中英识别大模型 WebSocket 主机 |
+| `XF_ASR_HOST` | `iat.cn-huabei-1.xf-yun.com` | 多语种识别大模型 WebSocket 主机；旧 `.env` 需要手动更新此值 |
 | `CHAT_MAX_CONCURRENCY` | `8` | 单实例同时进行的文字回答上限 |
 | `CHAT_MAX_PER_MINUTE` | `60` | 单实例每分钟允许启动的文字回答上限 |
 | `CHAT_MAX_PER_CLIENT_PER_MINUTE` | `20` | 单客户端每分钟允许启动的文字回答上限 |

@@ -53,6 +53,29 @@ def audit(source_path: Path, runtime_path: Path) -> dict:
                       "province", "city", "district", "level")
     }
     rebuilt = build_dataset(source_path)
+    # Diagnostic samples only. These remain warnings until the original
+    # administrative unit and project numbers have been verified.
+    aligned_source = records if len(records) == len(items) else [{} for _ in items]
+    missing_region_samples = [
+        {
+            "id": item.get("id"), "title": item.get("title"),
+            "raw_unit": next((str(raw.get(k)) for k in
+                              ("unit", "location", "address", "region", "province_name")
+                              if isinstance(raw, dict) and raw.get(k)), ""),
+            "project_num": raw.get("project_num") if isinstance(raw, dict) else None,
+        }
+        for item, raw in zip(items, aligned_source)
+        if not str(item.get("province") or "").strip()
+    ][:12]
+    colliding = {key for key, count in regional_keys.items() if count > 1}
+    duplicate_region_samples = [
+        {"id": item.get("id"), "title": item.get("title"),
+         "province": item.get("province"), "city": item.get("city"),
+         "district": item.get("district")}
+        for item in items
+        if (item.get("title"), item.get("province"), item.get("city"),
+            item.get("district")) in colliding
+    ][:12]
     issues: list[dict] = []
 
     def flag(level: str, code: str, count: int | bool) -> None:
@@ -107,6 +130,10 @@ def audit(source_path: Path, runtime_path: Path) -> dict:
                 x != y for x, y in zip(rebuilt["items"], items)
             ) + abs(len(rebuilt["items"]) - len(items)),
             "same_categories": rebuilt["categories"] == categories,
+        },
+        "diagnostics": {
+            "missing_province_samples": missing_region_samples,
+            "same_title_region_samples": duplicate_region_samples,
         },
         "issues": issues,
         "passed": not any(i["severity"] == "error" for i in issues),

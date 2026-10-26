@@ -48,6 +48,12 @@ uv run python tools/evaluate_labeled.py --require-approved --output evaluation.j
 
 `--require-approved` 在所有候选仍未核验时退出非零，防止误发“正式评测通过”。
 
+CI 完成后，可在 GitHub Actions 的 `evaluation-reports` 工件下载三份 JSON：
+`data-audit.json`（知识库完整性）、`retrieval-smoke.json`（源数据生成的精确名称回归）
+及 `retrieval-review.json`（20 条候选问题的前五项检索预览）。
+评测 JSON 还附带知识库和问题集文件的 SHA-256，用于版本对应。
+未核验问题没有正式准确率，不能将预览结果作为标准答案。
+
 ## 指标定义与边界
 
 | 指标 | 定义 |

@@ -491,6 +491,43 @@ def test_tts_maps_resolved_locales_to_allowlisted_voices(monkeypatch) -> None:
     ]
 
 
+
+def test_tts_uses_spoken_language_even_if_turn_locale_is_stale(monkeypatch) -> None:
+    calls: list[dict[str, str]] = []
+
+    class FakeCommunicate:
+        def __init__(self, text: str, **kwargs: str) -> None:
+            calls.append({"text": text, **kwargs})
+
+        async def stream(self):
+            yield {"type": "audio", "data": b"audio"}
+
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", FakeCommunicate)
+    monkeypatch.setenv("XF_TTS_VOICE_EN", "ashleigh")
+    client, _kb, _search, _assistant = build_client()
+
+    cases = (
+        ("你好，我是叙华，陪你聊聊非遗。", "en-US", "zh-CN", "x4_yezi"),
+        ("Hello! I'm Xuhua, your guide.", "zh-CN", "en-US", "ashleigh"),
+        ("こんにちは。今日は何を見ましょうか。", "en-US", "ja-JP", None),
+        ("안녕하세요. 함께 이야기해요.", "zh-CN", "ko-KR", None),
+    )
+    for text, stale_hint, expected_locale, expected_voice in cases:
+        response = client.post("/api/tts", json={"text": text, "locale": stale_hint})
+        assert response.status_code == 200
+        audio = client.get(f"/api/tts/{response.json()['token']}")
+        assert audio.status_code == 200
+        assert audio.headers["X-Speech-Locale"] == expected_locale
+        if expected_voice:
+            assert audio.headers["X-Speech-Voice"] == expected_voice
+    assert [call["voice"] for call in calls] == [
+        "zh-CN-XiaoxiaoNeural",
+        "en-US-JennyNeural",
+        "ja-JP-NanamiNeural",
+        "ko-KR-SunHiNeural",
+    ]
+
+
 def test_single_asr_stream_preserves_detected_english_locale(monkeypatch) -> None:
     assistant = VoiceRecordingAssistant()
     FakeXfyunStream.transcript = "Tell me about paper cutting"

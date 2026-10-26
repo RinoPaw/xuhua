@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -202,13 +203,17 @@ def main() -> None:
     args = parser.parse_args()
     kb = KnowledgeBase(json.loads(args.dataset.read_text(encoding="utf-8")))
     report = evaluate(json.loads(args.cases.read_text(encoding="utf-8")), kb)
+    report["inputs"] = {
+        "dataset_sha256": hashlib.sha256(args.dataset.read_bytes()).hexdigest(),
+        "cases_sha256": hashlib.sha256(args.cases.read_bytes()).hexdigest(),
+    }
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(
             json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
     visible = (
-        {key: report[key] for key in ("kind", "label_policy", "coverage", "metrics")}
+        {key: report[key] for key in ("kind", "label_policy", "coverage", "metrics", "inputs")}
         if args.summary else report
     )
     print(json.dumps(visible, ensure_ascii=False, indent=2))

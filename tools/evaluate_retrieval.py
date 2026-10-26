@@ -92,12 +92,17 @@ def main() -> None:
     parser.add_argument("--dataset", type=Path,
                         default=ROOT / "data/processed/heritage_items.json")
     parser.add_argument("--per-category", type=int, default=3)
+    parser.add_argument("--output", type=Path, help="optional JSON evidence file")
     args = parser.parse_args()
     if args.per_category < 1 or args.per_category > 20:
         parser.error("--per-category must be 1..20")
     payload = json.loads(args.dataset.read_text(encoding="utf-8"))
-    print(json.dumps(evaluate(KnowledgeBase(payload), args.per_category),
-                     ensure_ascii=False, indent=2))
+    result = json.dumps(evaluate(KnowledgeBase(payload), args.per_category),
+                        ensure_ascii=False, indent=2) + "\n"
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(result, encoding="utf-8")
+    print(result)
 
 
 if __name__ == "__main__":

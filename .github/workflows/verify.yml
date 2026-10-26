@@ -50,6 +50,8 @@ jobs:
           key: wake-assets-${{ runner.os }}-${{ hashFiles('web/scripts/prepare-wake-assets.mjs') }}
       - run: uv lock --check
       - run: uv sync --frozen --group dev
+      - name: Audit heritage knowledge base
+        run: uv run python tools/audit_heritage.py --strict
       - run: uv run pytest -q
       - run: uv run ruff check server/src tools server/tests
       - run: uv run python -m compileall -q server/src tools

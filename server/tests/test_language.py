@@ -21,7 +21,7 @@ def test_locale_hints_are_limited_to_supported_languages() -> None:
     assert normalize_locale_hint("ko-KR") == "ko-KR"
     assert normalize_locale_hint("en-GB") == "en-US"
     assert normalize_locale_hint("yue-HK") is None
-    assert normalize_locale_hint("zh_henan") is None
+    assert normalize_locale_hint("zh_henan") == "zh-CN"
     assert normalize_locale_hint("fr-FR") is None
     assert normalize_locale_hint("auto") is None
     assert normalize_locale_hint("xx-Unknown") is None

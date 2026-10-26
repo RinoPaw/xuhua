@@ -1,9 +1,9 @@
-"""Streaming Xunfei ASR transport for browser-captured 16 kHz PCM audio.
+"""Streaming Xunfei multilingual ASR transport for 16 kHz browser PCM.
 
-叙华只使用讯飞“中英识别大模型”这一条实时识别链路。该模型本身支持
-普通话、英语以及 202 种中文方言免切换识别。``language=zh_cn``、
-``accent=mandarin`` 和 ``domain=slm`` 是该模型的固定协议选择器，并不表示
-应用层把识别锁定为中文；``ltc=1`` 明确保持中英文免切换识别。
+叙华使用讯飞“大模型多语种语音识别”单路 WebSocket 服务：
+``language=mul_cn``、``accent=mandarin``、``domain=slm``。
+不传 ``ln``，由服务端自动识别语种。多语种接口文档未列出
+中英模型的 ``ltc``、``dwa`` 或 ``dhw`` 参数，因此多语种请求不发送它们。
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ class XfyunStream:
         on_partial: Callable[[str], Awaitable[None]] | None = None,
         hotwords: str | list[str] | tuple[str, ...] | None = None,
         path: str = "/v1",
-        language: str = "zh_cn",
+        language: str = "mul_cn",
         accent: str = "mandarin",
         domain: str = "slm",
         dynamic_correction: bool = True,
@@ -82,7 +82,7 @@ class XfyunStream:
         self.api_secret = api_secret.strip()
         self.host = host.strip()
         self.path = str(path or "/v1").strip()
-        self.language = str(language or "zh_cn").strip()
+        self.language = str(language or "mul_cn").strip()
         self.accent = str(accent or "mandarin").strip()
         self.domain = str(domain or "slm").strip()
         self.dynamic_correction = bool(dynamic_correction)
@@ -452,14 +452,18 @@ class XfyunStream:
             "domain": self.domain,
             "language": self.language,
             "accent": self.accent,
-            "ltc": 1,
             "eos": self.eos,
             "result": {"encoding": "utf8", "compress": "raw", "format": "json"},
         }
-        if self.dynamic_correction:
-            iat["dwa"] = "wpgs"
-        if self._hotword_spec:
-            iat["dhw"] = self._hotword_spec
+        # These parameters are documented for the Chinese/English model, not
+        # for the multilingual model. Keep legacy packet construction available
+        # for explicit zh_cn callers without sending undocumented fields to mul_cn.
+        if self.language == "zh_cn":
+            iat["ltc"] = 1
+            if self.dynamic_correction:
+                iat["dwa"] = "wpgs"
+            if self._hotword_spec:
+                iat["dhw"] = self._hotword_spec
         return {
             "header": self._header(0),
             "parameter": {"iat": iat},

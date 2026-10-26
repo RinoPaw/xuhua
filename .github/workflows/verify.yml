@@ -30,7 +30,7 @@ jobs:
       XF_APP_ID: ""
       XF_API_KEY: ""
       XF_API_SECRET: ""
-      XF_ASR_HOST: iat.xf-yun.com
+      XF_ASR_HOST: iat.cn-huabei-1.xf-yun.com
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

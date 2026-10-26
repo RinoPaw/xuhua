@@ -16,7 +16,7 @@
 
 ```powershell
 uv run python tools/audit_heritage.py --strict
-uv run python tools/evaluate_retrieval.py
+uv run --env-file .env python tools/evaluate_retrieval.py
 ```
 
 - 原始 JSON：3610 条；运行知识库：3610 条，10 类。

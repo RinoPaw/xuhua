@@ -9,7 +9,7 @@ import heritage_explorer.voice as voice_module
 from heritage_explorer.voice import XfyunStream
 
 
-ASR_HOST = "iat.xf-yun.com"
+ASR_HOST = "iat.cn-huabei-1.xf-yun.com"
 
 
 def make_stream() -> XfyunStream:
@@ -63,7 +63,7 @@ def test_wpgs_replacement_discards_stale_top1_and_alternatives() -> None:
     assert "旧候选" not in "|".join(stream.alternative_texts)
 
 
-def test_chinese_model_packet_matches_official_contract() -> None:
+def test_multilingual_model_packet_matches_official_contract() -> None:
     stream = XfyunStream(
         app_id="app",
         api_key="key",
@@ -77,12 +77,23 @@ def test_chinese_model_packet_matches_official_contract() -> None:
     assert stream.host == ASR_HOST
     assert packet["header"] == {"app_id": "app", "status": 0}
     assert iat["domain"] == "slm"
-    assert iat["language"] == "zh_cn"
+    assert iat["language"] == "mul_cn"
     assert iat["accent"] == "mandarin"
+    assert "ln" not in iat  # default automatic language recognition
+    assert "ltc" not in iat
+    assert "dwa" not in iat
+    assert "dhw" not in iat  # undocumented for this multilingual API
+
+
+def test_legacy_chinese_packet_preserves_its_supported_options() -> None:
+    stream = XfyunStream(
+        app_id="app", api_key="key", api_secret="secret",
+        host="iat.xf-yun.com", language="zh_cn", hotwords=("苏绣",),
+    )
+    iat = stream._first_packet("")["parameter"]["iat"]
+    assert iat["ltc"] == 1
     assert iat["dwa"] == "wpgs"
-    assert "ln" not in iat
-    assert iat["dhw"] == "utf-8;苏绣|木|版年画|甲|乙"
-    assert len(iat["dhw"].encode("utf-8")) <= 1024
+    assert iat["dhw"] == "utf-8;苏绣"
 
 
 def test_signed_url_uses_selected_host() -> None:
@@ -119,6 +130,13 @@ def test_provider_language_tracks_dominant_cw_lg_and_wpgs_replacement() -> None:
     )
     assert stream.detected_language == "zh"
     assert stream.current_text() == "你好"
+
+
+def test_multilingual_language_detection_covers_japanese_and_korean() -> None:
+    for language in ("ja", "ko"):
+        stream = make_stream()
+        stream.apply_result({"sn": 0, "ws": [{"cw": [{"w": "hello", "lg": language}]}]})
+        assert stream.detected_language == language
 
 
 def test_hotwords_are_bounded_to_1024_utf8_bytes() -> None:
@@ -185,7 +203,8 @@ def test_packets_follow_streaming_status_contract() -> None:
     last = stream._last_packet()
 
     assert first["header"] == {"app_id": "app", "status": 0}
-    assert first["parameter"]["iat"]["dwa"] == "wpgs"
+    assert first["parameter"]["iat"]["language"] == "mul_cn"
+    assert "dwa" not in first["parameter"]["iat"]
     assert first["payload"]["audio"]["status"] == 0
     assert middle["payload"]["audio"]["status"] == 1
     assert last["payload"]["audio"]["status"] == 2

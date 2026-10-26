@@ -285,10 +285,10 @@ class VoiceSessionRuntime:
             api_key=self.api_key,
             api_secret=self.api_secret,
             host=self.asr_host,
-            language="zh_cn",
+            language="mul_cn",
             accent="mandarin",
             domain="slm",
-            dynamic_correction=True,
+            dynamic_correction=False,
             on_partial=on_partial,
             hotwords=hotwords,
         )

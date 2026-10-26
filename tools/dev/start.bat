@@ -98,7 +98,7 @@ if errorlevel 1 (
 popd
 
 echo [CHECK] Syncing Xuhua Python dependencies from uv.lock...
-"%UV_EXE%" sync --locked --no-dev --inexact
+"%UV_EXE%" sync --locked --no-dev --inexact --default-index https://pypi.org/simple
 if errorlevel 1 (
     echo [ERROR] Python dependency sync failed or uv.lock is out of date.
     pause

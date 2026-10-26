@@ -65,12 +65,12 @@ def validate_manifest(manifest: Any, kb: KnowledgeBase) -> list[dict[str, Any]]:
         if not isinstance(question, str) or not question.strip():
             raise ManifestError(f"{name}: question must be nonempty")
         language = case.get("language")
-        if language not in LANGUAGE_PROFILES:
+        if not isinstance(language, str) or language not in LANGUAGE_PROFILES:
             raise ManifestError(f"{name}: unsupported language {language!r}")
-        if case.get("task") not in TASKS:
+        if not isinstance(case.get("task"), str) or case["task"] not in TASKS:
             raise ManifestError(f"{name}: unsupported task")
         status = case.get("status")
-        if status not in STATUSES:
+        if not isinstance(status, str) or status not in STATUSES:
             raise ManifestError(f"{name}: status must be draft or approved")
         category = case.get("category", "")
         if not isinstance(category, str):

@@ -88,7 +88,9 @@ def audit(source_path: Path, runtime_path: Path) -> dict:
     flag("error", "category_counts_mismatch", declared != actual)
     flag("error", "duplicate_category_names", len(declared) != len(categories))
     flag("warning", "source_rebuild_mismatch", rebuilt != runtime)
-    flag("warning", "same_title_and_region", sum(n - 1 for n in regional_keys.values() if n > 1))
+    # Shared title and region can still represent distinct protection units.
+    # Do not classify these as a data-quality failure or delete them.
+    flag("info", "same_title_and_region", sum(n - 1 for n in regional_keys.values() if n > 1))
     flag("warning", "missing_content", missing["content"])
     flag("warning", "missing_province", missing["province"])
     metadata = source.get("meta", {}) if isinstance(source, dict) else {}

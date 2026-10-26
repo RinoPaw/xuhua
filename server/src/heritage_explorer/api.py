@@ -49,7 +49,7 @@ from .config import (
     XF_ASR_HOST,
 )
 from .dataset import item_to_dict
-from .language import detect_locale, get_language_profile, normalize_locale_hint
+from .language import detect_locale, get_language_profile
 from .logging_setup import configure_application_logging, redact_uvicorn_tts_access_logs
 from .request_limits import RequestBodyLimitMiddleware
 from .tts_tickets import TtsTicketCapacity, TtsTicketStore
@@ -300,8 +300,11 @@ def create_app(
                 headers={"Retry-After": str(exc.retry_after)},
             ) from exc
 
+        # A reply can differ from the turn's requested/detected language.
+        # Synthesize the words actually being spoken with their own voice;
+        # the client locale is only a tie-breaker for ambiguous text.
         language_profile = get_language_profile(
-            normalize_locale_hint(ticket.locale) or detect_locale(ticket.text)
+            detect_locale(ticket.text, hint=ticket.locale)
         )
         speech_voice = (
             getattr(speech_profile, "tts_voice_zh", "")

@@ -481,12 +481,12 @@ def test_tts_maps_resolved_locales_to_allowlisted_voices(monkeypatch) -> None:
         return client.get(f"/api/tts/{prepared.json()['token']}")
 
     english = synthesize("Kunqu (昆曲) is a living tradition.", "en-US")
-    cantonese = synthesize("昆曲係一项传统艺术。", "yue-HK")
+    japanese = synthesize("昆曲は伝統芸能です。", "ja-JP")
     assert english.status_code == 200
-    assert cantonese.status_code == 200
+    assert japanese.status_code == 200
     assert [call["voice"] for call in calls] == [
         "en-US-JennyNeural",
-        "zh-HK-HiuMaanNeural",
+        "ja-JP-NanamiNeural",
     ]
 
 

@@ -10,62 +10,49 @@ from heritage_explorer.language import (
 )
 
 
-def test_supported_scope_is_chinese_dialects_english_japanese_and_korean() -> None:
-    assert set(LANGUAGE_PROFILES) == {
-        "zh-CN",
-        "yue-CN",
-        "zh-CN-sichuan",
-        "zh-CN-henan",
-        "en-US",
-        "ja-JP",
-        "ko-KR",
-    }
+def test_only_four_language_profiles_are_supported() -> None:
+    assert set(LANGUAGE_PROFILES) == {"zh-CN", "en-US", "ja-JP", "ko-KR"}
 
 
-def test_locale_hints_are_canonicalized_without_accepting_unknown_values() -> None:
+def test_locale_hints_are_limited_to_supported_languages() -> None:
     assert normalize_locale_hint("zh_Hans") == "zh-CN"
-    assert normalize_locale_hint("ZH-hk") == "yue-CN"
-    assert normalize_locale_hint("zh_henan") == "zh-CN-henan"
-    assert normalize_locale_hint("jp") == "ja-JP"
+    assert normalize_locale_hint("ZH-hk") == "zh-CN"
+    assert normalize_locale_hint("ja_jp") == "ja-JP"
+    assert normalize_locale_hint("ko-KR") == "ko-KR"
+    assert normalize_locale_hint("en-GB") == "en-US"
+    assert normalize_locale_hint("yue-HK") is None
+    assert normalize_locale_hint("zh_henan") is None
     assert normalize_locale_hint("fr-FR") is None
     assert normalize_locale_hint("auto") is None
     assert normalize_locale_hint("xx-Unknown") is None
 
 
-def test_text_is_authoritative_for_language_and_dialect_detection() -> None:
+def test_text_and_provider_hints_select_only_four_languages() -> None:
     assert detect_locale("この無形文化遺産を紹介して", hint="en-US") == "ja-JP"
-    assert detect_locale("佢嘕传统手艺有咩特色？", hint="zh-CN") == "yue-CN"
-    assert detect_locale("这个手艺好巴适，咋个做的？") == "zh-CN-sichuan"
-    assert detect_locale("恁看看这个手艺中不中？") == "zh-CN-henan"
-    assert detect_locale("河南话呢") == "zh-CN-henan"
+    assert detect_locale("这个手艺好巴适，咋个做的？") == "zh-CN"
+    assert detect_locale("河南话呢") == "zh-CN"
     assert detect_locale("Tell me about this heritage project", hint="zh-CN") == "en-US"
-    assert detect_locale("Hi there.", hint="zh-CN") == "en-US"
     assert detect_locale("곤곡이라는 전통 예술을 소개해 주세요") == "ko-KR"
     assert detect_locale("昆曲", hint="ja-JP") == "ja-JP"
 
 
-def test_provider_language_tags_map_to_response_and_tts_profiles() -> None:
+def test_provider_language_tags_map_to_four_response_profiles() -> None:
     expected = {
-        "zh_cn": ("zh-CN", "zh-CN-XiaoxiaoNeural"),
+        "zh": ("zh-CN", "zh-CN-XiaoxiaoNeural"),
         "en": ("en-US", "en-US-JennyNeural"),
         "ja": ("ja-JP", "ja-JP-NanamiNeural"),
         "ko": ("ko-KR", "ko-KR-SunHiNeural"),
-        "yue": ("yue-CN", "zh-HK-HiuMaanNeural"),
     }
-
     for provider_tag, (locale, voice) in expected.items():
         assert locale_from_provider_language(provider_tag) == locale
         assert get_language_profile(locale).tts_voice == voice
+    for unsupported in ("yue", "fr", "de", "ru", "xx"):
+        assert locale_from_provider_language(unsupported) is None
 
-    assert locale_from_provider_language("unknown") is None
 
-
-def test_chinese_dialect_profiles_share_chinese_asr_and_use_available_voices() -> None:
+def test_chinese_is_the_only_chinese_language_profile() -> None:
     assert is_chinese_locale("zh-CN")
-    assert is_chinese_locale("yue-CN")
-    assert is_chinese_locale("zh-CN-sichuan")
-    assert is_chinese_locale("zh-CN-henan")
     assert not is_chinese_locale("en-US")
-    assert get_language_profile("yue-CN").tts_voice == "zh-HK-HiuMaanNeural"
-    assert get_language_profile("zh-CN-sichuan").tts_voice == "zh-CN-YunxiNeural"
-    assert get_language_profile("zh-CN-henan").tts_voice == "zh-CN-YunxiNeural"
+    assert not is_chinese_locale("ja-JP")
+    assert not is_chinese_locale("ko-KR")
+    assert get_language_profile("yue-CN").code == "zh-CN"

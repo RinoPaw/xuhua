@@ -15,8 +15,11 @@ import {
 test("normalizes browser locales, removes duplicates, and falls back safely", () => {
   assert.equal(normalizeLocaleHint("zh_cn"), "zh-CN");
   assert.equal(normalizeLocaleHint("not a locale"), "");
+  assert.equal(normalizeLocaleHint("de-DE"), "");
+  assert.equal(normalizeLocaleHint("fr-FR"), "");
+  assert.equal(normalizeLocaleHint("ko-KR"), "ko-KR");
   assert.deepEqual(
-    getPreferredLocales({ languages: ["en-us", "en-US", "ja_jp", "bad locale"] }),
+    getPreferredLocales({ languages: ["fr-FR", "en-us", "en-US", "ja_jp", "bad locale"] }),
     ["en-US", "ja-JP"],
   );
   assert.equal(getLocaleHint({ languages: [] }), DEFAULT_LOCALE);
@@ -39,8 +42,8 @@ test("adds hidden locale hints to the bounded recognition context", () => {
 test("reads locale from realtime event envelopes with a safe fallback", () => {
   assert.equal(assistantEventLocale({ locale: "ja-JP" }, "en-US"), "ja-JP");
   assert.equal(
-    assistantEventLocale({ payload: { locale: "yue-HK" } }, "en-US"),
-    "yue-HK",
+    assistantEventLocale({ payload: { locale: "ko-KR" } }, "en-US"),
+    "ko-KR",
   );
-  assert.equal(assistantEventLocale({}, "de-DE"), "de-DE");
+  assert.equal(assistantEventLocale({}, "de-DE"), "zh-CN");
 });

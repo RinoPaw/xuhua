@@ -2,7 +2,7 @@
 
 叙华使用讯飞“大模型多语种语音识别”单路 WebSocket 服务：
 ``language=mul_cn``、``accent=mandarin``、``domain=slm``。
-不传 ``ln``，由服务端自动识别语种。多语种接口文档未列出
+``ln=zh|en|ja|ko`` 将识别范围限定为中英日韩四种语言。多语种接口文档未列出
 中英模型的 ``ltc``、``dwa`` 或 ``dhw`` 参数，因此多语种请求不发送它们。
 """
 
@@ -455,6 +455,9 @@ class XfyunStream:
             "eos": self.eos,
             "result": {"encoding": "utf8", "compress": "raw", "format": "json"},
         }
+        if self.language == "mul_cn":
+            # Limit the multilingual model to the four supported languages.
+            iat["ln"] = "zh|en|ja|ko"
         # These parameters are documented for the Chinese/English model, not
         # for the multilingual model. Keep legacy packet construction available
         # for explicit zh_cn callers without sending undocumented fields to mul_cn.

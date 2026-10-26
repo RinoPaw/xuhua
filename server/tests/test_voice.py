@@ -79,7 +79,7 @@ def test_multilingual_model_packet_matches_official_contract() -> None:
     assert iat["domain"] == "slm"
     assert iat["language"] == "mul_cn"
     assert iat["accent"] == "mandarin"
-    assert "ln" not in iat  # default automatic language recognition
+    assert iat["ln"] == "zh|en|ja|ko"  # restricted auto-detection
     assert "ltc" not in iat
     assert "dwa" not in iat
     assert "dhw" not in iat  # undocumented for this multilingual API
@@ -91,6 +91,7 @@ def test_legacy_chinese_packet_preserves_its_supported_options() -> None:
         host="iat.xf-yun.com", language="zh_cn", hotwords=("苏绣",),
     )
     iat = stream._first_packet("")["parameter"]["iat"]
+    assert "ln" not in iat  # legacy Chinese/English service
     assert iat["ltc"] == 1
     assert iat["dwa"] == "wpgs"
     assert iat["dhw"] == "utf-8;苏绣"

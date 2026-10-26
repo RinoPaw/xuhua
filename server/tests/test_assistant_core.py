@@ -135,14 +135,14 @@ def test_multilingual_greetings_are_localized_without_entering_retrieval():
 
     english = collect(service.stream_turn("Hello", locale_hint="en-US"))
     japanese = collect(service.stream_turn("こんにちは", locale_hint="ja-JP"))
-    henan = collect(service.stream_turn("恁好", locale_hint="zh-CN"))
+    korean = collect(service.stream_turn("안녕하세요", locale_hint="ko-KR"))
 
     assert english[-1].payload["locale"] == "en-US"
     assert english[-1].payload["answer"].startswith("Hello.")
     assert japanese[-1].payload["locale"] == "ja-JP"
     assert japanese[-1].payload["answer"].startswith("こんにちは。")
-    assert henan[-1].payload["locale"] == "zh-CN-henan"
-    assert henan[-1].payload["answer"].startswith("恁好。")
+    assert korean[-1].payload["locale"] == "ko-KR"
+    assert korean[-1].payload["answer"].startswith("안녕하세요.")
     assert llm.messages == []
 
 
@@ -170,15 +170,13 @@ def test_japanese_and_korean_asr_variants_recover_the_canonical_project_name():
     assert [call["query"] for call in search.calls] == ["昆曲", "昆曲"]
 
 
-def test_henan_dialect_is_kept_in_the_answer_instruction_without_changing_facts():
+def test_chinese_dialect_words_use_standard_chinese_profile() -> None:
     search = RecordingSearch()
-    llm = FakeLLM(("中，咱从河南剪纸聊起。",))
+    llm = FakeLLM(("我们从河南剪纸聊起。",))
     service = AssistantService(search=search, sessions=SessionStore(), llm=llm)
-
     events = collect(service.stream_turn("恁讲讲河南剪纸中不中", locale_hint="zh-CN"))
-
-    assert events[-1].payload["locale"] == "zh-CN-henan"
-    assert "自然、克制、易懂的河南口吻" in llm.messages[0][0]["content"]
+    assert events[-1].payload["locale"] == "zh-CN"
+    assert "使用自然、清晰的简体中文普通话回答" in llm.messages[0][0]["content"]
 
 
 def test_broad_multilingual_heritage_query_opens_a_bounded_catalogue_window():

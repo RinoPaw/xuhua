@@ -17,12 +17,12 @@ def test_server_events_encode_to_stable_wire_shapes() -> None:
     cases = [
         (ReadyEvent(), {"type": "ready"}),
         (
-            VoiceStatusEvent("thinking", turn_id="turn-1", locale="yue-CN"),
+            VoiceStatusEvent("thinking", turn_id="turn-1", locale="zh-CN"),
             {
                 "type": "status",
                 "status": "thinking",
                 "turn_id": "turn-1",
-                "locale": "yue-CN",
+                "locale": "zh-CN",
             },
         ),
         (

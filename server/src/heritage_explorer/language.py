@@ -22,7 +22,6 @@ class LanguageProfile:
     response_instruction: str
     tts_voice: str
     asr_language: str
-    is_dialect: bool = False
 
 
 LANGUAGE_PROFILES: dict[str, LanguageProfile] = {
@@ -32,30 +31,6 @@ LANGUAGE_PROFILES: dict[str, LanguageProfile] = {
         "使用自然、清晰的简体中文普通话回答。",
         "zh-CN-XiaoxiaoNeural",
         "zh",
-    ),
-    "yue-CN": LanguageProfile(
-        "yue-CN",
-        "粤语",
-        "用户正在使用粤语；请用自然、易懂的书面粤语回答，项目专名保持资料中的标准写法。",
-        "zh-HK-HiuMaanNeural",
-        "zh",
-        True,
-    ),
-    "zh-CN-sichuan": LanguageProfile(
-        "zh-CN-sichuan",
-        "四川话",
-        "用户正在使用四川话；请用自然、克制、易懂的四川话口吻回答，不要用生造的谐音字，项目专名保持标准写法。",
-        "zh-CN-YunxiNeural",
-        "zh",
-        True,
-    ),
-    "zh-CN-henan": LanguageProfile(
-        "zh-CN-henan",
-        "河南话",
-        "用户正在使用河南话；请用自然、克制、易懂的河南口吻回答，不要堆砌或生造方言字，项目专名保持标准写法。",
-        "zh-CN-YunxiNeural",
-        "zh",
-        True,
     ),
     "en-US": LanguageProfile(
         "en-US",
@@ -87,16 +62,8 @@ _LOCALE_ALIASES = {
     "zh-hans": "zh-CN",
     "zh-sg": "zh-CN",
     "cmn": "zh-CN",
-    "yue": "yue-CN",
-    "yue-cn": "yue-CN",
-    "yue-hk": "yue-CN",
-    "zh-hk": "yue-CN",
-    "zh-cn-sichuan": "zh-CN-sichuan",
-    "zh-sichuan": "zh-CN-sichuan",
-    "sichuan": "zh-CN-sichuan",
-    "zh-cn-henan": "zh-CN-henan",
-    "zh-henan": "zh-CN-henan",
-    "henan": "zh-CN-henan",
+    "zh-hk": "zh-CN",
+    "zh-tw": "zh-CN",
     "en": "en-US",
     "ja": "ja-JP",
     "jp": "ja-JP",
@@ -109,9 +76,6 @@ _PROVIDER_LANGUAGE_LOCALES = {
     "cn": "zh-CN",
     "zh_cn": "zh-CN",
     "cn_cbm": "zh-CN",
-    "yue": "yue-CN",
-    "yue_cn": "yue-CN",
-    "yue_hk": "yue-CN",
     "en": "en-US",
     "ja": "ja-JP",
     "jp": "ja-JP",
@@ -120,53 +84,6 @@ _PROVIDER_LANGUAGE_LOCALES = {
     "kr": "ko-KR",
     "ko_kr": "ko-KR",
 }
-
-_CANTONESE_MARKERS = (
-    "唔",
-    "冇",
-    "喺",
-    "佢",
-    "咩",
-    "嘅",
-    "啲",
-    "嚟",
-    "乜",
-    "噉",
-    "咗",
-    "睇下",
-    "点解",
-)
-_SICHUAN_MARKERS = (
-    "啥子",
-    "咋个",
-    "巴适",
-    "要得",
-    "莫得",
-    "摆龙门阵",
-    "雄起",
-    "安逸得很",
-    "瓜娃子",
-)
-
-_HENAN_STRONG_MARKERS = (
-    "河南话",
-    "豫语",
-    "中不中",
-    "弄啥嘞",
-    "弄啥咧",
-    "可得劲",
-    "喷空",
-    "木牛",
-    "恁好",
-)
-_HENAN_WEAK_MARKERS = (
-    "恁",
-    "俺",
-    "得劲",
-    "咋恁",
-    "啥嘞",
-    "咋弄",
-)
 
 _LATIN_LANGUAGE_WORDS: dict[str, frozenset[str]] = {
     "en-US": frozenset(
@@ -213,21 +130,6 @@ def normalize_locale_hint(value: object) -> str | None:
     return _LOCALE_ALIASES.get(primary)
 
 
-def _dialect_locale(text: str) -> str | None:
-    cantonese_hits = sum(marker in text for marker in _CANTONESE_MARKERS)
-    sichuan_hits = sum(marker in text for marker in _SICHUAN_MARKERS)
-    henan_strong_hits = sum(marker in text for marker in _HENAN_STRONG_MARKERS)
-    henan_weak_hits = sum(marker in text for marker in _HENAN_WEAK_MARKERS)
-    henan_hits = (henan_strong_hits * 2) + (henan_weak_hits if henan_weak_hits >= 2 else 0)
-    candidates = (
-        (cantonese_hits, "yue-CN"),
-        (sichuan_hits, "zh-CN-sichuan"),
-        (henan_hits, "zh-CN-henan"),
-    )
-    score, locale = max(candidates, key=lambda item: item[0])
-    return locale if score else None
-
-
 def _latin_locale(text: str, hint: str | None) -> str:
     normalized = unicodedata.normalize("NFKC", text).casefold()
     words = _LATIN_WORD.findall(normalized)
@@ -255,9 +157,6 @@ def detect_locale(text: object, *, hint: object = None) -> str:
     if not content:
         return normalized_hint or DEFAULT_LOCALE
 
-    dialect = _dialect_locale(content)
-    if dialect:
-        return dialect
     for pattern, locale in _SCRIPT_PATTERNS:
         if pattern.search(content):
             return locale
@@ -270,7 +169,7 @@ def detect_locale(text: object, *, hint: object = None) -> str:
         # Han-only text is ambiguous between Chinese and Japanese.  Preserve
         # text authority for explicit dialect markers above, then let the
         # browser/provider hint break this otherwise undecidable tie.
-        if normalized_hint in {"yue-CN", "zh-CN-sichuan", "zh-CN-henan", "ja-JP"}:
+        if normalized_hint == "ja-JP":
             return normalized_hint
         return "zh-CN"
     if latin_count:

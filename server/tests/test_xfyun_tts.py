@@ -173,15 +173,16 @@ def test_oversized_text_is_rejected_before_sending(monkeypatch) -> None:
     assert calls == []
 
 
-def test_unknown_dialect_voice_is_not_sent_as_edge_identifier(monkeypatch):
+def test_only_supported_foreign_languages_use_configured_voices(monkeypatch):
     configured(monkeypatch)
-    monkeypatch.setenv("XF_TTS_VOICE_YUE", "my_cantonese_voice")
-    assert tts.Communicate(
-        "粤语", voice="zh-HK-HiuMaanNeural", rate="-2%", pitch="+0Hz",
-    ).vcn == "my_cantonese_voice"
-    assert tts.Communicate(
-        "河南", voice="zh-CN-YunxiNeural", rate="-2%", pitch="+0Hz",
-    ).vcn == "xiaoyan"
+    voices = (
+        ("XF_TTS_VOICE_EN", "en-US-JennyNeural", "english_voice"),
+        ("XF_TTS_VOICE_JA", "ja-JP-NanamiNeural", "japanese_voice"),
+        ("XF_TTS_VOICE_KO", "ko-KR-SunHiNeural", "korean_voice"),
+    )
+    for key, voice, value in voices:
+        monkeypatch.setenv(key, value)
+        assert tts.voice_for(voice) == value
 
 
 def test_mandarin_defaults_to_xiaolu_when_not_configured(monkeypatch) -> None:

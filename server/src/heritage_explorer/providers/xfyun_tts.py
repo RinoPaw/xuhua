@@ -39,8 +39,6 @@ class TtsProviderError(RuntimeError):
 
 def voice_for(edge_voice: str) -> str:
     """Select an explicitly enabled iFLYTEK voice; never send Edge voice IDs."""
-    if edge_voice.startswith("zh-HK-"):
-        return os.environ.get("XF_TTS_VOICE_YUE", "").strip() or "xiaoyan"
     if edge_voice.startswith("en-"):
         return os.environ.get("XF_TTS_VOICE_EN", "").strip() or "xiaoyan"
     if edge_voice.startswith("ja-"):

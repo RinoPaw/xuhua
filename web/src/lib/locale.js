@@ -1,10 +1,12 @@
 export const DEFAULT_LOCALE = "zh-CN";
+const SUPPORTED_PRIMARY_LANGUAGES = new Set(["zh", "en", "ja", "ko"]);
 
 export function normalizeLocaleHint(value) {
   const text = String(value || "").trim().replaceAll("_", "-");
   if (!text || text.length > 64) return "";
   try {
-    return Intl.getCanonicalLocales(text)[0] || "";
+    const canonical = Intl.getCanonicalLocales(text)[0] || "";
+    return SUPPORTED_PRIMARY_LANGUAGES.has(canonical.split("-")[0]) ? canonical : "";
   } catch {
     return "";
   }

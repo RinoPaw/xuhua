@@ -15,7 +15,7 @@ def test_voice_context_state_owns_normalized_browser_context() -> None:
         ContextCommand(
             session_id="session-123",
             category="传统美术",
-            locale_hint="yue-HK",
+            locale_hint="ko-KR",
             selected_title="汴绣",
             titles=("汴绣", "武强木版年画", "汴绣"),
         ),
@@ -24,7 +24,7 @@ def test_voice_context_state_owns_normalized_browser_context() -> None:
 
     assert state.session_id == "session"
     assert state.category == "传统美术"
-    assert state.locale_hint == "yue-CN"
+    assert state.locale_hint == "ko-KR"
     assert state.titles == ["汴绣", "武强木版年画"]
 
 

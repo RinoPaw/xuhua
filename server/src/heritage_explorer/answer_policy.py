@@ -10,9 +10,8 @@ from .language import DEFAULT_LOCALE
 from .models import ConversationTurn
 from .retrieval_policy import requested_item_count
 
-GREETING_QUESTIONS = frozenset({"你好", "您好", "嗨", "哈喽", "在吗"})
+GREETING_QUESTIONS = frozenset({"你好", "您好", "嗨", "哈喽", "在吗", "恁好"})
 MULTILINGUAL_GREETINGS = {
-    "zh-CN-henan": frozenset({"恁好"}),
     "en-US": frozenset(
         {
             "hello",
@@ -57,36 +56,6 @@ _FALLBACK_COPY = {
         "missing_detail": "它的详细资料还在整理中。",
         "single_missing": "资料库中暂未提供该项目的详细简介。",
     },
-    "yue-CN": {
-        "greeting": "你好呀。想由边一项非遗开始了解？",
-        "pause": "好呀，你慢慢嚟，我先停喺度。",
-        "continuation": "好，我哋接住头先嘅内容讲。你想先听边一部分？",
-        "no_results": "资料库暂时搵唔到同呢个问题直接对应嘅项目。你可以换个项目名、地区或者类别再试。",
-        "list_intro": "想先睇清呢类非遗各自嘅味道，我会由{names}讲起。",
-        "list_close": "你对边一项最有感觉？我可以继续讲佢嘅历史同现场。",
-        "missing_detail": "呢一项嘅详细资料仲整理紧。",
-        "single_missing": "资料库暂时未有呢个项目嘅详细简介。",
-    },
-    "zh-CN-sichuan": {
-        "greeting": "你好。想从哪一项非遗开始摆起？",
-        "pause": "要得，你慢慢来，我先停到这儿。",
-        "continuation": "要得，我们接到刚才的内容摆。你想先听哪一截？",
-        "no_results": "资料库暂时没找到直接对应的项目。你可以换个项目名、地区或者类别再试一下。",
-        "list_intro": "想先看出这一类非遗各自的味道，我带你从{names}摆起。",
-        "list_close": "你对哪一项更感兴趣？我可以接到讲它的历史和现场。",
-        "missing_detail": "这项的详细资料还在整理中。",
-        "single_missing": "资料库暂时还没有这个项目的详细简介。",
-    },
-    "zh-CN-henan": {
-        "greeting": "恁好。想从哪一项非遗开始聊？",
-        "pause": "中，恁慢慢来，我先停到这儿。",
-        "continuation": "中，咱接着刚才的内容聊。恁想先听哪一段？",
-        "no_results": "资料库暂时没找着直接对应的项目。恁可以换个项目名、地区或者类别再试试。",
-        "list_intro": "想先看看这一类非遗各有啥味道，咱可以从{names}聊起。",
-        "list_close": "恁对哪一项更感兴趣？我可以接着聊它的历史和现在。",
-        "missing_detail": "这一项的详细资料还在整理中。",
-        "single_missing": "资料库暂时还没有这个项目的详细介绍。",
-    },
     "en-US": {
         "greeting": "Hello. Which piece of China's intangible cultural heritage would you like to explore?",
         "pause": "Of course. Take your time; I'll pause here.",
@@ -117,81 +86,11 @@ _FALLBACK_COPY = {
         "missing_detail": "상세 자료는 현재 정리 중입니다.",
         "single_missing": "이 항목의 상세 소개는 아직 자료에 수록되지 않았습니다.",
     },
-    "fr-FR": {
-        "greeting": "Bonjour. Quel patrimoine culturel immatériel chinois souhaitez-vous découvrir ?",
-        "pause": "Bien sûr. Prenez votre temps ; je m'arrête ici un instant.",
-        "continuation": "Reprenons là où nous en étions. Quelle partie souhaitez-vous entendre d'abord ?",
-        "no_results": "Je n'ai pas trouvé de projet correspondant directement à cette question. Essayez un nom de projet, une région ou une catégorie.",
-        "list_intro": "Pour saisir les différentes facettes de ce patrimoine, je commencerais par {names}.",
-        "list_close": "Lequel vous attire le plus ? Je peux poursuivre avec son histoire et sa pratique vivante.",
-        "missing_detail": "Sa notice détaillée est encore en préparation.",
-        "single_missing": "La collection ne contient pas encore de présentation détaillée de ce projet.",
-    },
-    "es-ES": {
-        "greeting": "Hola. ¿Qué patrimonio cultural inmaterial de China te gustaría descubrir?",
-        "pause": "Claro. Tómate tu tiempo; haré una pausa aquí.",
-        "continuation": "Sigamos desde donde lo dejamos. ¿Qué parte te gustaría escuchar primero?",
-        "no_results": "No encontré un proyecto que coincida directamente con la pregunta. Prueba con el nombre de un proyecto, una región o una categoría.",
-        "list_intro": "Para apreciar los distintos matices de este patrimonio, empezaría por {names}.",
-        "list_close": "¿Cuál te atrae más? Puedo continuar con su historia y su práctica viva.",
-        "missing_detail": "Su ficha detallada todavía está en preparación.",
-        "single_missing": "La colección aún no incluye una introducción detallada de este proyecto.",
-    },
-    "de-DE": {
-        "greeting": "Hallo. Welches immaterielle Kulturerbe Chinas möchten Sie entdecken?",
-        "pause": "Gern. Nehmen Sie sich Zeit; ich pausiere hier.",
-        "continuation": "Machen wir dort weiter, wo wir aufgehört haben. Welchen Teil möchten Sie zuerst hören?",
-        "no_results": "Ich habe kein Projekt gefunden, das direkt zu dieser Frage passt. Versuchen Sie einen Projektnamen, eine Region oder eine Kategorie.",
-        "list_intro": "Um die unterschiedlichen Facetten dieses Kulturerbes zu erfassen, würde ich mit {names} beginnen.",
-        "list_close": "Welches spricht Sie am meisten an? Ich kann seine Geschichte und heutige Praxis weiter erläutern.",
-        "missing_detail": "Der ausführliche Eintrag wird noch vorbereitet.",
-        "single_missing": "Die Sammlung enthält noch keine ausführliche Einführung zu diesem Projekt.",
-    },
-    "ru-RU": {
-        "greeting": "Здравствуйте. С каким объектом нематериального наследия Китая вы хотели бы познакомиться?",
-        "pause": "Конечно. Не спешите — я пока остановлюсь здесь.",
-        "continuation": "Продолжим с того места, где остановились. О чём рассказать сначала?",
-        "no_results": "Я не нашёл в коллекции проект, напрямую соответствующий вопросу. Попробуйте указать название, регион или категорию.",
-        "list_intro": "Чтобы увидеть разные грани этого наследия, я бы начал с {names}.",
-        "list_close": "Что заинтересовало вас больше всего? Я могу продолжить рассказ об истории и живой практике.",
-        "missing_detail": "Подробная запись ещё готовится.",
-        "single_missing": "В коллекции пока нет подробного описания этого проекта.",
-    },
-    "ar-SA": {
-        "greeting": "مرحباً. أي عنصر من التراث الثقافي غير المادي في الصين تود استكشافه؟",
-        "pause": "بكل تأكيد. خذ وقتك؛ سأتوقف هنا قليلاً.",
-        "continuation": "لنواصل من حيث توقفنا. أي جزء تود سماعه أولاً؟",
-        "no_results": "لم أجد في المجموعة مشروعاً يطابق هذا السؤال مباشرة. جرّب اسم مشروع أو منطقة أو فئة.",
-        "list_intro": "لرؤية الجوانب المختلفة لهذا التراث، سأبدأ بـ {names}.",
-        "list_close": "أيها جذبك أكثر؟ يمكنني متابعة الحديث عن تاريخه وممارسته الحية.",
-        "missing_detail": "لا يزال السجل التفصيلي قيد الإعداد.",
-        "single_missing": "لا تتضمن المجموعة بعد مقدمة تفصيلية لهذا المشروع.",
-    },
-    "hi-IN": {
-        "greeting": "नमस्ते। आप चीन की किस अमूर्त सांस्कृतिक विरासत के बारे में जानना चाहेंगे?",
-        "pause": "ज़रूर। आराम से समय लें; मैं यहीं रुकता हूँ।",
-        "continuation": "जहाँ रुके थे वहीं से आगे बढ़ते हैं। आप पहले कौन-सा भाग सुनना चाहेंगे?",
-        "no_results": "संग्रह में इस प्रश्न से सीधे मेल खाने वाली परियोजना नहीं मिली। किसी परियोजना का नाम, क्षेत्र या श्रेणी आज़माएँ।",
-        "list_intro": "इस विरासत के अलग-अलग रूप समझने के लिए मैं {names} से शुरुआत करूँगा।",
-        "list_close": "इनमें से किसने आपको सबसे अधिक आकर्षित किया? मैं उसके इतिहास और जीवित परंपरा पर आगे बता सकता हूँ।",
-        "missing_detail": "इसका विस्तृत अभिलेख अभी तैयार किया जा रहा है।",
-        "single_missing": "संग्रह में अभी इस परियोजना का विस्तृत परिचय उपलब्ध नहीं है।",
-    },
-    "th-TH": {
-        "greeting": "สวัสดี คุณอยากสำรวจมรดกทางวัฒนธรรมที่จับต้องไม่ได้ของจีนรายการใด?",
-        "pause": "ได้เลย ค่อย ๆ ใช้เวลานะ ฉันจะหยุดไว้ตรงนี้ก่อน",
-        "continuation": "มาต่อจากที่เราค้างไว้ คุณอยากฟังส่วนไหนก่อน?",
-        "no_results": "ฉันไม่พบรายการในคลังที่ตรงกับคำถามนี้โดยตรง ลองใช้ชื่อโครงการ ภูมิภาค หรือหมวดหมู่",
-        "list_intro": "หากต้องการเห็นลักษณะที่หลากหลายของมรดกประเภทนี้ ฉันขอเริ่มจาก {names}",
-        "list_close": "รายการไหนดึงดูดคุณมากที่สุด? ฉันเล่าต่อถึงประวัติและการสืบทอดในปัจจุบันได้",
-        "missing_detail": "ข้อมูลฉบับละเอียดยังอยู่ระหว่างการจัดทำ",
-        "single_missing": "คลังยังไม่มีคำแนะนำฉบับละเอียดสำหรับโครงการนี้",
-    },
 }
 
 
 def copy_catalog(locale: str) -> dict[str, str]:
-    return _FALLBACK_COPY.get(locale, _FALLBACK_COPY["en-US"])
+    return _FALLBACK_COPY.get(locale, _FALLBACK_COPY[DEFAULT_LOCALE])
 
 
 def localized_copy(locale: str, key: str, **values: str) -> str:
@@ -201,19 +100,9 @@ def localized_copy(locale: str, key: str, **values: str) -> str:
 def localized_greeting_suggestions(locale: str) -> list[str]:
     values = {
         "zh-CN": ("按地区查找非遗项目", "按类别浏览资料"),
-        "zh-CN-sichuan": ("按地区查找非遗项目", "按类别浏览资料"),
-        "zh-CN-henan": ("按地区找非遗项目", "按类别看看资料"),
-        "yue-CN": ("按地区搵非遗项目", "按类别浏览资料"),
         "en-US": ("Explore heritage by region", "Browse the collection by category"),
         "ja-JP": ("地域から無形文化遺産を探す", "分類から資料を見る"),
         "ko-KR": ("지역별 무형문화유산 찾기", "분류별 자료 보기"),
-        "fr-FR": ("Explorer le patrimoine par région", "Parcourir la collection par catégorie"),
-        "es-ES": ("Explorar el patrimonio por región", "Ver la colección por categoría"),
-        "de-DE": ("Kulturerbe nach Region erkunden", "Sammlung nach Kategorie durchsuchen"),
-        "ru-RU": ("Искать наследие по регионам", "Просматривать коллекцию по категориям"),
-        "ar-SA": ("استكشاف التراث حسب المنطقة", "تصفح المجموعة حسب الفئة"),
-        "hi-IN": ("क्षेत्र के अनुसार विरासत खोजें", "श्रेणी के अनुसार संग्रह देखें"),
-        "th-TH": ("สำรวจมรดกตามภูมิภาค", "ดูคลังตามหมวดหมู่"),
     }
     return list(values.get(locale, values["en-US"]))
 
@@ -243,27 +132,6 @@ def short_reply_mode(question: str) -> str | None:
         "네": "continuation",
         "계속": "continuation",
         "잠깐만": "pause",
-        "oui": "continuation",
-        "continuez": "continuation",
-        "attendez": "pause",
-        "sí": "continuation",
-        "continúa": "continuation",
-        "espera": "pause",
-        "ja": "continuation",
-        "weiter": "continuation",
-        "warten": "pause",
-        "да": "continuation",
-        "продолжайте": "continuation",
-        "подождите": "pause",
-        "نعم": "continuation",
-        "تابع": "continuation",
-        "انتظر": "pause",
-        "हाँ": "continuation",
-        "जारी रखें": "continuation",
-        "रुकिए": "pause",
-        "ใช่": "continuation",
-        "ต่อเลย": "continuation",
-        "รอก่อน": "pause",
     }
     return SHORT_REPLY_MODES.get(compact) or multilingual.get(compact)
 
@@ -284,7 +152,7 @@ def fallback_answer(
         return localized_copy(locale, "no_results")
     if (
         any(marker in question for marker in ("有哪些", "推荐", "值得", "几个", "项目"))
-        or locale not in {"zh-CN", "yue-CN", "zh-CN-sichuan", "zh-CN-henan"}
+        or locale != "zh-CN"
     ) and len(items) > 1:
         requested = requested_item_count(question)
         selected: list[HeritageItem] = []
@@ -302,7 +170,7 @@ def fallback_answer(
                 break
         separator = (
             "、"
-            if locale in {"zh-CN", "yue-CN", "zh-CN-sichuan", "zh-CN-henan"}
+            if locale == "zh-CN"
             else ", "
         )
         names = separator.join(item.title for item in selected)
@@ -375,19 +243,9 @@ def suggestions(
         base = localized_greeting_suggestions(locale)
         third = {
             "zh-CN": "如何介绍一个非遗项目？",
-            "zh-CN-sichuan": "如何介绍一个非遗项目？",
-            "zh-CN-henan": "咋介绍一个非遗项目？",
-            "yue-CN": "点样介绍一项非遗？",
             "en-US": "How do you introduce a heritage project?",
             "ja-JP": "無形文化遺産をどう紹介しますか？",
             "ko-KR": "무형문화유산을 어떻게 소개하나요?",
-            "fr-FR": "Comment présenter un projet patrimonial ?",
-            "es-ES": "¿Cómo se presenta un proyecto patrimonial?",
-            "de-DE": "Wie stellt man ein Kulturerbe-Projekt vor?",
-            "ru-RU": "Как представить объект наследия?",
-            "ar-SA": "كيف نقدّم مشروعاً تراثياً؟",
-            "hi-IN": "किसी विरासत परियोजना का परिचय कैसे दें?",
-            "th-TH": "ควรแนะนำโครงการมรดกอย่างไร?",
         }
         return [*base, third.get(locale, third["en-US"])]
 
@@ -395,19 +253,9 @@ def suggestions(
     seen: set[str] = set()
     item_templates = {
         "zh-CN": "{title}的历史和特色是什么？",
-        "zh-CN-sichuan": "{title}的历史和特色是什么？",
-        "zh-CN-henan": "{title}有啥历史和特色？",
-        "yue-CN": "{title}有咩历史同特色？",
         "en-US": "What are the history and distinctive features of {title}?",
         "ja-JP": "{title}の歴史と特色は？",
         "ko-KR": "{title}의 역사와 특징은 무엇인가요?",
-        "fr-FR": "Quelle est l'histoire et quelles sont les particularités de {title} ?",
-        "es-ES": "¿Cuál es la historia y qué distingue a {title}?",
-        "de-DE": "Was sind Geschichte und Besonderheiten von {title}?",
-        "ru-RU": "Какова история и особенности {title}?",
-        "ar-SA": "ما تاريخ {title} وما سماته المميزة؟",
-        "hi-IN": "{title} का इतिहास और विशेषताएँ क्या हैं?",
-        "th-TH": "{title} มีประวัติและลักษณะเด่นอย่างไร?",
     }
     template = item_templates.get(locale, item_templates["en-US"])
     for item in items:
@@ -420,19 +268,9 @@ def suggestions(
             break
     browse = {
         "zh-CN": ("按地区继续比较", "按类别继续浏览"),
-        "zh-CN-sichuan": ("按地区继续比较", "按类别继续浏览"),
-        "zh-CN-henan": ("按地区接着比", "按类别接着看"),
-        "yue-CN": ("按地区继续比较", "按类别继续睇"),
         "en-US": ("Compare by region", "Keep browsing by category"),
         "ja-JP": ("地域別に比較する", "分類別に続けて見る"),
         "ko-KR": ("지역별로 계속 비교하기", "분류별로 계속 보기"),
-        "fr-FR": ("Comparer par région", "Continuer par catégorie"),
-        "es-ES": ("Comparar por región", "Seguir por categoría"),
-        "de-DE": ("Nach Region vergleichen", "Nach Kategorie weiterstöbern"),
-        "ru-RU": ("Сравнить по регионам", "Продолжить по категориям"),
-        "ar-SA": ("المقارنة حسب المنطقة", "متابعة التصفح حسب الفئة"),
-        "hi-IN": ("क्षेत्र के अनुसार तुलना करें", "श्रेणी के अनुसार आगे देखें"),
-        "th-TH": ("เปรียบเทียบตามภูมิภาค", "ดูต่อตามหมวดหมู่"),
     }
     output.extend(browse.get(locale, browse["en-US"]))
     return output[:3]

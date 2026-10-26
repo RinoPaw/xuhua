@@ -305,7 +305,7 @@ def create_app(
         )
         speech_voice = (
             getattr(speech_profile, "tts_voice_zh", "")
-            if use_edge_tts and language_profile.code in ("zh-CN", "zh-CN-sichuan", "zh-CN-henan")
+            if use_edge_tts and language_profile.code == "zh-CN"
             else language_profile.tts_voice
         )
         resolved_speech_voice = speech_voice if use_edge_tts else xfyun_tts.voice_for(speech_voice)

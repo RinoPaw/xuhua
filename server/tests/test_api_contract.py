@@ -265,7 +265,8 @@ def parse_sse(body: str) -> list[dict[str, object]]:
     return events
 
 
-def test_health_aliases_and_meta_expose_stable_contract() -> None:
+def test_health_aliases_and_meta_expose_stable_contract(monkeypatch) -> None:
+    monkeypatch.setattr(api_module, "XF_APP_ID", "")
     client, _kb, _search, _assistant = build_client()
     for path in ("/healthz", "/api/health"):
         response = client.get(path)

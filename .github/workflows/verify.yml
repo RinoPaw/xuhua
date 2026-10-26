@@ -52,6 +52,8 @@ jobs:
       - run: uv sync --frozen --group dev
       - name: Audit heritage knowledge base
         run: uv run python tools/audit_heritage.py --strict
+      - name: Measure corpus-derived retrieval sanity
+        run: uv run python tools/evaluate_retrieval.py
       - run: uv run pytest -q
       - run: uv run ruff check server/src tools server/tests
       - run: uv run python -m compileall -q server/src tools

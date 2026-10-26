@@ -503,6 +503,7 @@ def test_tts_uses_spoken_language_even_if_turn_locale_is_stale(monkeypatch) -> N
             yield {"type": "audio", "data": b"audio"}
 
     monkeypatch.setattr(api_module.xfyun_tts, "Communicate", FakeCommunicate)
+    monkeypatch.setenv("XF_TTS_VOICE_ZH", "x4_yezi")
     monkeypatch.setenv("XF_TTS_VOICE_EN", "ashleigh")
     client, _kb, _search, _assistant = build_client()
 

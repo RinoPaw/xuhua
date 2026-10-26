@@ -173,7 +173,7 @@ _CN_LANGUAGE_COMMANDS = (
     ),
     re.compile(
         _CN_REQUEST_PREFIX
-        + rf"(?:说|讲|念|读)\s*(?:一|两|几|三)?\s*(?:句|段|点|些|句话)?\s*"
+        + r"(?:说|讲|念|读)\s*(?:一|两|几|三)?\s*(?:句|段|点|些|句话)?\s*"
         + rf"(?P<language>{_CN_LANGUAGE})(?=$|[\s，,。！!？?；;、]|吧|看看|试试)"
     ),
 )

@@ -40,10 +40,10 @@
 ## 运行方式
 
 ```powershell
-uv run python tools/evaluate_labeled.py --summary
-uv run python tools/evaluate_labeled.py --output evaluation.json
+uv run --env-file .env python tools/evaluate_labeled.py --summary
+uv run --env-file .env python tools/evaluate_labeled.py --output evaluation.json
 # 需要正式的人工评测指标时，强制至少一条 approved：
-uv run python tools/evaluate_labeled.py --require-approved --output evaluation.json
+uv run --env-file .env python tools/evaluate_labeled.py --require-approved --output evaluation.json
 ```
 
 `--require-approved` 在所有候选仍未核验时退出非零，防止误发“正式评测通过”。

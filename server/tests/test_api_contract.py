@@ -474,6 +474,7 @@ def test_tts_maps_resolved_locales_to_allowlisted_voices(monkeypatch) -> None:
             yield {"type": "audio", "data": b"audio"}
 
     monkeypatch.setattr(api_module.xfyun_tts, "Communicate", FakeCommunicate)
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", FakeCommunicate)
     client, _kb, _search, _assistant = build_client()
 
     def synthesize(text: str, locale: str) -> httpx.Response:
@@ -505,11 +506,12 @@ def test_tts_uses_spoken_language_even_if_turn_locale_is_stale(monkeypatch) -> N
     monkeypatch.setattr(api_module.xfyun_tts, "Communicate", FakeCommunicate)
     monkeypatch.setenv("XF_TTS_VOICE_ZH", "x4_yezi")
     monkeypatch.setenv("XF_TTS_VOICE_EN", "ashleigh")
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", FakeCommunicate)
     client, _kb, _search, _assistant = build_client()
 
     cases = (
         ("你好，我是叙华，陪你聊聊非遗。", "en-US", "zh-CN", "x4_yezi"),
-        ("Hello! I'm Xuhua, your guide.", "zh-CN", "en-US", "ashleigh"),
+        ("Hello! I'm Xuhua, your guide.", "zh-CN", "en-US", "en-US-JennyNeural"),
         ("こんにちは。今日は何を見ましょうか。", "en-US", "ja-JP", None),
         ("안녕하세요. 함께 이야기해요.", "zh-CN", "ko-KR", None),
     )

@@ -211,7 +211,7 @@ def create_app(
                 "text_chat": True,
                 "realtime_voice": voice_available,
                 "voice_provider": "xfyun" if voice_available else "",
-                "tts_provider": "edge" if use_edge_tts else "xfyun",
+                "tts_provider": "edge" if use_edge_tts else "xfyun+edge",
                 "tts_voice": getattr(speech_profile, "tts_voice_zh", "") or xfyun_tts.voice_for("zh-CN-XiaoxiaoNeural"),
                 **({"wake_provider": "xfyun"} if wake_available else {}),
             },
@@ -306,12 +306,15 @@ def create_app(
         language_profile = get_language_profile(
             detect_locale(ticket.text, hint=ticket.locale)
         )
+        # Keep the existing Chinese voice; use a native-language neural voice
+        # for English, Japanese and Korean. The case assistant already uses Edge.
+        use_edge_voice = use_edge_tts or language_profile.code != "zh-CN"
         speech_voice = (
             getattr(speech_profile, "tts_voice_zh", "")
             if use_edge_tts and language_profile.code == "zh-CN"
             else language_profile.tts_voice
         )
-        resolved_speech_voice = speech_voice if use_edge_tts else xfyun_tts.voice_for(speech_voice)
+        resolved_speech_voice = speech_voice if use_edge_voice else xfyun_tts.voice_for(speech_voice)
         started = time.perf_counter()
         LOGGER.info(
             "[trace=%s segment=%s] tts.request.start reason=%s chars=%s locale=%s",
@@ -325,7 +328,7 @@ def create_app(
         first_chunk_logged = False
         bytes_sent = 0
         try:
-            communicate = (edge_tts if use_edge_tts else xfyun_tts).Communicate(
+            communicate = (edge_tts if use_edge_voice else xfyun_tts).Communicate(
                 ticket.text,
                 voice=speech_voice,
                 rate="-2%",

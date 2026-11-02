@@ -378,6 +378,7 @@ def test_tts_outcome_logs_include_completed_failed_and_cancelled_without_text(
                 await asyncio.Event().wait()
 
     monkeypatch.setattr(api_module.xfyun_tts, "Communicate", ControlledCommunicate)
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", ControlledCommunicate)
     app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
     prepare, synthesize = _direct_tts_routes(app)
 
@@ -459,6 +460,7 @@ def test_tts_empty_provider_response_is_logged_as_failure(monkeypatch, caplog) -
     import logging
 
     monkeypatch.setattr(api_module.xfyun_tts, "Communicate", EmptyAudio)
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", EmptyAudio)
     app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
     prepare, synthesize = _direct_tts_routes(app)
 
@@ -538,3 +540,47 @@ def test_provider_http_status_rejects_non_numeric_and_out_of_range_values() -> N
     assert api_module._provider_http_status(FakeError("403?token=SECRET")) == "-"
     assert api_module._provider_http_status(FakeError(0)) == "-"
     assert api_module._provider_http_status(FakeError(999)) == "-"
+
+
+def test_multilingual_tts_uses_native_edge_voices_and_keeps_chinese_xfyun(monkeypatch):
+    calls: list[tuple[str, str]] = []
+
+    class NativeCommunicate:
+        def __init__(self, _text: str, *, voice: str, **_kwargs: str) -> None:
+            calls.append(("edge", voice))
+
+        async def stream(self):
+            yield {"type": "audio", "data": b"edge-audio"}
+
+    class ChineseCommunicate:
+        def __init__(self, _text: str, *, voice: str, **_kwargs: str) -> None:
+            calls.append(("xfyun", voice))
+
+        async def stream(self):
+            yield {"type": "audio", "data": b"xfyun-audio"}
+
+    monkeypatch.setattr(api_module.edge_tts, "Communicate", NativeCommunicate)
+    monkeypatch.setattr(api_module.xfyun_tts, "Communicate", ChineseCommunicate)
+    app = create_app(assistant=_Assistant())  # type: ignore[arg-type]
+
+    cases = (
+        ("zh-CN", "\u4f60\u597d\uff0c\u4eca\u5929\u804a\u975e\u9057\u3002", "xfyun", "x4_yezi"),
+        ("en-US", "Hello, I am Xuhua.", "edge", "en-US-JennyNeural"),
+        ("ja-JP", "\u3053\u3093\u306b\u3061\u306f\u3002\u4f1d\u7d71\u6587\u5316\u3067\u3059\u3002", "edge", "ja-JP-NanamiNeural"),
+        ("ko-KR", "\uc548\ub155\ud558\uc138\uc694. \ud55c\uad6d\uc5b4\uc785\ub2c8\ub2e4.", "edge", "ko-KR-SunHiNeural"),
+    )
+    with TestClient(app) as client:
+        meta = client.get("/api/meta").json()
+        assert meta["capabilities"]["tts_provider"] == "xfyun+edge"
+        for locale, text, provider, voice in cases:
+            ticket = client.post("/api/tts", json={"locale": locale, "text": text})
+            assert ticket.status_code == 200
+            audio = client.get(f"/api/tts/{ticket.json()['token']}?stream=1")
+            assert audio.status_code == 200
+            assert audio.headers["x-speech-locale"] == locale
+            assert audio.headers["x-speech-voice"] == voice
+            assert audio.content == (b"xfyun-audio" if provider == "xfyun" else b"edge-audio")
+    assert calls == [
+        (provider, "zh-CN-XiaoxiaoNeural" if provider == "xfyun" else voice)
+        for _, _, provider, voice in cases
+    ]

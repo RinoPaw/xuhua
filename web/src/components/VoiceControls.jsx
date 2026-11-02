@@ -17,6 +17,7 @@ export const VOICE_COPY = {
 export function friendlyVoiceError(error, available) {
   if (!available) return "实时语音暂未就绪。";
   const message = String(error?.message || "");
+  if (/voice_insecure_context/u.test(message)) return "\u003f\u003f\u003f\u003f\u003f\u003f\u0020\u0048\u0054\u0054\u0050\u0020\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u003f\u0020\u0048\u0054\u0054\u0050\u0053\u0020\u003f\u003f\u003f";
   if (/wake_busy/u.test(message)) return "语音服务正在另一终端使用，请关闭另一页面后重试。";
   if (/wake_authorization_required/u.test(message)) return "当前设备未授权唤醒，请使用展示终端链接。";
   if (/wake_handoff_overflow/u.test(message)) return "语音连接较慢，请听到提示后重新提问。";

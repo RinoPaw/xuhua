@@ -53,7 +53,7 @@ from .language import detect_locale, get_language_profile
 from .logging_setup import configure_application_logging, redact_uvicorn_tts_access_logs
 from .request_limits import RequestBodyLimitMiddleware
 from .tts_tickets import TtsTicketCapacity, TtsTicketStore
-from .voice import XfyunStream
+from .voice_hybrid import HybridXfyunStream as XfyunStream
 from .voice_diagnostics import diagnostics_enabled, log_browser_diagnostic
 from .voice_transport import MAX_VOICE_FRAME_BYTES, register_voice_route
 from .wake import register_wake_routes

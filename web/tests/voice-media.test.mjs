@@ -73,6 +73,25 @@ function makeHarness() {
   return { track, stream, source, processor, silent, FakeAudioContext, FakeWorkletNode, mediaDevices };
 }
 
+
+test("insecure origins report microphone security restrictions", async () => {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "isSecureContext");
+  try {
+    Object.defineProperty(globalThis, "isSecureContext", {
+      value: false, configurable: true,
+    });
+    const media = new VoiceMediaController({ mediaDevices: null });
+    await assert.rejects(media.requestStream(), /voice_insecure_context/);
+    Object.defineProperty(globalThis, "isSecureContext", {
+      value: true, configurable: true,
+    });
+    await assert.rejects(media.requestStream(), /voice_media_unavailable/);
+  } finally {
+    if (previous) Object.defineProperty(globalThis, "isSecureContext", previous);
+    else delete globalThis.isSecureContext;
+  }
+});
+
 test("voice media controller requests the expected microphone constraints", async () => {
   const harness = makeHarness();
   const media = new VoiceMediaController({

@@ -31,7 +31,11 @@ export class VoiceMediaController {
   }
 
   async requestStream() {
-    if (!this.mediaDevices?.getUserMedia) throw new Error("voice_media_unavailable");
+    if (!this.mediaDevices?.getUserMedia) {
+      throw new Error(globalThis.isSecureContext === false
+        ? "voice_insecure_context"
+        : "voice_media_unavailable");
+    }
     const generation = ++this.generation;
     const stream = await this.mediaDevices.getUserMedia({
       audio: { ...DEFAULT_AUDIO_CONSTRAINTS },

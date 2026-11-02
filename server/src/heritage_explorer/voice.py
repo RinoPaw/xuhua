@@ -1,9 +1,9 @@
-"""Streaming Xunfei multilingual ASR transport for 16 kHz browser PCM.
+"""Single-model iFlytek streaming IAT transport for 16 kHz PCM.
 
-叙华使用讯飞“大模型多语种语音识别”单路 WebSocket 服务：
-``language=mul_cn``、``accent=mandarin``、``domain=slm``。
-``ln=zh|en|ja|ko`` 将识别范围限定为中英日韩四种语言。多语种接口文档未列出
-中英模型的 ``ltc``、``dwa`` 或 ``dhw`` 参数，因此多语种请求不发送它们。
+The hybrid ASR provider runs two instances: mul_cn / mandarin for
+multilingual auto-detection and zh_cn / mulacc for Chinese dialects.
+The multilingual instance restricts its automatic language detection with
+ln=zh|en|ja|ko; the dialect stream does not carry this parameter.
 """
 
 from __future__ import annotations
@@ -76,6 +76,7 @@ class XfyunStream:
         domain: str = "slm",
         dynamic_correction: bool = True,
         eos: int = 1800,
+        ln: str | None = "zh|en|ja|ko",
     ) -> None:
         self.app_id = app_id.strip()
         self.api_key = api_key.strip()
@@ -87,6 +88,7 @@ class XfyunStream:
         self.domain = str(domain or "slm").strip()
         self.dynamic_correction = bool(dynamic_correction)
         self.eos = min(max(int(eos), 600), 10000)
+        self.ln = ln
         self._hotword_spec = self._format_hotwords(hotwords)
         self._socket: ClientConnection | None = None
         self._receiver: asyncio.Task[None] | None = None
@@ -456,8 +458,9 @@ class XfyunStream:
             "result": {"encoding": "utf8", "compress": "raw", "format": "json"},
         }
         if self.language == "mul_cn":
-            # Limit the multilingual model to the four supported languages.
-            iat["ln"] = "zh|en|ja|ko"
+            # Optional language scope; omit for full automatic recognition.
+            if self.ln:
+                iat["ln"] = self.ln
         # These parameters are documented for the Chinese/English model, not
         # for the multilingual model. Keep legacy packet construction available
         # for explicit zh_cn callers without sending undocumented fields to mul_cn.

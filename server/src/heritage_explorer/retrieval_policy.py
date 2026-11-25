@@ -79,6 +79,7 @@ MULTILINGUAL_HERITAGE_TERMS = {
 }
 MULTILINGUAL_SEARCH_GLOSSES = {
     "en-US": (
+        (("bian embroidery", "bian xiu", "bianxiu"), "汴绣"),
         (("paper cutting",), "剪纸"),
         (("shadow puppetry", "shadow play"), "皮影戏"),
         (("kunqu opera", "kunqu", "kunku opera", "kunku"), "昆曲"),
@@ -96,6 +97,7 @@ MULTILINGUAL_SEARCH_GLOSSES = {
         (("traditional craft", "craftsmanship", "crafts"), "传统技艺"),
     ),
     "ja-JP": (
+        (("汴繡", "汴繍"), "汴绣"),
         (("昆曲", "崑曲", "根極"), "昆曲"),
         (("伝統音楽",), "传统音乐"),
         (("伝統舞踊",), "传统舞蹈"),
@@ -105,6 +107,7 @@ MULTILINGUAL_SEARCH_GLOSSES = {
         (("伝統工芸",), "传统技艺"),
     ),
     "ko-KR": (
+        (("변수 자수", "변수(汴繡)", "변수(汴绣)"), "汴绣"),
         (("곤곡", "곤국"), "昆曲"),
         (("전통 음악",), "传统音乐"),
         (("전통 무용",), "传统舞蹈"),

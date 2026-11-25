@@ -7,7 +7,8 @@ from heritage_explorer import api
 from heritage_explorer.admission import AdmissionController, AdmissionPolicy
 from heritage_explorer.assistant import AssistantService, SearchService
 from heritage_explorer.dataset import item_to_dict
-from heritage_explorer.shizha import create_assistant, load_knowledge_base, normalize_asr_final
+from heritage_explorer.shizha import CaseProfile, CaseSearchService, create_assistant, load_knowledge_base, normalize_asr_final
+from heritage_explorer.retrieval_policy import localized_search_query
 from heritage_explorer.shizha_api import create_shizha_app
 from heritage_explorer.voice_session import build_voice_hotwords, is_assistant_address_only
 
@@ -252,3 +253,43 @@ def test_deployment_defines_separate_shizha_process_and_routes():
     assert "location ^~ /shizha/" in nginx
     assert "proxy_pass http://127.0.0.1:5051/;" in nginx
     assert "alias /opt/xuhua/web/dist/client/assets/;" in nginx
+
+
+def test_multilingual_case_search_preserves_grounded_sources():
+    search = CaseSearchService(load_knowledge_base())
+    for locale, question in (
+        ("en-US", "What are the warning signs of refund scams?"),
+        ("ja-JP", "返金詐欺の危険信号は何ですか？"),
+        ("ko-KR", "환불 사기의 위험 신호는 무엇인가요?"),
+    ):
+        basis = CaseProfile.retrieval_basis(search, question, locale=locale)
+        query = CaseProfile.localized_search_query(question, locale, basis)
+        assert query == "退款"
+        assert basis != "none"
+        result = search.search(query, limit=5)
+        assert result.total > 0
+        assert any("退款" in item.title or "退款" in item.search_text for item in result.items)
+
+
+def test_multilingual_case_prompt_keeps_requested_response_language():
+    for locale, question, name in (
+        ("en-US", "What are refund scams?", "English"),
+        ("ja-JP", "返金詐欺は何ですか？", "日本語"),
+        ("ko-KR", "환불 사기는 무엇인가요?", "한국어"),
+    ):
+        messages = CaseProfile.build_messages(
+            question, [], [], locale=locale, retrieval_basis="domain",
+        )
+        first = messages[0]["content"]
+        assert name in first
+        assert "你是识诈" in first
+        assert "即使系统提示" in first
+
+
+def test_exact_translated_bian_embroidery_aliases():
+    for locale, question in (
+        ("en-US", "What is Bian embroidery?"),
+        ("ja-JP", "汴繍は中国のどの都市と関係していますか？"),
+        ("ko-KR", "변수 자수는 중국 어느 도시와 관련이 있나요?"),
+    ):
+        assert localized_search_query(question, locale, "translated_term") == "汴绣"

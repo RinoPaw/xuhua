@@ -15,6 +15,7 @@ def test_server_topology_is_explicitly_single_worker(monkeypatch) -> None:
     monkeypatch.setattr(uvicorn, "run", fake_run)
     api_module.main()
 
-    assert captured["app"] == "heritage_explorer.api:app"
+    assert captured["app"] == "heritage_explorer.xuhua_api:create_xuhua_app"
+    assert captured["factory"] is True
     assert captured["workers"] == 1
     assert captured["ws_max_size"] == MAX_VOICE_FRAME_BYTES

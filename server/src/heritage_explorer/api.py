@@ -16,7 +16,7 @@ from typing import Any
 from .providers import xfyun_tts
 from fastapi import FastAPI, HTTPException, Path as ApiPath, Query, Request, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import __version__
@@ -36,7 +36,6 @@ from .config import (
     CHAT_MAX_CONCURRENCY,
     CHAT_MAX_PER_CLIENT_PER_MINUTE,
     CHAT_MAX_PER_MINUTE,
-    FRONTEND_DIR,
     TTS_MAX_CONCURRENCY,
     TTS_MAX_PER_CLIENT_PER_MINUTE,
     TTS_MAX_PER_MINUTE,
@@ -140,7 +139,6 @@ def create_app(
     assistant: AssistantService | None = None,
     admission: AdmissionController | None = None,
     agent_name: str = "叙华",
-    include_shizha: bool = True,
     voice_normalizer=None,
 ) -> FastAPI:
     assistant = assistant or AssistantService()
@@ -150,7 +148,6 @@ def create_app(
     kb = search.knowledge_base
     speech_profile = getattr(assistant, "domain_policy", None)
     use_edge_tts = getattr(speech_profile, "tts_provider", "xfyun") == "edge"
-    children = []
     case_records = [json.loads(item.record_json) for item in kb.items if item.record_json]
     tts_tickets = TtsTicketStore()
     voice_available = bool(
@@ -171,8 +168,6 @@ def create_app(
         close = getattr(assistant, "aclose", None)
         if close is not None:
             await close()
-        for child in children:
-            await child.aclose()
 
     app = FastAPI(title=agent_name, version=__version__, lifespan=lifespan)
     app.state.assistant = assistant
@@ -586,29 +581,8 @@ def create_app(
         admission=admission,
     )
 
-    if include_shizha:
-        from .shizha import create_assistant, normalize_asr_final as normalize_case_asr
-        case_assistant = create_assistant()
-        children.append(case_assistant)
-        case_app = create_app(assistant=case_assistant, admission=admission,
-                              agent_name="识诈", include_shizha=False, voice_normalizer=normalize_case_asr)
-        app.state.shizha = case_app
-        # The frontend adapter serves files at the process root. Serve its
-        # entry before the API sub-app mount, avoiding nested static redirects.
-        if FRONTEND_DIR.is_dir():
-            @app.get("/shizha", include_in_schema=False)
-            @app.get("/shizha/", include_in_schema=False)
-            async def shizha_page():
-                return FileResponse(FRONTEND_DIR / "index.html", media_type="text/html")
-        app.mount("/shizha", case_app)
-
-    if FRONTEND_DIR.is_dir() and include_shizha:
-        app.frontend("/", directory=FRONTEND_DIR, fallback="index.html")
 
     return app
-
-
-app = create_app()
 
 
 def main() -> None:
@@ -619,7 +593,8 @@ def main() -> None:
     from .config import DEBUG, HOST, PORT
 
     uvicorn.run(
-        "heritage_explorer.api:app",
+        "heritage_explorer.xuhua_api:create_xuhua_app",
+        factory=True,
         host=HOST,
         port=PORT,
         reload=DEBUG,
@@ -628,4 +603,4 @@ def main() -> None:
     )
 
 
-__all__ = ["app", "create_app", "create_default_admission_controller", "main"]
+__all__ = ["create_app", "create_default_admission_controller", "main"]

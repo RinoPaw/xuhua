@@ -288,7 +288,8 @@ def test_frontend_static_routes_coexist_with_api_routes(tmp_path, monkeypatch) -
     assets.mkdir()
     (assets / "app.js").write_text("console.log('offline');", encoding="utf-8")
     monkeypatch.setattr(xuhua_api, "FRONTEND_DIR", tmp_path)
-    with TestClient(xuhua_api.create_xuhua_app()) as client:
+    _unused_client, _kb, _search, assistant = build_client()
+    with TestClient(xuhua_api.create_xuhua_app(assistant=assistant)) as client:
         assert client.get("/").text == "<!doctype html><html><body>offline ui</body></html>"
         assert client.get("/assets/app.js").text == "console.log('offline');"
         assert client.get("/api/health").json()["status"] == "ok"

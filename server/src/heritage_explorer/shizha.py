@@ -13,7 +13,7 @@ from .dataset import KnowledgeBase
 from .config import PROJECT_ROOT
 from .language import get_language_profile
 from .prompting import build_messages
-from .retrieval_policy import retrieval_basis
+from .retrieval_policy import retrieval_basis, localized_search_query
 from .answer_policy import localized_copy, fallback_answer, is_greeting
 from .asr_normalization import NormalizedSpan, NormalizedTranscript, normalize_asr_final as normalize_shared_asr
 
@@ -22,6 +22,31 @@ DATASET_PATH = PROJECT_ROOT / "data/processed/shizha_cases.json"
 SPOKEN_NAMES = ("识诈", "熊猫警官")
 DOMAIN_TERMS = ("诈骗", "反诈", "被骗", "转账", "验证码", "共享屏幕", "刷单", "客服", "理财", "风险",
                 "冒充", "退款", "返利", "兼职", "投资", "贷款", "安全账户", "scam", "fraud")
+CASE_SEARCH_GLOSSES = {
+    "en-US": (
+        (("refund scam", "refund fraud", "refund"), "退款"),
+        (("task scam", "fake rebate", "cashback task"), "刷单"),
+        (("fake customer service", "customer service scam"), "客服"),
+    ),
+    "ja-JP": (
+        (("返金詐欺", "返金"), "退款"),
+        (("副業詐欺", "刷単"), "刷单"),
+    ),
+    "ko-KR": (
+        (("환불 사기", "환불"), "退款"),
+        (("부업 사기", "수익형 아르바이트"), "刷单"),
+    ),
+}
+
+
+def case_search_anchor(question: str, locale: str) -> str:
+    folded = str(question).casefold()
+    for phrases, canonical in CASE_SEARCH_GLOSSES.get(locale, ()):
+        if any(phrase.casefold() in folded for phrase in phrases):
+            return canonical
+    return ""
+
+
 SYSTEM_PROMPT = (
     "你是识诈，形象是熊猫警官，是反诈知识助手，不是公安机关工作人员，不自称警方。"
     "自然、冷静地解释案例、风险信号和防范建议；事实以提供的案例为准，资料不足就说明。"
@@ -82,9 +107,13 @@ class CaseProfile:
     @staticmethod
     def retrieval_basis(search, question, category="", **kwargs):
         basis = retrieval_basis(search, question, category, **kwargs)
-        if basis == "none" and any(term in question.casefold() for term in DOMAIN_TERMS):
+        if basis == "none" and (case_search_anchor(question, kwargs.get("locale", "zh-CN")) or any(term in question.casefold() for term in DOMAIN_TERMS)):
             return "domain"
         return basis
+
+    @staticmethod
+    def localized_search_query(question, locale, basis):
+        return case_search_anchor(question, locale) or localized_search_query(question, locale, basis)
 
     @staticmethod
     def localized_copy(locale, key, **kwargs):
@@ -112,7 +141,14 @@ class CaseProfile:
     def build_messages(question, candidates, history, **kwargs):
         reply_mode = kwargs.pop("reply_mode", None)
         messages = build_messages(question, candidates, history, short_reply_mode=reply_mode, **kwargs)
-        messages[0]["content"] = get_language_profile(kwargs.get("locale", "zh-CN")).response_instruction + SYSTEM_PROMPT
+        profile = get_language_profile(kwargs.get("locale", "zh-CN"))
+        messages[0]["content"] = (
+            f"本轮必须用{profile.name}完整回答。{profile.response_instruction}"
+            "即使系统提示、历史消息与反诈案例都使用中文，正文、标题、解释和建议也必须用本轮语言表达。"
+            "只有案例名称、机构名称等专有名词允许保留其原文。"
+            + SYSTEM_PROMPT
+            + f"再次确认：本轮输出必须用{profile.name}；不要因以上中文说明而切换回中文。"
+        )
         return messages
 
     @staticmethod

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 import httpx
 
 import heritage_explorer.api as api_module
+import heritage_explorer.xuhua_api as xuhua_api
 from heritage_explorer.api import create_app
 from heritage_explorer.asr_normalization import NormalizedSpan
 from heritage_explorer.dataset import KnowledgeBase, item_to_dict
@@ -286,11 +287,11 @@ def test_frontend_static_routes_coexist_with_api_routes(tmp_path, monkeypatch) -
     assets = tmp_path / "assets"
     assets.mkdir()
     (assets / "app.js").write_text("console.log('offline');", encoding="utf-8")
-    monkeypatch.setattr(api_module, "FRONTEND_DIR", tmp_path)
-    client, _kb, _search, _assistant = build_client()
-    assert client.get("/").text == "<!doctype html><html><body>offline ui</body></html>"
-    assert client.get("/assets/app.js").text == "console.log('offline');"
-    assert client.get("/api/health").json()["status"] == "ok"
+    monkeypatch.setattr(xuhua_api, "FRONTEND_DIR", tmp_path)
+    with TestClient(xuhua_api.create_xuhua_app()) as client:
+        assert client.get("/").text == "<!doctype html><html><body>offline ui</body></html>"
+        assert client.get("/assets/app.js").text == "console.log('offline');"
+        assert client.get("/api/health").json()["status"] == "ok"
 
 
 def test_items_and_detail_return_public_shapes_and_forward_filters() -> None:

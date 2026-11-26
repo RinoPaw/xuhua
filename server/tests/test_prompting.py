@@ -81,3 +81,13 @@ def test_retrieval_context_is_marked_as_system_evidence_not_user_text():
     assert "汴绣" in evidence
     assert messages[-2]["role"] == "system"
     assert messages[-1] == {"role": "user", "content": "介绍汴绣"}
+
+
+def test_candidate_context_can_hide_internal_ids_for_spoken_citations():
+    items = make_items()
+    original = candidate_context(items, 1000)
+    spoken = candidate_context(items, 1000, include_ids=False)
+    assert "[item-1]" in original
+    assert "item-1" not in spoken
+    assert "汴绣" in spoken
+    assert "朱仙镇木版年画" in spoken

@@ -293,3 +293,18 @@ def test_exact_translated_bian_embroidery_aliases():
         ("ko-KR", "변수 자수는 중국 어느 도시와 관련이 있나요?"),
     ):
         assert localized_search_query(question, locale, "translated_term") == "汴绣"
+
+
+def test_shizha_prompt_hides_case_ids_but_keeps_citation_card_identity():
+    kb = load_knowledge_base()
+    case = kb.get("FZ-001")
+    messages = CaseProfile.build_messages(
+        "请介绍这个诈骗案例", [case], (),
+        locale="zh-CN", retrieval_basis="domain",
+    )
+    assert "案例名称" in messages[0]["content"]
+    assert "不输出数据库内部编号" in messages[0]["content"]
+    evidence = next(message["content"] for message in messages if "系统为本轮自动检索" in message["content"])
+    assert case.title in evidence
+    assert "FZ-001" not in evidence
+    assert item_to_dict(case)["case_id"] == "FZ-001"

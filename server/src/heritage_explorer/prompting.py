@@ -10,7 +10,9 @@ from .language import DEFAULT_LOCALE, get_language_profile, requested_response_l
 from .models import ConversationTurn
 
 
-def candidate_context(items: Sequence[HeritageItem], max_chars: int) -> str:
+def candidate_context(
+    items: Sequence[HeritageItem], max_chars: int, *, include_ids: bool = True
+) -> str:
     if not items:
         return "未检索到匹配资料。涉及具体事实时请说明资料库暂无对应条目。"
 
@@ -21,7 +23,7 @@ def candidate_context(items: Sequence[HeritageItem], max_chars: int) -> str:
         block = "\n".join(
             part
             for part in (
-                f"[{payload['id']}] {payload['title']}",
+                f"[{payload['id']}] {payload['title']}" if include_ids else payload["title"],
                 f"类别：{payload.get('category', '')}；地区：{payload.get('province', '')} {payload.get('city', '')}",
                 f"简介：{str(payload.get('summary') or '')[:320]}",
                 f"来源：{payload['source_name']}" if payload.get("source_name") else "",
@@ -45,6 +47,7 @@ def build_messages(
     retrieval_basis: str,
     locale: str = DEFAULT_LOCALE,
     max_context_chars: int = AI_MAX_CONTEXT_CHARS,
+    include_source_ids: bool = True,
 ) -> list[dict[str, str]]:
     language_profile = get_language_profile(locale)
     explicitly_requested = requested_response_locale(question)
@@ -102,7 +105,7 @@ def build_messages(
             }
         )
     else:
-        context = candidate_context(candidates, max_context_chars)
+        context = candidate_context(candidates, max_context_chars, include_ids=include_source_ids)
         messages.append(
             {
                 "role": "system",
